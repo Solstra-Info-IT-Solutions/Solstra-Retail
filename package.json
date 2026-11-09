@@ -1,0 +1,14 @@
+{
+  "name": "solstra-retail",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Solstra Retail SaaS platform",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "npm run start:dev -w @solstra/api",
+    "build": "npm run build -w @solstra/api",
+    "start": "npm run start:prod -w @solstra/api",
+    "lint": "npm run lint -w @solstra/api"
+  },
+  "engines": { "node": ">=20" }
+}

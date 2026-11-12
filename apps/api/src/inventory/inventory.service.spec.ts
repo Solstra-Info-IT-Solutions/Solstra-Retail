@@ -15,7 +15,7 @@ describe('InventoryService', () => {
 
     movements = {};
 
-    service = new InventoryService(products, movements);
+    service = new InventoryService(products, movements, {} as any);
   });
 
   it('rejects an invalid authenticated user before starting a transaction', async () => {

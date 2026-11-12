@@ -15,6 +15,7 @@ import {
 } from './schemas/inventory-movement.schema';
 import { CreateInventoryMovementDto } from './dto/create-inventory-movement.dto';
 import { ListInventoryMovementsDto } from './dto/list-inventory-movements.dto';
+import { AccountingService } from '../accounting/accounting.service';
 
 @Injectable()
 export class InventoryService {
@@ -24,6 +25,7 @@ export class InventoryService {
 
     @InjectModel(InventoryMovement.name)
     private readonly movements: Model<InventoryMovementDocument>,
+    private readonly accounting: AccountingService,
   ) {}
 
   async createMovement(
@@ -69,6 +71,10 @@ export class InventoryService {
       }
 
       const previousQty = product.stockQty;
+      if (previousQty > 0 && !product.valuationInitialized) {
+        throw new ConflictException('Opening inventory valuation must be initialized before adjusting existing stock.');
+      }
+      const unitCostPaise = Math.round((((product.valuationInitialized ? product.averageCost : product.purchasePrice) || 0) + Number.EPSILON) * 100);
       let newQty = previousQty;
 
       if (dto.type === 'IN') {
@@ -91,6 +97,12 @@ export class InventoryService {
         );
       }
 
+      const quantityDelta = newQty - previousQty;
+      const previousValuePaise = Math.round(((product.inventoryValue || 0) + Number.EPSILON) * 100);
+      const newValuePaise = previousValuePaise + quantityDelta * unitCostPaise;
+      if (newValuePaise < 0) {
+        throw new BadRequestException('Inventory valuation cannot become negative.');
+      }
       const updatedProduct = await this.products.findOneAndUpdate(
         tenantFilter(tenantId, {
           _id: product._id,
@@ -98,7 +110,12 @@ export class InventoryService {
           stockQty: previousQty,
           trackStock: true,
         }),
-        { $set: { stockQty: newQty } },
+        { $set: {
+          stockQty: newQty,
+          inventoryValue: newValuePaise / 100,
+          averageCost: unitCostPaise / 100,
+          valuationInitialized: true,
+        } },
         {
           new: true,
           session,
@@ -125,6 +142,26 @@ export class InventoryService {
         }],
         { session },
       );
+
+      const adjustmentValuePaise = Math.abs(quantityDelta) * unitCostPaise;
+      if (adjustmentValuePaise > 0) {
+        const increase = quantityDelta > 0;
+        await this.accounting.postOperationalJournal({
+          tenantId, userId, postingDate: new Date(),
+          narration: `Inventory ${dto.type.toLowerCase()} - ${product.name}: ${dto.reason.trim()}`,
+          sourceType: 'INVENTORY', sourceId: `STOCK_MOVEMENT:${movement._id.toString()}`,
+          lines: increase
+            ? [
+                { accountCode: '1200', debit: adjustmentValuePaise / 100, credit: 0, description: 'Inventory increase' },
+                { accountCode: '5500', debit: 0, credit: adjustmentValuePaise / 100, description: 'Inventory gain / stock-in adjustment' },
+              ]
+            : [
+                { accountCode: '5400', debit: adjustmentValuePaise / 100, credit: 0, description: 'Inventory shrinkage / stock-out adjustment' },
+                { accountCode: '1200', debit: 0, credit: adjustmentValuePaise / 100, description: 'Inventory decrease' },
+              ],
+          session,
+        });
+      }
 
       result = movement;
     });

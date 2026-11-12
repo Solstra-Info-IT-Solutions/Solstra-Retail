@@ -366,6 +366,7 @@ export class SalesService {
         let igstTotalPaise = 0;
 
         const invoiceItems: any[] = [];
+        let totalCogsPaise = 0;
 
         for (const item of dto.items) {
           const product = productMap.get(item.productId);
@@ -423,6 +424,13 @@ export class SalesService {
           sgstTotalPaise += sgstPaise;
           igstTotalPaise += igstPaise;
 
+          const unitCostPaise = product.trackStock ? this.toPaise(product.averageCost || 0) : 0;
+          if (product.trackStock && product.stockQty > 0 && !product.valuationInitialized) {
+            throw new BadRequestException(`Inventory valuation is not initialized for ${product.name}. Reconcile opening stock before selling this item.`);
+          }
+          const lineCogsPaise = unitCostPaise * quantity;
+          totalCogsPaise += lineCogsPaise;
+
           invoiceItems.push({
             productId: product._id,
             name: product.name,
@@ -436,6 +444,8 @@ export class SalesService {
             gstRate,
             priceIncludesTax: product.priceIncludesTax,
             stockTracked: product.trackStock,
+            unitCostAtSale: this.fromPaise(unitCostPaise),
+            costOfGoodsSold: this.fromPaise(lineCogsPaise),
             cgstAmount: this.fromPaise(cgstPaise),
             sgstAmount: this.fromPaise(sgstPaise),
             igstAmount: this.fromPaise(igstPaise),
@@ -504,11 +514,19 @@ export class SalesService {
               stockQty: previousQty,
             }),
             {
-              $inc: { stockQty: -quantity },
+              $set: {
+                stockQty: newQty,
+                inventoryValue: this.fromPaise(Math.max(
+                  0,
+                  this.toPaise(product.inventoryValue || 0) -
+                    this.toPaise(product.averageCost || 0) * quantity,
+                )),
+              },
             },
             {
               new: true,
               session,
+              runValidators: true,
             },
           );
 
@@ -542,6 +560,7 @@ export class SalesService {
           tenantId: new Types.ObjectId(tenantId),
           idempotencyKey,
           requestFingerprint,
+          costingVersion: 1,
           invoiceNumber,
           financialYear: fy,
           invoiceDate: now,
@@ -603,6 +622,18 @@ export class SalesService {
           tenantId, userId, postingDate: now, narration: `Sales invoice ${invoiceNumber}`,
           sourceType: 'SALES', sourceId: invoice._id.toString(), lines: saleLines, session,
         });
+        if (totalCogsPaise > 0) {
+          await this.accounting.postOperationalJournal({
+            tenantId, userId, postingDate: now,
+            narration: `Cost of goods sold for ${invoiceNumber}`,
+            sourceType: 'INVENTORY', sourceId: `SALE_COGS:${invoice._id.toString()}`,
+            lines: [
+              { accountCode: '5000', debit: this.fromPaise(totalCogsPaise), credit: 0, description: 'Cost of goods sold' },
+              { accountCode: '1200', debit: 0, credit: this.fromPaise(totalCogsPaise), description: 'Inventory asset relieved' },
+            ],
+            session,
+          });
+        }
         result = invoice;
       });
 
@@ -921,6 +952,7 @@ if (existingPayment) {
         let igstTotalPaise = 0;
         let taxTotalPaise = 0;
         let totalAmountPaise = 0;
+        let restockedCostPaise = 0;
 
         for (const requested of dto.items) {
           const original = invoice.items[requested.lineIndex];
@@ -1073,15 +1105,32 @@ if (existingPayment) {
             }
 
             const previousQty = product.stockQty || 0;
+            if (previousQty > 0 && !product.valuationInitialized) {
+              throw new ConflictException(`Opening inventory valuation is required before restocking "${original.name}".`);
+            }
             const newQty = previousQty + requested.quantity;
+            const returnedUnitCostPaise = invoice.costingVersion === 1
+              ? this.toPaise(original.unitCostAtSale || 0)
+              : this.toPaise(product.averageCost || 0);
+            const returnedCostPaise = returnedUnitCostPaise * requested.quantity;
+            restockedCostPaise += returnedCostPaise;
 
             const updatedProduct = await this.products.findOneAndUpdate(
               tenantFilter(tenantId, {
                 _id: product._id,
                 stockQty: previousQty,
               }),
-              { $inc: { stockQty: requested.quantity } },
-              { new: true, session },
+              { $set: {
+                stockQty: newQty,
+                inventoryValue: this.fromPaise(
+                  this.toPaise(product.inventoryValue || 0) + returnedCostPaise,
+                ),
+                averageCost: newQty > 0
+                  ? this.fromPaise(Math.round((this.toPaise(product.inventoryValue || 0) + returnedCostPaise) / newQty))
+                  : product.averageCost,
+                valuationInitialized: product.valuationInitialized || returnedCostPaise > 0,
+              } },
+              { new: true, session, runValidators: true },
             );
 
             if (!updatedProduct) {
@@ -1212,6 +1261,18 @@ if (existingPayment) {
           sourceType: 'REFUND', sourceId: `CREDIT_NOTE:${created._id.toString()}`,
           lines: creditJournalLines, session,
         });
+        if (restockedCostPaise > 0) {
+          await this.accounting.postOperationalJournal({
+            tenantId, userId, postingDate: creditNoteDate,
+            narration: `Inventory restored by credit note ${creditNumber}`,
+            sourceType: 'INVENTORY', sourceId: `CREDIT_NOTE_COGS:${created._id.toString()}`,
+            lines: [
+              { accountCode: '1200', debit: this.fromPaise(restockedCostPaise), credit: 0, description: 'Returned inventory at original cost' },
+              { accountCode: '5000', debit: 0, credit: this.fromPaise(restockedCostPaise), description: 'Reverse cost of goods sold' },
+            ],
+            session,
+          });
+        }
         result = {
           creditNote: created,
           invoice: updatedInvoice,
@@ -1539,18 +1600,18 @@ if (existingPayment) {
 }
 
         const restoreQuantities = new Map<string, number>();
+        const restoreValuesPaise = new Map<string, number>();
 
         for (const item of invoice.items) {
-          if (!item.stockTracked) {
-            continue;
-          }
-
+          if (!item.stockTracked) continue;
           const productId = item.productId.toString();
-
-          restoreQuantities.set(
-            productId,
-            (restoreQuantities.get(productId) || 0) + item.quantity,
-          );
+          restoreQuantities.set(productId, (restoreQuantities.get(productId) || 0) + item.quantity);
+          if (invoice.costingVersion === 1) {
+            restoreValuesPaise.set(
+              productId,
+              (restoreValuesPaise.get(productId) || 0) + this.toPaise(item.costOfGoodsSold || 0),
+            );
+          }
         }
 
         for (const [productId, quantity] of restoreQuantities) {
@@ -1569,7 +1630,13 @@ if (existingPayment) {
           }
 
           const previousQty = product.stockQty || 0;
+          if (previousQty > 0 && !product.valuationInitialized) {
+            throw new ConflictException('Opening inventory valuation is required before restoring stock for this invoice.');
+          }
           const newQty = previousQty + quantity;
+          const restoredValuePaise = invoice.costingVersion === 1
+            ? (restoreValuesPaise.get(productId) || 0)
+            : this.toPaise(product.averageCost || 0) * quantity;
 
           const updated = await this.products.findOneAndUpdate(
             tenantFilter(tenantId, {
@@ -1577,11 +1644,23 @@ if (existingPayment) {
               stockQty: previousQty,
             }),
             {
-              $inc: { stockQty: quantity },
+              $set: {
+                stockQty: previousQty + quantity,
+                inventoryValue: this.fromPaise(
+                  this.toPaise(product.inventoryValue || 0) + restoredValuePaise,
+                ),
+                averageCost: newQty > 0
+                  ? this.fromPaise(Math.round((
+                      this.toPaise(product.inventoryValue || 0) + restoredValuePaise
+                    ) / newQty))
+                  : product.averageCost,
+                valuationInitialized: product.valuationInitialized || restoredValuePaise > 0,
+              },
             },
             {
               new: true,
               session,
+              runValidators: true,
             },
           );
 
@@ -1638,6 +1717,11 @@ if (existingPayment) {
 
         await this.accounting.reverseOperationalJournal({
           tenantId, userId, sourceType: 'SALES', sourceId: invoice._id.toString(),
+          reason: reason || 'Sales invoice cancelled', session,
+        });
+        await this.accounting.reverseOperationalJournal({
+          tenantId, userId, sourceType: 'INVENTORY',
+          sourceId: `SALE_COGS:${invoice._id.toString()}`,
           reason: reason || 'Sales invoice cancelled', session,
         });
         result = cancelled;

@@ -11,7 +11,9 @@ import { Product, ProductDocument } from './schemas/product.schema';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ListProductsDto } from './dto/list-products.dto';
+import { InitializeProductValuationDto } from './dto/initialize-product-valuation.dto';
 import { tenantFilter } from '../common/tenant-scoped.service';
+import { AccountingService } from '../accounting/accounting.service';
 import { Category, CategoryDocument } from '../categories/schemas/category.schema';
 import {
   InventoryMovement,
@@ -27,6 +29,7 @@ export class ProductsService {
     private readonly movements: Model<InventoryMovementDocument>,
     @InjectModel(Category.name)
     private readonly categories: Model<CategoryDocument>,
+    private readonly accounting: AccountingService,
   ) {}
 
   async create(
@@ -54,6 +57,9 @@ export class ProductsService {
         [{
           ...dto,
           ...categoryData,
+          averageCost: dto.purchasePrice,
+          inventoryValue: dto.trackStock === false ? 0 : Number(((dto.stockQty ?? 0) * dto.purchasePrice).toFixed(2)),
+          valuationInitialized: dto.trackStock !== false,
           tenantId: new Types.ObjectId(tenantId),
         }],
         { session },
@@ -75,6 +81,20 @@ export class ProductsService {
         );
       }
 
+      if (product.trackStock && product.stockQty > 0) {
+        const openingValue = Number((product.stockQty * product.averageCost).toFixed(2));
+        if (openingValue > 0) await this.accounting.postOperationalJournal({
+          tenantId, userId, postingDate: new Date(),
+          narration: `Opening inventory for product ${product.name}`,
+          sourceType: 'INVENTORY', sourceId: `PRODUCT_OPENING:${product._id.toString()}`,
+          lines: [
+            { accountCode: '1200', debit: openingValue, credit: 0, description: 'Opening inventory asset' },
+            { accountCode: '3200', debit: 0, credit: openingValue, description: 'Opening balance equity' },
+          ],
+          session,
+        });
+      }
+
       createdProduct = product;
     });
   } catch (error: any) {
@@ -89,6 +109,61 @@ export class ProductsService {
 
   return createdProduct;
 }
+
+  async initializeValuation(tenantId: string, userId: string, id: string, dto: InitializeProductValuationDto) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid tenant, user or product ID');
+    }
+    if (!Number.isFinite(dto.unitCost) || dto.unitCost < 0 || !dto.reason?.trim()) {
+      throw new BadRequestException('A valid non-negative unit cost and reconciliation reason are required');
+    }
+    const session = await this.products.db.startSession();
+    let initialized: ProductDocument | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const product = await this.products.findOne(tenantFilter(tenantId, {
+          _id: new Types.ObjectId(id), isDeleted: false, trackStock: true,
+        })).session(session);
+        if (!product) throw new NotFoundException('Stock-tracked product not found');
+        if (product.valuationInitialized) {
+          throw new ConflictException('Inventory valuation has already been initialized for this product');
+        }
+        const unitCostPaise = Math.round((dto.unitCost + Number.EPSILON) * 100);
+        const openingValuePaise = unitCostPaise * product.stockQty;
+        const updated = await this.products.findOneAndUpdate(
+          tenantFilter(tenantId, {
+            _id: product._id, isDeleted: false, valuationInitialized: { $ne: true },
+            stockQty: product.stockQty,
+          }),
+          { $set: {
+            averageCost: unitCostPaise / 100,
+            inventoryValue: openingValuePaise / 100,
+            valuationInitialized: true,
+          } },
+          { new: true, session, runValidators: true },
+        );
+        if (!updated) throw new ConflictException('Product stock changed during valuation reconciliation');
+        if (openingValuePaise > 0) {
+          await this.accounting.postOperationalJournal({
+            tenantId, userId, postingDate: new Date(),
+            narration: `Opening inventory valuation: ${product.name} - ${dto.reason.trim()}`,
+            sourceType: 'INVENTORY',
+            sourceId: `PRODUCT_VALUATION_OPENING:${product._id.toString()}`,
+            lines: [
+              { accountCode: '1200', debit: openingValuePaise / 100, credit: 0, description: 'Recognize opening inventory asset' },
+              { accountCode: '3200', debit: 0, credit: openingValuePaise / 100, description: 'Opening balance equity' },
+            ],
+            session,
+          });
+        }
+        initialized = updated;
+      });
+    } finally {
+      await session.endSession();
+    }
+    if (!initialized) throw new Error('Inventory valuation initialization failed');
+    return initialized;
+  }
 
   async findAll(tenantId: string, query: ListProductsDto) {
     const page = query.page ?? 1;

@@ -15,6 +15,7 @@ import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ListProductsDto } from './dto/list-products.dto';
+import { InitializeProductValuationDto } from './dto/initialize-product-valuation.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 
 type AuthenticatedRequest = Request & {
@@ -42,6 +43,18 @@ export class ProductsController {
   req.user.userId,
   dto,
 );
+  }
+
+  @Roles('owner', 'admin')
+  @Post(':id/initialize-valuation')
+  initializeValuation(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: InitializeProductValuationDto,
+  ) {
+    return this.productsService.initializeValuation(
+      req.user.tenantId, req.user.userId, id, dto,
+    );
   }
 
   @Get()

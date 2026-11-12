@@ -37,7 +37,7 @@ export class CreatePurchaseDto {
 
   @IsOptional()
   @IsDateString()
-  @Matches(/^\\d{4}-\\d{2}-\\d{2}$/)
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
   supplierInvoiceDate?: string;
 
   @IsOptional()

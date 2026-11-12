@@ -15,6 +15,7 @@ import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { ReceivePurchaseDto } from './dto/receive-purchase.dto';
 import { ListPurchasesDto } from './dto/list-purchases.dto';
 import { AddPurchasePaymentDto } from './dto/add-purchase-payment.dto';
+import { AccountingService } from '../accounting/accounting.service';
 
 @Injectable()
 export class PurchasesService {
@@ -23,6 +24,7 @@ export class PurchasesService {
     @InjectModel(Product.name) private readonly products: Model<ProductDocument>,
     @InjectModel(Supplier.name) private readonly suppliers: Model<SupplierDocument>,
     @InjectModel(InventoryMovement.name) private readonly movements: Model<InventoryMovementDocument>,
+    private readonly accounting: AccountingService,
   ) {}
 
 
@@ -56,6 +58,15 @@ export class PurchasesService {
         purchase.paidAmount = this.fromPaise(paidPaise + amountPaise);
         purchase.dueAmount = this.fromPaise(totalPaise - paidPaise - amountPaise);
         await purchase.save({ session });
+        await this.accounting.postOperationalJournal({
+          tenantId, userId, postingDate: new Date(), narration: `Supplier payment for ${purchase.purchaseNumber}`,
+          sourceType: 'PAYMENT',
+          sourceId: `PURCHASE_PAYMENT:${purchase._id.toString()}:${dto.idempotencyKey}`,
+          lines: [
+            { accountCode: '2000', debit: this.fromPaise(amountPaise), credit: 0, description: 'Accounts payable settlement' },
+            { accountCode: dto.method === 'CASH' ? '1000' : '1010', debit: 0, credit: this.fromPaise(amountPaise), description: `Paid via ${dto.method}` },
+          ], session,
+        });
         result = purchase;
       });
     } finally { await session.endSession(); }

@@ -271,6 +271,9 @@ export class AccountingService {
     if (accounts.length !== normalized.length) {
       throw new BadRequestException('One or more accounts are inactive or do not belong to this business');
     }
+    if (accounts.some((account) => ['1300', '2100'].includes(account.code))) {
+      await this.taxPeriods.assertOpen(tenantId, date);
+    }
     const accountMap = new Map(accounts.map((account) => [account._id.toString(), account]));
     const id = new Types.ObjectId();
     const entryNumber = `JV/${this.financialYear(date)}/${id.toString().slice(-8).toUpperCase()}`;

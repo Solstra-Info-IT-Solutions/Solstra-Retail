@@ -617,6 +617,146 @@ export class ReportsService {
     };
   }
 
+  async cashFlowStatement(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const cashCodes = ['1000', '1010'];
+
+    const [openingRows, periodEntries, accounts] = await Promise.all([
+      this.journals.aggregate([
+        { $match: tenantFilter(tenantId, { status: 'POSTED', postingDate: { $lt: start } }) },
+        { $unwind: '$lines' },
+        { $match: { 'lines.accountCode': { $in: cashCodes } } },
+        { $group: {
+          _id: null,
+          debit: { $sum: '$lines.debit' },
+          credit: { $sum: '$lines.credit' },
+        } },
+      ]),
+      this.journals.aggregate([
+        { $match: tenantFilter(tenantId, { status: 'POSTED', postingDate: { $gte: start, $lte: end } }) },
+        { $project: {
+          entryNumber: 1, postingDate: 1, narration: 1, sourceType: 1,
+          lines: 1,
+        } },
+        { $sort: { postingDate: 1, entryNumber: 1 } },
+      ]),
+      this.accounts.find(tenantFilter(tenantId, { isActive: true }))
+        .select('code name type').lean(),
+    ]);
+
+    const accountByCode = new Map(accounts.map((account: any) => [account.code, account]));
+    const totals = {
+      operating: { inflows: 0, outflows: 0 },
+      investing: { inflows: 0, outflows: 0 },
+      financing: { inflows: 0, outflows: 0 },
+      unclassified: { inflows: 0, outflows: 0 },
+    };
+    const unclassifiedAccounts = new Map<string, { code: string; name: string; inflows: number; outflows: number }>();
+    let cashInflows = 0;
+    let cashOutflows = 0;
+
+    const classify = (code: string, type?: string): keyof typeof totals => {
+      if (type === 'EQUITY') return 'financing';
+      if (type === 'ASSET') {
+        if (/^(11|12|13|14)\d{2}$/.test(code)) return 'operating';
+        return 'investing';
+      }
+      if (type === 'LIABILITY') {
+        if (/^(20|21|22)\d{2}$/.test(code)) return 'operating';
+        return 'financing';
+      }
+      if (type === 'INCOME' || type === 'EXPENSE') return 'operating';
+      return 'unclassified';
+    };
+
+    const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+    for (const entry of periodEntries as any[]) {
+      const cashDebit = round(entry.lines
+        .filter((line: any) => cashCodes.includes(line.accountCode))
+        .reduce((sum: number, line: any) => sum + line.debit, 0));
+      const cashCredit = round(entry.lines
+        .filter((line: any) => cashCodes.includes(line.accountCode))
+        .reduce((sum: number, line: any) => sum + line.credit, 0));
+      const net = round(cashDebit - cashCredit);
+      if (net === 0) continue;
+
+      cashInflows += Math.max(0, net);
+      cashOutflows += Math.max(0, -net);
+
+      const counterpartLines = entry.lines.filter((line: any) => !cashCodes.includes(line.accountCode));
+      const side = net > 0 ? 'credit' : 'debit';
+      const candidateLines = counterpartLines.filter((line: any) => line[side] > 0);
+      const candidateTotal = candidateLines.reduce((sum: number, line: any) => sum + line[side], 0);
+      const amount = Math.abs(net);
+      let allocated = 0;
+
+      candidateLines.forEach((line: any, index: number) => {
+        const account = accountByCode.get(line.accountCode);
+        const category = classify(line.accountCode, account?.type);
+        const share = index === candidateLines.length - 1
+          ? round(amount - allocated)
+          : round(amount * (line[side] / (candidateTotal || amount)));
+        allocated = round(allocated + share);
+        if (share <= 0) return;
+        if (net > 0) totals[category].inflows = round(totals[category].inflows + share);
+        else totals[category].outflows = round(totals[category].outflows + share);
+
+        if (category === 'unclassified') {
+          const key = line.accountCode;
+          const detail = unclassifiedAccounts.get(key) ?? {
+            code: line.accountCode, name: line.accountName, inflows: 0, outflows: 0,
+          };
+          if (net > 0) detail.inflows = round(detail.inflows + share);
+          else detail.outflows = round(detail.outflows + share);
+          unclassifiedAccounts.set(key, detail);
+        }
+      });
+
+      const residual = round(amount - allocated);
+      if (residual > 0) {
+        if (net > 0) totals.unclassified.inflows = round(totals.unclassified.inflows + residual);
+        else totals.unclassified.outflows = round(totals.unclassified.outflows + residual);
+      }
+    }
+
+    const openingBalance = round((openingRows[0]?.debit ?? 0) - (openingRows[0]?.credit ?? 0));
+    const netOperating = round(totals.operating.inflows - totals.operating.outflows);
+    const netInvesting = round(totals.investing.inflows - totals.investing.outflows);
+    const netFinancing = round(totals.financing.inflows - totals.financing.outflows);
+    const netUnclassified = round(totals.unclassified.inflows - totals.unclassified.outflows);
+    const netMovement = round(cashInflows - cashOutflows);
+    const closingBalance = round(openingBalance + netMovement);
+
+    return {
+      from: start,
+      to: end,
+      currency: 'INR',
+      amountUnit: 'RUPEES',
+      basis: 'POSTED_JOURNAL_ENTRIES',
+      method: 'DIRECT',
+      cashAccounts: cashCodes,
+      openingCashAndBank: openingBalance,
+      operating: { ...totals.operating, net: netOperating },
+      investing: { ...totals.investing, net: netInvesting },
+      financing: { ...totals.financing, net: netFinancing },
+      unclassified: {
+        ...totals.unclassified,
+        net: netUnclassified,
+        accounts: [...unclassifiedAccounts.values()].sort((a, b) => a.code.localeCompare(b.code)),
+      },
+      netCashMovement: netMovement,
+      closingCashAndBank: closingBalance,
+      reconciliation: {
+        journalCashMovement: netMovement,
+        classifiedMovement: round(netOperating + netInvesting + netFinancing + netUnclassified),
+        difference: round(netMovement - netOperating - netInvesting - netFinancing - netUnclassified),
+        reconciled: Math.abs(netMovement - netOperating - netInvesting - netFinancing - netUnclassified) < 0.01,
+      },
+      generatedAt: new Date(),
+    };
+  }
+
   async cashBankBook(tenantId: string, dto: ReportDateRangeDto) {
     this.validateTenant(tenantId);
     const { start, end } = this.resolveRange(dto);

@@ -133,7 +133,7 @@ export class AccountingService {
   }
 
   async reverseOperationalJournal(input: {
-    tenantId: string; userId: string; sourceType: 'SALES' | 'PURCHASE' | 'PAYMENT';
+    tenantId: string; userId: string; sourceType: 'SALES' | 'PURCHASE' | 'PAYMENT' | 'INVENTORY';
     sourceId: string; reason: string; session: ClientSession;
   }) {
     const original = await this.journals.findOne(tenantFilter(input.tenantId, {

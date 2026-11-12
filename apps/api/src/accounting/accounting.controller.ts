@@ -3,6 +3,7 @@ import { Request } from 'express';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CreateAccountDto } from './dto/create-account.dto';
 import { CreateJournalEntryDto } from './dto/create-journal-entry.dto';
+import { ReverseJournalDto } from './dto/reverse-journal.dto';
 import { AccountingService } from './accounting.service';
 
 type AuthenticatedRequest = Request & { user: { tenantId: string; userId: string } };
@@ -35,7 +36,7 @@ export class AccountingController {
 
   @Roles('owner', 'admin')
   @Post('journals/:id/reverse')
-  reverseJournal(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body('reason') reason: string) {
-    return this.accounting.reverseJournal(req.user.tenantId, req.user.userId, id, reason);
+  reverseJournal(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: ReverseJournalDto) {
+    return this.accounting.reverseJournal(req.user.tenantId, req.user.userId, id, dto.reason);
   }
 }

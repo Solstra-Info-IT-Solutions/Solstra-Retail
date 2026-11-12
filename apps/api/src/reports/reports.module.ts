@@ -17,6 +17,8 @@ import {
   InventoryMovement,
   InventoryMovementSchema,
 } from '../inventory/schemas/inventory-movement.schema';
+import { Account, AccountSchema } from '../accounting/schemas/account.schema';
+import { JournalEntry, JournalEntrySchema } from '../accounting/schemas/journal-entry.schema';
 
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
@@ -31,6 +33,8 @@ import { ReportsService } from './reports.service';
         name: InventoryMovement.name,
         schema: InventoryMovementSchema,
       },
+      { name: Account.name, schema: AccountSchema },
+      { name: JournalEntry.name, schema: JournalEntrySchema },
     ]),
   ],
   controllers: [ReportsController],

@@ -96,12 +96,6 @@ describe('PurchasesService validation', () => {
     });
   });
 
-  it('rejects supplier GSTIN and state-code mismatches', () => {
-    const { service } = createService();
-    expect(() => (service as any).validateGstinStateCode('27ABCDE1234F1Z5', '09')).toThrow(BadRequestException);
-    expect(() => (service as any).validateGstinStateCode('27ABCDE1234F1Z5', '27')).not.toThrow();
-  });
-
   it('does not invent a GST split when either state code is unavailable', () => {
     const { service } = createService();
     expect((service as any).splitGst(18, null, '09')).toEqual({

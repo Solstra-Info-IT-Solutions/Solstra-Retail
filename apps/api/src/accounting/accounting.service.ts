@@ -9,6 +9,7 @@ import { CreateJournalEntryDto } from './dto/create-journal-entry.dto';
 import { CreateOpeningBalanceDto } from './dto/create-opening-balance.dto';
 import { Account, AccountDocument, AccountType } from './schemas/account.schema';
 import { JournalEntry, JournalEntryDocument } from './schemas/journal-entry.schema';
+import { TaxPeriodsService } from './tax-periods.service';
 
 const DEFAULT_ACCOUNTS = [
   ['1000', 'Cash', 'ASSET'], ['1010', 'Bank', 'ASSET'],
@@ -29,6 +30,7 @@ export class AccountingService {
   constructor(
     @InjectModel(Account.name) private readonly accounts: Model<AccountDocument>,
     @InjectModel(JournalEntry.name) private readonly journals: Model<JournalEntryDocument>,
+    private readonly taxPeriods: TaxPeriodsService,
   ) {}
 
   private paise(value: number): number {
@@ -335,6 +337,9 @@ export class AccountingService {
       throw new BadRequestException('One or more accounts are inactive or do not belong to this business');
     }
     const accountMap = new Map(accounts.map((account) => [account._id.toString(), account]));
+    if (accounts.some((account) => ['1300', '2100'].includes(account.code))) {
+      await this.taxPeriods.assertOpen(tenantId, date);
+    }
     const totalDebitPaise = normalized.reduce((sum, line) => sum + line.debit, 0);
     const totalCreditPaise = normalized.reduce((sum, line) => sum + line.credit, 0);
     if (totalDebitPaise <= 0 || totalDebitPaise !== totalCreditPaise) {
@@ -400,6 +405,9 @@ export class AccountingService {
     }
     if (original.sourceId === 'OPENING_BALANCES') {
       throw new ConflictException('Opening balances are immutable; use a separately audited adjustment journal');
+    }
+    if (original.lines.some((line) => ['1300', '2100'].includes(line.accountCode))) {
+      await this.taxPeriods.assertOpen(tenantId, original.postingDate);
     }
     if (original.status !== 'POSTED' || original.reversalOf) {
       throw new ConflictException('Only an unreversed posted journal can be reversed');

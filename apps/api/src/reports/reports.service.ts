@@ -25,6 +25,8 @@ import {
 import { ReportDateRangeDto } from './dto/report-date-range.dto';
 import { Account, AccountDocument } from '../accounting/schemas/account.schema';
 import { JournalEntry, JournalEntryDocument } from '../accounting/schemas/journal-entry.schema';
+import { Purchase, PurchaseDocument } from '../purchases/schemas/purchase.schema';
+import { Supplier, SupplierDocument } from '../suppliers/schemas/supplier.schema';
 
 type DateRange = {
   start: Date;
@@ -51,6 +53,12 @@ export class ReportsService {
 
     @InjectModel(JournalEntry.name)
     private readonly journals: Model<JournalEntryDocument>,
+
+    @InjectModel(Purchase.name)
+    private readonly purchases: Model<PurchaseDocument>,
+
+    @InjectModel(Supplier.name)
+    private readonly suppliers: Model<SupplierDocument>,
   ) {}
 
   private resolveRange(dto: ReportDateRangeDto): DateRange {
@@ -422,6 +430,256 @@ export class ReportsService {
       refundsRupees,
       paymentMethods,
       topProducts,
+    };
+  }
+
+
+  async gstr1(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const [invoices, creditNotes] = await Promise.all([
+      this.invoices.find(tenantFilter(tenantId, {
+        status: 'ISSUED', invoiceDate: { $gte: start, $lte: end },
+      })).select(
+        'invoiceNumber invoiceDate customerName customerGstin placeOfSupplyStateCode financialYear items taxableValue cgstTotal sgstTotal igstTotal totalTax grandTotal',
+      ).sort({ invoiceDate: 1, invoiceNumber: 1 }).lean(),
+      this.creditNotes.find(tenantFilter(tenantId, {
+        creditNoteDate: { $gte: start, $lte: end },
+      })).select(
+        'creditNoteNumber creditNoteDate invoiceId originalInvoiceNumber items taxableValue cgstTotal sgstTotal igstTotal totalTax totalAmount reason',
+      ).sort({ creditNoteDate: 1, creditNoteNumber: 1 }).lean(),
+    ]);
+    const invoiceById = new Map(invoices.map((invoice: any) => [String(invoice._id), invoice]));
+    const creditInvoiceIds = [...new Set(creditNotes.map((note: any) => String(note.invoiceId)))];
+    const linkedInvoices = creditInvoiceIds.length
+      ? await this.invoices.find(tenantFilter(tenantId, {
+          _id: { $in: creditInvoiceIds.map((id) => new Types.ObjectId(id)) },
+        })).select('_id customerGstin placeOfSupplyStateCode').lean()
+      : [];
+    const linkedById = new Map(linkedInvoices.map((invoice: any) => [String(invoice._id), invoice]));
+    const totals = invoices.reduce((sum: any, invoice: any) => ({
+      taxableValue: sum.taxableValue + (invoice.taxableValue || 0),
+      cgst: sum.cgst + (invoice.cgstTotal || 0),
+      sgst: sum.sgst + (invoice.sgstTotal || 0),
+      igst: sum.igst + (invoice.igstTotal || 0),
+      tax: sum.tax + (invoice.totalTax || 0),
+      invoiceValue: sum.invoiceValue + (invoice.grandTotal || 0),
+    }), { taxableValue: 0, cgst: 0, sgst: 0, igst: 0, tax: 0, invoiceValue: 0 });
+    const creditTotals = creditNotes.reduce((sum: any, note: any) => ({
+      taxableValue: sum.taxableValue + (note.taxableValue || 0),
+      cgst: sum.cgst + (note.cgstTotal || 0),
+      sgst: sum.sgst + (note.sgstTotal || 0),
+      igst: sum.igst + (note.igstTotal || 0),
+      tax: sum.tax + (note.totalTax || 0),
+      noteValue: sum.noteValue + (note.totalAmount || 0),
+    }), { taxableValue: 0, cgst: 0, sgst: 0, igst: 0, tax: 0, noteValue: 0 });
+    const b2b = invoices.filter((invoice: any) => Boolean(invoice.customerGstin));
+    const b2c = invoices.filter((invoice: any) => !invoice.customerGstin);
+    return {
+      from: start, to: end, currency: 'INR', amountUnit: 'RUPEES',
+      basis: 'ISSUED_SALES_INVOICES_AND_DATED_CREDIT_NOTES',
+      classificationNote: 'B2C contains all invoices without a customer GSTIN; B2C large/small turnover thresholds and place-of-supply filing rules are not applied.',
+      b2b: { invoiceCount: b2b.length, invoices: b2b },
+      b2c: { invoiceCount: b2c.length, invoices: b2c },
+      creditNotes: creditNotes.map((note: any) => ({
+        ...note,
+        customerGstin: linkedById.get(String(note.invoiceId))?.customerGstin ?? null,
+        placeOfSupplyStateCode: linkedById.get(String(note.invoiceId))?.placeOfSupplyStateCode ?? null,
+      })),
+      totals: {
+        invoice: totals,
+        creditNotes: creditTotals,
+        net: {
+          taxableValue: Math.round((totals.taxableValue - creditTotals.taxableValue) * 100) / 100,
+          cgst: Math.round((totals.cgst - creditTotals.cgst) * 100) / 100,
+          sgst: Math.round((totals.sgst - creditTotals.sgst) * 100) / 100,
+          igst: Math.round((totals.igst - creditTotals.igst) * 100) / 100,
+          tax: Math.round((totals.tax - creditTotals.tax) * 100) / 100,
+          invoiceValue: Math.round((totals.invoiceValue - creditTotals.noteValue) * 100) / 100,
+        },
+      },
+    };
+  }
+
+  async gstr3b(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const [invoices, creditNotes, purchases] = await Promise.all([
+      this.invoices.find(tenantFilter(tenantId, {
+        status: 'ISSUED', invoiceDate: { $gte: start, $lte: end },
+      })).select('taxableValue cgstTotal sgstTotal igstTotal totalTax').lean(),
+      this.creditNotes.find(tenantFilter(tenantId, {
+        creditNoteDate: { $gte: start, $lte: end },
+      })).select('taxableValue cgstTotal sgstTotal igstTotal totalTax').lean(),
+      this.purchases.find(tenantFilter(tenantId, {
+        status: { $ne: 'CANCELLED' }, purchaseDate: { $gte: start, $lte: end },
+      })).select('supplierId subtotal gstTotal items status purchaseNumber supplierInvoiceNumber purchaseDate').lean(),
+    ]);
+    const sum = (rows: any[], field: string) => rows.reduce((total, row) => total + (row[field] || 0), 0);
+    const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+    const outward = {
+      taxableValue: round(sum(invoices, 'taxableValue') - sum(creditNotes, 'taxableValue')),
+      cgst: round(sum(invoices, 'cgstTotal') - sum(creditNotes, 'cgstTotal')),
+      sgst: round(sum(invoices, 'sgstTotal') - sum(creditNotes, 'sgstTotal')),
+      igst: round(sum(invoices, 'igstTotal') - sum(creditNotes, 'igstTotal')),
+      totalTax: round(sum(invoices, 'totalTax') - sum(creditNotes, 'totalTax')),
+    };
+    const inputTax = round(sum(purchases, 'gstTotal'));
+    const supplierIds = [...new Set(purchases.map((purchase: any) => String(purchase.supplierId)))];
+    const suppliers = supplierIds.length
+      ? await this.suppliers.find(tenantFilter(tenantId, {
+          _id: { $in: supplierIds.map((id) => new Types.ObjectId(id)) },
+        })).select('_id gstin name').lean()
+      : [];
+    const supplierById = new Map(suppliers.map((supplier: any) => [String(supplier._id), supplier]));
+    const purchasesMissingGstin = purchases.filter((purchase: any) =>
+      !supplierById.get(String(purchase.supplierId))?.gstin,
+    ).length;
+    return {
+      from: start, to: end, currency: 'INR', amountUnit: 'RUPEES',
+      basis: 'ISSUED_SALES_INVOICES_AND_NON_CANCELLED_PURCHASE_RECORDS',
+      outwardTaxableSupplies: {
+        invoiceCount: invoices.length,
+        creditNoteCount: creditNotes.length,
+        ...outward,
+      },
+      inwardSupplies: {
+        purchaseCount: purchases.length,
+        taxableValue: round(sum(purchases, 'subtotal')),
+        grossInputTaxRecorded: inputTax,
+        cgst: null, sgst: null, igst: null,
+        taxSplitStatus: 'NOT_STORED_ON_PURCHASE_RECORDS',
+        purchasesMissingSupplierGstin: purchasesMissingGstin,
+        eligibilityStatus: 'UNVERIFIED_REQUIRES_INVOICE_AND_ITC_ELIGIBILITY_REVIEW',
+      },
+      netTaxPosition: {
+        outputTaxAfterCreditNotes: outward.totalTax,
+        lessRecordedInputTax: inputTax,
+        indicativeNetTax: round(outward.totalTax - inputTax),
+        status: 'INDICATIVE_NOT_A_FILE_READY_GSTR3B',
+      },
+      limitations: [
+        'Purchase records currently store one combined GST amount and do not preserve CGST, SGST or IGST split.',
+        'Input tax credit eligibility, blocked credits, reverse charge, imports, advances and prior-period adjustments are not represented by the current source records.',
+        'Supplier GSTIN is read from the current supplier profile and may not be a historical snapshot from the purchase date.',
+      ],
+    };
+  }
+
+  async hsnSummary(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const [invoices, creditNotes] = await Promise.all([
+      this.invoices.find(tenantFilter(tenantId, {
+        status: 'ISSUED', invoiceDate: { $gte: start, $lte: end },
+      })).select('items').lean(),
+      this.creditNotes.find(tenantFilter(tenantId, {
+        creditNoteDate: { $gte: start, $lte: end },
+      })).select('invoiceId items').lean(),
+    ]);
+    const invoiceIds = [...new Set(creditNotes.map((note: any) => String(note.invoiceId)))];
+    const originals = invoiceIds.length
+      ? await this.invoices.find(tenantFilter(tenantId, {
+          _id: { $in: invoiceIds.map((id) => new Types.ObjectId(id)) },
+        })).select('_id items').lean()
+      : [];
+    const originalById = new Map(originals.map((invoice: any) => [String(invoice._id), invoice]));
+    const grouped = new Map<string, any>();
+    const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+    const add = (item: any, sign: number, originalItem?: any) => {
+      const hsnCode = item.hsnCode || originalItem?.hsnCode || '';
+      const gstRate = item.gstRate ?? originalItem?.gstRate ?? 0;
+      const key = `${hsnCode || 'MISSING'}|${gstRate}`;
+      const row = grouped.get(key) ?? {
+        hsnCode: hsnCode || null, gstRate, quantity: 0, taxableValue: 0,
+        cgst: 0, sgst: 0, igst: 0, totalTax: 0, lineCount: 0,
+      };
+      row.quantity = round(row.quantity + sign * (item.quantity || 0));
+      row.taxableValue = round(row.taxableValue + sign * (item.taxableValue || 0));
+      row.cgst = round(row.cgst + sign * (item.cgstAmount || 0));
+      row.sgst = round(row.sgst + sign * (item.sgstAmount || 0));
+      row.igst = round(row.igst + sign * (item.igstAmount || 0));
+      row.totalTax = round(row.totalTax + sign * (item.totalTax || 0));
+      row.lineCount += sign;
+      grouped.set(key, row);
+    };
+    for (const invoice of invoices as any[]) {
+      for (const item of invoice.items || []) add(item, 1);
+    }
+    for (const note of creditNotes as any[]) {
+      const original = originalById.get(String(note.invoiceId));
+      for (const item of note.items || []) {
+        const originalItem = original?.items?.[item.lineIndex];
+        add(item, -1, originalItem);
+      }
+    }
+    const rows = [...grouped.values()].sort((a, b) =>
+      String(a.hsnCode || '').localeCompare(String(b.hsnCode || '')) || a.gstRate - b.gstRate,
+    );
+    return {
+      from: start, to: end, currency: 'INR', amountUnit: 'RUPEES',
+      basis: 'INVOICE_ITEMS_LESS_CREDIT_NOTE_ITEMS',
+      rows,
+      totals: rows.reduce((sum, row) => ({
+        quantity: round(sum.quantity + row.quantity),
+        taxableValue: round(sum.taxableValue + row.taxableValue),
+        cgst: round(sum.cgst + row.cgst),
+        sgst: round(sum.sgst + row.sgst),
+        igst: round(sum.igst + row.igst),
+        totalTax: round(sum.totalTax + row.totalTax),
+      }), { quantity: 0, taxableValue: 0, cgst: 0, sgst: 0, igst: 0, totalTax: 0 }),
+      missingHsnLineCount: rows.filter((row) => !row.hsnCode).reduce((sum, row) => sum + Math.max(0, row.lineCount), 0),
+    };
+  }
+
+  async gstReconciliation(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const [invoices, creditNotes, purchases, journalRows] = await Promise.all([
+      this.invoices.find(tenantFilter(tenantId, {
+        status: 'ISSUED', invoiceDate: { $gte: start, $lte: end },
+      })).select('totalTax').lean(),
+      this.creditNotes.find(tenantFilter(tenantId, {
+        creditNoteDate: { $gte: start, $lte: end },
+      })).select('totalTax').lean(),
+      this.purchases.find(tenantFilter(tenantId, {
+        status: { $ne: 'CANCELLED' }, purchaseDate: { $gte: start, $lte: end },
+      })).select('gstTotal').lean(),
+      this.journals.aggregate([
+        { $match: tenantFilter(tenantId, {
+          status: 'POSTED', postingDate: { $gte: start, $lte: end },
+        }) },
+        { $unwind: '$lines' },
+        { $match: { 'lines.accountCode': { $in: ['1300', '2100'] } } },
+        { $group: {
+          _id: '$lines.accountCode',
+          debit: { $sum: '$lines.debit' },
+          credit: { $sum: '$lines.credit' },
+        } },
+      ]),
+    ]);
+    const sum = (rows: any[], field: string) => rows.reduce((total, row) => total + (row[field] || 0), 0);
+    const inputLedger = journalRows.find((row: any) => row._id === '1300');
+    const outputLedger = journalRows.find((row: any) => row._id === '2100');
+    const sourceInput = sum(purchases, 'gstTotal');
+    const sourceOutput = sum(invoices, 'totalTax') - sum(creditNotes, 'totalTax');
+    const ledgerInput = (inputLedger?.debit || 0) - (inputLedger?.credit || 0);
+    const ledgerOutput = (outputLedger?.credit || 0) - (outputLedger?.debit || 0);
+    const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+    return {
+      from: start, to: end, currency: 'INR', amountUnit: 'RUPEES',
+      basis: 'SOURCE_DOCUMENTS_VS_POSTED_GST_CONTROL_ACCOUNTS',
+      inputTax: {
+        sourcePurchaseTax: round(sourceInput), ledgerNetDebit: round(ledgerInput),
+        difference: round(sourceInput - ledgerInput),
+        reconciled: Math.abs(sourceInput - ledgerInput) < 0.01,
+      },
+      outputTax: {
+        sourceInvoiceTaxLessCreditNotes: round(sourceOutput), ledgerNetCredit: round(ledgerOutput),
+        difference: round(sourceOutput - ledgerOutput),
+        reconciled: Math.abs(sourceOutput - ledgerOutput) < 0.01,
+      },
+      note: 'Differences can arise when a source document is cancelled or reversed in a different accounting period; review the underlying journals before filing.',
     };
   }
 

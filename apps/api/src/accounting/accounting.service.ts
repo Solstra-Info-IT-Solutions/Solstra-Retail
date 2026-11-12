@@ -18,6 +18,9 @@ const DEFAULT_ACCOUNTS = [
   ['4100', 'Other Income', 'INCOME'], ['5000', 'Cost of Goods Sold', 'EXPENSE'],
   ['5100', 'Purchase Expense', 'EXPENSE'], ['5200', 'Operating Expenses', 'EXPENSE'],
   ['5300', 'Bank Charges', 'EXPENSE'],
+  ['3200', 'Opening Balance Equity', 'EQUITY'],
+  ['5400', 'Inventory Shrinkage', 'EXPENSE'],
+  ['5500', 'Inventory Gain', 'INCOME'],
 ] as const;
 
 @Injectable()
@@ -43,7 +46,7 @@ export class AccountingService {
     userId: string;
     postingDate: Date;
     narration: string;
-    sourceType: 'SALES' | 'PAYMENT' | 'PURCHASE' | 'REFUND';
+    sourceType: 'SALES' | 'PAYMENT' | 'PURCHASE' | 'REFUND' | 'INVENTORY';
     sourceId: string;
     lines: Array<{ accountCode: string; debit: number; credit: number; description?: string }>;
     session: ClientSession;

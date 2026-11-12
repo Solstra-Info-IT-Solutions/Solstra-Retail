@@ -11,7 +11,7 @@ import { JournalEntry, JournalEntryDocument } from './schemas/journal-entry.sche
 
 const DEFAULT_ACCOUNTS = [
   ['1000', 'Cash', 'ASSET'], ['1010', 'Bank', 'ASSET'],
-  ['1100', 'Accounts Receivable', 'ASSET'], ['1200', 'Inventory', 'ASSET'],
+  ['1100', 'Accounts Receivable', 'ASSET'], ['1200', 'Inventory', 'ASSET'], ['1210', 'Inventory in Transit', 'ASSET'],
   ['1300', 'Input GST', 'ASSET'], ['2000', 'Accounts Payable', 'LIABILITY'],
   ['2100', 'Output GST', 'LIABILITY'], ['2200', 'Customer Refunds Payable', 'LIABILITY'], ['3000', 'Owner Capital', 'EQUITY'],
   ['3100', 'Retained Earnings', 'EQUITY'], ['4000', 'Sales Revenue', 'INCOME'],

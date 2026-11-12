@@ -532,7 +532,7 @@ export class ReportsService {
         } },
       ]),
     ]);
-    const byId = new Map(grouped.map((row: any) => [String(row._id.accountId), row]));
+    const byId = new Map<string, any>(grouped.map((row: any) => [String(row._id.accountId), row] as [string, any]));
     return accounts.map((account: any) => {
       const row: any = byId.get(String(account._id));
       const debit = Math.round((row?.debit ?? 0) * 100) / 100;

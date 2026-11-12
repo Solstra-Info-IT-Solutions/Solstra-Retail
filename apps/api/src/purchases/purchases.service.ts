@@ -299,6 +299,13 @@ export class PurchasesService {
           if (product.trackStock) {
             const previousQty = product.stockQty;
             const newQty = previousQty + quantity;
+            if (previousQty > 0 && !product.valuationInitialized) {
+              throw new ConflictException(`Opening inventory valuation is required for ${line.name} before receiving more stock.`);
+            }
+            const previousValuePaise = previousQty > 0 ? this.toPaise(product.inventoryValue || 0) : 0;
+            const receivedValuePaise = this.toPaise(line.unitCost) * quantity;
+            const nextValuePaise = previousValuePaise + receivedValuePaise;
+            const nextAverageCostPaise = newQty > 0 ? Math.round(nextValuePaise / newQty) : 0;
 
             const updated = await this.products.findOneAndUpdate(
               tenantFilter(tenantId, {
@@ -307,7 +314,12 @@ export class PurchasesService {
                 trackStock: true,
                 stockQty: previousQty,
               }),
-              { $set: { stockQty: newQty } },
+              { $set: {
+                stockQty: newQty,
+                inventoryValue: this.fromPaise(nextValuePaise),
+                averageCost: this.fromPaise(nextAverageCostPaise),
+                valuationInitialized: true,
+              } },
               { new: true, session, runValidators: true },
             );
 

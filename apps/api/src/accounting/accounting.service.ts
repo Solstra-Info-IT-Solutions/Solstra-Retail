@@ -13,7 +13,7 @@ const DEFAULT_ACCOUNTS = [
   ['1000', 'Cash', 'ASSET'], ['1010', 'Bank', 'ASSET'],
   ['1100', 'Accounts Receivable', 'ASSET'], ['1200', 'Inventory', 'ASSET'],
   ['1300', 'Input GST', 'ASSET'], ['2000', 'Accounts Payable', 'LIABILITY'],
-  ['2100', 'Output GST', 'LIABILITY'], ['3000', 'Owner Capital', 'EQUITY'],
+  ['2100', 'Output GST', 'LIABILITY'], ['2200', 'Customer Refunds Payable', 'LIABILITY'], ['3000', 'Owner Capital', 'EQUITY'],
   ['3100', 'Retained Earnings', 'EQUITY'], ['4000', 'Sales Revenue', 'INCOME'],
   ['4100', 'Other Income', 'INCOME'], ['5000', 'Cost of Goods Sold', 'EXPENSE'],
   ['5100', 'Purchase Expense', 'EXPENSE'], ['5200', 'Operating Expenses', 'EXPENSE'],

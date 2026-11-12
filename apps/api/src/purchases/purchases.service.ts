@@ -411,45 +411,43 @@ export class PurchasesService {
       throw new BadRequestException('Invalid tenant, purchase or user ID');
     }
 
-    const purchase = await this.purchases.findOneAndUpdate(
-      tenantFilter(tenantId, {
-        _id: new Types.ObjectId(id),
-        status: 'DRAFT',
-        $or: [{ paidAmount: 0 }, { paidAmount: { $exists: false } }],
-      }),
-      {
-        $set: {
-          status: 'CANCELLED',
-          cancelledBy: new Types.ObjectId(userId),
-          cancelledAt: new Date(),
-        },
-      },
-      { new: true, runValidators: true },
-    );
-
-    if (purchase) {
-      const session = await this.purchases.db.startSession();
-      try {
-        await session.withTransaction(async () => {
+    const session = await this.purchases.db.startSession();
+    let purchase: PurchaseDocument | null = null;
+    try {
+      await session.withTransaction(async () => {
+        purchase = await this.purchases.findOneAndUpdate(
+          tenantFilter(tenantId, {
+            _id: new Types.ObjectId(id),
+            status: 'DRAFT',
+            $or: [{ paidAmount: 0 }, { paidAmount: { $exists: false } }],
+          }),
+          {
+            $set: {
+              status: 'CANCELLED',
+              cancelledBy: new Types.ObjectId(userId),
+              cancelledAt: new Date(),
+            },
+          },
+          { new: true, runValidators: true, session },
+        );
+        if (purchase) {
           await this.accounting.reverseOperationalJournal({
             tenantId, userId, sourceType: 'PURCHASE', sourceId: purchase._id.toString(),
             reason: 'Purchase cancelled before stock receipt', session,
           });
-        });
-      } finally { await session.endSession(); }
-      return purchase;
+        }
+      });
+    } finally {
+      await session.endSession();
     }
+    if (purchase) return purchase;
 
     const existing = await this.purchases.exists(
       tenantFilter(tenantId, { _id: new Types.ObjectId(id) }),
     );
-
     if (!existing) throw new NotFoundException('Purchase not found');
-
     throw new ConflictException(
       'Only purchases with no received stock can be cancelled',
     );
   }
 }
-
-

@@ -42,6 +42,14 @@ describe('ReportsService validation', () => {
     expect(invoices.aggregate).not.toHaveBeenCalled();
   });
 
+  it('rejects invalid tenant context in cash flow statement', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.cashFlowStatement('invalid-tenant', {}),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('rejects invalid tenant context in dashboard summary', async () => {
     const { service } = createService();
 

@@ -165,6 +165,68 @@ export class ProductsService {
     return initialized;
   }
 
+  async valuationStatus(tenantId: string, query: ListProductsDto) {
+    if (!Types.ObjectId.isValid(tenantId)) {
+      throw new BadRequestException('Invalid tenant context');
+    }
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const pendingFilter = tenantFilter(tenantId, {
+      isDeleted: false,
+      trackStock: true,
+      valuationInitialized: { $ne: true },
+    });
+    const allTrackedFilter = tenantFilter(tenantId, {
+      isDeleted: false,
+      trackStock: true,
+    });
+
+    const [trackedCount, initializedCount, pendingCount, pendingUnits, items] =
+      await Promise.all([
+        this.products.countDocuments(allTrackedFilter),
+        this.products.countDocuments(tenantFilter(tenantId, {
+          isDeleted: false, trackStock: true, valuationInitialized: true,
+        })),
+        this.products.countDocuments(pendingFilter),
+        this.products.aggregate([
+          { $match: pendingFilter },
+          { $group: { _id: null, units: { $sum: '$stockQty' } } },
+        ]),
+        this.products.find(pendingFilter)
+          .select('name sku barcode category stockQty unit purchasePrice createdAt')
+          .sort({ stockQty: -1, name: 1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .lean(),
+      ]);
+
+    return {
+      summary: {
+        trackedProducts: trackedCount,
+        initializedProducts: initializedCount,
+        pendingProducts: pendingCount,
+        pendingStockUnits: pendingUnits[0]?.units ?? 0,
+        completionPercentage: trackedCount === 0
+          ? 100
+          : Math.round((initializedCount / trackedCount) * 10000) / 100,
+      },
+      items: items.map((product: any) => ({
+        ...product,
+        valuationStatus: 'PENDING_VERIFIED_UNIT_COST',
+        averageCost: null,
+        inventoryValue: null,
+      })),
+      pagination: {
+        total: pendingCount,
+        page,
+        limit,
+        totalPages: Math.ceil(pendingCount / limit),
+      },
+      nextAction: 'Verify the physical stock and source unit cost before calling the product valuation initialization endpoint.',
+    };
+  }
+
   async findAll(tenantId: string, query: ListProductsDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;

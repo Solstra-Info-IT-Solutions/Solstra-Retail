@@ -77,6 +77,15 @@ export class ProductsController {
   }
 
 
+  @Roles('owner', 'admin')
+  @Get('valuation-status')
+  valuationStatus(
+    @Req() req: AuthenticatedRequest,
+    @Query() query: ListProductsDto,
+  ) {
+    return this.productsService.valuationStatus(req.user.tenantId, query);
+  }
+
   @Get(':id')
   findOne(
     @Req() req: AuthenticatedRequest,

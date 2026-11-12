@@ -449,7 +449,6 @@ export class ReportsService {
         'creditNoteNumber creditNoteDate invoiceId originalInvoiceNumber items taxableValue cgstTotal sgstTotal igstTotal totalTax totalAmount reason',
       ).sort({ creditNoteDate: 1, creditNoteNumber: 1 }).lean(),
     ]);
-    const invoiceById = new Map(invoices.map((invoice: any) => [String(invoice._id), invoice]));
     const creditInvoiceIds = [...new Set(creditNotes.map((note: any) => String(note.invoiceId)))];
     const linkedInvoices = creditInvoiceIds.length
       ? await this.invoices.find(tenantFilter(tenantId, {

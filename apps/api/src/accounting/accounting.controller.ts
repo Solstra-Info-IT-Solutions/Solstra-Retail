@@ -3,6 +3,7 @@ import { Request } from 'express';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CreateAccountDto } from './dto/create-account.dto';
 import { CreateJournalEntryDto } from './dto/create-journal-entry.dto';
+import { CreateOpeningBalanceDto } from './dto/create-opening-balance.dto';
 import { ReverseJournalDto } from './dto/reverse-journal.dto';
 import { AccountingService } from './accounting.service';
 
@@ -21,6 +22,12 @@ export class AccountingController {
   @Post('accounts')
   createAccount(@Req() req: AuthenticatedRequest, @Body() dto: CreateAccountDto) {
     return this.accounting.createAccount(req.user.tenantId, req.user.userId, dto);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('opening-balances')
+  createOpeningBalances(@Req() req: AuthenticatedRequest, @Body() dto: CreateOpeningBalanceDto) {
+    return this.accounting.createOpeningBalances(req.user.tenantId, req.user.userId, dto);
   }
 
   @Roles('owner', 'admin')

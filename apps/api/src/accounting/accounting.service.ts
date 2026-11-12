@@ -6,6 +6,7 @@ import { ClientSession, Model, Types } from 'mongoose';
 import { tenantFilter } from '../common/tenant-scoped.service';
 import { CreateAccountDto } from './dto/create-account.dto';
 import { CreateJournalEntryDto } from './dto/create-journal-entry.dto';
+import { CreateOpeningBalanceDto } from './dto/create-opening-balance.dto';
 import { Account, AccountDocument, AccountType } from './schemas/account.schema';
 import { JournalEntry, JournalEntryDocument } from './schemas/journal-entry.schema';
 
@@ -214,6 +215,100 @@ export class AccountingService {
     }
   }
 
+  async createOpeningBalances(tenantId: string, userId: string, dto: CreateOpeningBalanceDto) {
+    this.validateIdentity(tenantId, userId);
+    const date = new Date(dto.postingDate);
+    if (Number.isNaN(date.getTime())) throw new BadRequestException('Invalid posting date');
+    if (!dto.narration.trim()) throw new BadRequestException('Narration is required');
+
+    // Ensure the tenant's standard chart of accounts exists before resolving line accounts.
+    await this.listAccounts(tenantId, userId);
+
+    const normalized = dto.lines.map((line) => {
+      if (!Types.ObjectId.isValid(line.accountId)) {
+        throw new BadRequestException('Invalid account ID');
+      }
+      const debit = this.paise(line.debit);
+      const credit = this.paise(line.credit);
+      if (debit < 0 || credit < 0 || (debit > 0 && credit > 0) || (debit === 0 && credit === 0)) {
+        throw new BadRequestException('Each opening balance line must contain either a positive debit or a positive credit');
+      }
+      return {
+        accountId: new Types.ObjectId(line.accountId),
+        debit,
+        credit,
+        description: line.description?.trim() ?? '',
+      };
+    });
+
+    if (normalized.length < 2) {
+      throw new BadRequestException('At least two opening balance lines are required');
+    }
+    const accountIds = normalized.map((line) => line.accountId.toString());
+    if (new Set(accountIds).size !== accountIds.length) {
+      throw new BadRequestException('Each account can appear only once in opening balances');
+    }
+
+    const totalDebitPaise = normalized.reduce((sum, line) => sum + line.debit, 0);
+    const totalCreditPaise = normalized.reduce((sum, line) => sum + line.credit, 0);
+    if (totalDebitPaise <= 0 || totalDebitPaise !== totalCreditPaise) {
+      throw new BadRequestException('Opening balances are not balanced: total debit must equal total credit');
+    }
+
+    const existing = await this.journals.findOne(tenantFilter(tenantId, {
+      sourceType: 'MANUAL', sourceId: 'OPENING_BALANCES',
+    })).lean();
+    if (existing) {
+      throw new ConflictException('Opening balances have already been recorded for this business');
+    }
+
+    const accounts = await this.accounts.find(tenantFilter(tenantId, {
+      _id: { $in: normalized.map((line) => line.accountId) },
+      isActive: true,
+    })).lean();
+    if (accounts.length !== normalized.length) {
+      throw new BadRequestException('One or more accounts are inactive or do not belong to this business');
+    }
+    const accountMap = new Map(accounts.map((account) => [account._id.toString(), account]));
+    const id = new Types.ObjectId();
+    const entryNumber = `JV/${this.financialYear(date)}/${id.toString().slice(-8).toUpperCase()}`;
+    const lines = normalized.map((line) => {
+      const account = accountMap.get(line.accountId.toString())!;
+      return {
+        accountId: line.accountId,
+        accountCode: account.code,
+        accountName: account.name,
+        debit: line.debit / 100,
+        credit: line.credit / 100,
+        description: line.description,
+      };
+    });
+
+    try {
+      return await this.journals.create({
+        _id: id,
+        tenantId: new Types.ObjectId(tenantId),
+        entryNumber,
+        postingDate: date,
+        financialYear: this.financialYear(date),
+        narration: dto.narration.trim(),
+        sourceType: 'MANUAL',
+        sourceId: 'OPENING_BALANCES',
+        lines,
+        totalDebit: totalDebitPaise / 100,
+        totalCredit: totalCreditPaise / 100,
+        status: 'POSTED',
+        createdBy: new Types.ObjectId(userId),
+        postedAt: new Date(),
+      });
+    } catch (error) {
+      if ((error as { code?: number }).code === 11000) {
+        throw new ConflictException('Opening balances have already been recorded for this business');
+      }
+      throw error;
+    }
+  }
+
   async createJournal(tenantId: string, userId: string, dto: CreateJournalEntryDto) {
     this.validateIdentity(tenantId, userId);
     const date = new Date(dto.postingDate);
@@ -302,6 +397,9 @@ export class AccountingService {
     if (!original) throw new NotFoundException('Journal entry not found');
     if (original.sourceType !== 'MANUAL') {
       throw new ConflictException('Operational journals must be reversed through their originating business workflow');
+    }
+    if (original.sourceId === 'OPENING_BALANCES') {
+      throw new ConflictException('Opening balances are immutable; use a separately audited adjustment journal');
     }
     if (original.status !== 'POSTED' || original.reversalOf) {
       throw new ConflictException('Only an unreversed posted journal can be reversed');

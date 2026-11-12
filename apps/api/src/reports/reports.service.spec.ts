@@ -12,6 +12,9 @@ describe('ReportsService validation', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
     );
 
     return { service, invoices };
@@ -57,4 +60,14 @@ describe('ReportsService validation', () => {
       service.dashboardSummary('invalid-tenant'),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it('rejects invalid tenant context in GST reports before querying data', async () => {
+    const { service, invoices } = createService();
+    await expect(service.gstr1('invalid-tenant', {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.gstr3b('invalid-tenant', {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.hsnSummary('invalid-tenant', {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.gstReconciliation('invalid-tenant', {})).rejects.toBeInstanceOf(BadRequestException);
+    expect(invoices.aggregate).not.toHaveBeenCalled();
+  });
+
 });

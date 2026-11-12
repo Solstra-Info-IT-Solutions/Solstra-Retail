@@ -64,7 +64,7 @@ export class PurchasesService {
   }
 
   async supplierLedger(tenantId: string, supplierId: string, query: ListPurchasesDto) {
-    if (!Types.ObjectId.isValid(supplierId)) throw new BadRequestException('Invalid supplier ID');
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(supplierId)) throw new BadRequestException('Invalid tenant or supplier ID');
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const filter = tenantFilter(tenantId, { supplierId: new Types.ObjectId(supplierId) });
@@ -358,7 +358,7 @@ export class PurchasesService {
       tenantFilter(tenantId, {
         _id: new Types.ObjectId(id),
         status: 'DRAFT',
-        paidAmount: 0,
+        $or: [{ paidAmount: 0 }, { paidAmount: { $exists: false } }],
       }),
       {
         $set: {

@@ -12,6 +12,7 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ListProductsDto } from './dto/list-products.dto';
 import { tenantFilter } from '../common/tenant-scoped.service';
+import { AccountingService } from '../accounting/accounting.service';
 import { Category, CategoryDocument } from '../categories/schemas/category.schema';
 import {
   InventoryMovement,
@@ -27,6 +28,7 @@ export class ProductsService {
     private readonly movements: Model<InventoryMovementDocument>,
     @InjectModel(Category.name)
     private readonly categories: Model<CategoryDocument>,
+    private readonly accounting: AccountingService,
   ) {}
 
   async create(
@@ -54,6 +56,9 @@ export class ProductsService {
         [{
           ...dto,
           ...categoryData,
+          averageCost: dto.purchasePrice,
+          inventoryValue: dto.trackStock === false ? 0 : Number((dto.stockQty ?? 0) * dto.purchasePrice).toFixed(2),
+          valuationInitialized: dto.trackStock !== false,
           tenantId: new Types.ObjectId(tenantId),
         }],
         { session },
@@ -73,6 +78,20 @@ export class ProductsService {
           }],
           { session },
         );
+      }
+
+      if (product.trackStock && product.stockQty > 0) {
+        const openingValue = Number((product.stockQty * product.averageCost).toFixed(2));
+        await this.accounting.postOperationalJournal({
+          tenantId, userId, postingDate: new Date(),
+          narration: `Opening inventory for product ${product.name}`,
+          sourceType: 'INVENTORY', sourceId: `PRODUCT_OPENING:${product._id.toString()}`,
+          lines: [
+            { accountCode: '1200', debit: openingValue, credit: 0, description: 'Opening inventory asset' },
+            { accountCode: '3200', debit: 0, credit: openingValue, description: 'Opening balance equity' },
+          ],
+          session,
+        });
       }
 
       createdProduct = product;

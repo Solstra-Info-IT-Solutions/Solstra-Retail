@@ -623,8 +623,10 @@ export class ReportsService {
     const accounts = await this.accounts.find(tenantFilter(tenantId, {
       code: { $in: ['1000', '1010'] }, isActive: true,
     })).lean();
+    const localDate = (date: Date) =>
+      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     const books = await Promise.all(accounts.map((account: any) =>
-      this.generalLedger(tenantId, account.code, { from: dto.from ?? start.toISOString().slice(0, 10), to: dto.to ?? end.toISOString().slice(0, 10) }),
+      this.generalLedger(tenantId, account.code, { from: dto.from ?? localDate(start), to: dto.to ?? localDate(end) }),
     ));
     return { from: start, to: end, currency: 'INR', books };
   }

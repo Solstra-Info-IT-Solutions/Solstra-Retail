@@ -20,6 +20,7 @@ describe('PurchasesService validation', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
     );
 
     return { service, purchases };

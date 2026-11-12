@@ -82,4 +82,26 @@ export class ReportsController {
       query,
     );
   }
+
+  @Get('reports/gst/gstr1')
+  gstr1(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
+    return this.reportsService.gstr1(req.user.tenantId, query);
+  }
+
+  @Get('reports/gst/gstr3b')
+  gstr3b(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
+    return this.reportsService.gstr3b(req.user.tenantId, query);
+  }
+
+  @Get('reports/gst/hsn-summary')
+  hsnSummary(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
+    return this.reportsService.hsnSummary(req.user.tenantId, query);
+  }
+
+  @Get('reports/gst/reconciliation')
+  gstReconciliation(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
+    return this.reportsService.gstReconciliation(req.user.tenantId, query);
+  }
+
+
 }

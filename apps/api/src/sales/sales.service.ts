@@ -1189,6 +1189,29 @@ if (existingPayment) {
           { session },
         );
 
+        const creditJournalLines: Array<{ accountCode: string; debit: number; credit: number; description: string }> = [];
+        if (taxableTotalPaise > 0) creditJournalLines.push({
+          accountCode: '4000', debit: this.fromPaise(taxableTotalPaise), credit: 0,
+          description: 'Sales revenue reversal',
+        });
+        if (taxTotalPaise > 0) creditJournalLines.push({
+          accountCode: '2100', debit: this.fromPaise(taxTotalPaise), credit: 0,
+          description: 'Output GST liability reversal',
+        });
+        if (appliedToDuePaise > 0) creditJournalLines.push({
+          accountCode: '1100', debit: 0, credit: this.fromPaise(appliedToDuePaise),
+          description: 'Credit applied to customer receivable',
+        });
+        if (refundablePaise > 0) creditJournalLines.push({
+          accountCode: '2200', debit: 0, credit: this.fromPaise(refundablePaise),
+          description: 'Customer refund payable',
+        });
+        await this.accounting.postOperationalJournal({
+          tenantId, userId, postingDate: creditNoteDate,
+          narration: `Credit note ${creditNumber} against ${invoice.invoiceNumber}: ${reason}`,
+          sourceType: 'REFUND', sourceId: `CREDIT_NOTE:${created._id.toString()}`,
+          lines: creditJournalLines, session,
+        });
         result = {
           creditNote: created,
           invoice: updatedInvoice,
@@ -1386,6 +1409,16 @@ if (existingPayment) {
             refund.idempotencyKey === dto.idempotencyKey,
         );
 
+        await this.accounting.postOperationalJournal({
+          tenantId, userId, postingDate: new Date(),
+          narration: `Refund paid for credit note ${creditNote.creditNoteNumber}`,
+          sourceType: 'PAYMENT',
+          sourceId: `CREDIT_NOTE_REFUND:${creditNote._id.toString()}:${dto.idempotencyKey}`,
+          lines: [
+            { accountCode: '2200', debit: this.fromPaise(amountPaise), credit: 0, description: 'Settle customer refund payable' },
+            { accountCode: dto.method === 'CASH' ? '1000' : '1010', debit: 0, credit: this.fromPaise(amountPaise), description: `Refund via ${dto.method}` },
+          ], session,
+        });
         result = {
           creditNote: updatedCreditNote,
           refund: savedRefund,

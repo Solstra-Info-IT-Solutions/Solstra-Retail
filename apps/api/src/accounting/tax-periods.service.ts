@@ -30,7 +30,7 @@ export class TaxPeriodsService {
     try {
       const period = await this.periods.findOneAndUpdate(
         tenantFilter(tenantId, { periodKey, status: { $ne: 'CLOSED' } }),
-        { $setOnInsert: { tenantId: new Types.ObjectId(tenantId), periodKey, startDate, endDate, status: 'OPEN', events: [] }, $inc: { mutationVersion: 1 } },
+        { $setOnInsert: { tenantId: new Types.ObjectId(tenantId), periodKey, startDate, endDate, status: 'OPEN' }, $inc: { mutationVersion: 1 } },
         { upsert: true, new: true, session, setDefaultsOnInsert: true },
       ).lean();
       if (period) return;
@@ -50,17 +50,16 @@ export class TaxPeriodsService {
   async close(tenantId: string, userId: string, dto: TaxPeriodDto) {
     this.validateIdentity(tenantId, userId);
     const { startDate, endDate } = this.bounds(dto.period);
-    const now = new Date();
-    if (endDate >= now) throw new BadRequestException('A GST period can only be closed after the full calendar month has ended');
+    if (endDate >= new Date()) throw new BadRequestException('A GST period can only be closed after the full calendar month has ended');
     const reason = dto.reason.trim();
     if (reason.length < 3) throw new BadRequestException('A closure reason of at least 3 characters is required');
     try {
       const period = await this.periods.findOneAndUpdate(
         tenantFilter(tenantId, { periodKey: dto.period, status: { $ne: 'CLOSED' } }),
-        { $setOnInsert: { tenantId: new Types.ObjectId(tenantId), periodKey: dto.period, startDate, endDate, events: [] },
+        { $setOnInsert: { tenantId: new Types.ObjectId(tenantId), periodKey: dto.period, startDate, endDate },
           $set: { status: 'CLOSED' },
           $inc: { mutationVersion: 1 },
-          $push: { events: { action: 'CLOSED', at: now, by: new Types.ObjectId(userId), reason } } },
+          $push: { events: { action: 'CLOSED', at: new Date(), by: new Types.ObjectId(userId), reason } } },
         { upsert: true, new: true, runValidators: true },
       ).lean();
       if (period) return period;

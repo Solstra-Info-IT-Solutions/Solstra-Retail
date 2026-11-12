@@ -1104,6 +1104,9 @@ if (existingPayment) {
             }
 
             const previousQty = product.stockQty || 0;
+            if (previousQty > 0 && !product.valuationInitialized) {
+              throw new ConflictException(`Opening inventory valuation is required before restocking "${original.name}".`);
+            }
             const newQty = previousQty + requested.quantity;
             const returnedCostPaise = this.toPaise(original.unitCostAtSale || 0) * requested.quantity;
             restockedCostPaise += returnedCostPaise;
@@ -1118,6 +1121,10 @@ if (existingPayment) {
                 inventoryValue: this.fromPaise(
                   this.toPaise(product.inventoryValue || 0) + returnedCostPaise,
                 ),
+                averageCost: newQty > 0
+                  ? this.fromPaise(Math.round((this.toPaise(product.inventoryValue || 0) + returnedCostPaise) / newQty))
+                  : product.averageCost,
+                valuationInitialized: product.valuationInitialized || returnedCostPaise > 0,
               } },
               { new: true, session, runValidators: true },
             );
@@ -1617,6 +1624,9 @@ if (existingPayment) {
           }
 
           const previousQty = product.stockQty || 0;
+          if (previousQty > 0 && !product.valuationInitialized) {
+            throw new ConflictException('Opening inventory valuation is required before restoring stock for this invoice.');
+          }
           const newQty = previousQty + quantity;
 
           const updated = await this.products.findOneAndUpdate(
@@ -1631,6 +1641,13 @@ if (existingPayment) {
                   this.toPaise(product.inventoryValue || 0) +
                     (restoreValuesPaise.get(productId) || 0),
                 ),
+                averageCost: newQty > 0
+                  ? this.fromPaise(Math.round((
+                      this.toPaise(product.inventoryValue || 0) +
+                      (restoreValuesPaise.get(productId) || 0)
+                    ) / newQty))
+                  : product.averageCost,
+                valuationInitialized: product.valuationInitialized || (restoreValuesPaise.get(productId) || 0) > 0,
               },
             },
             {

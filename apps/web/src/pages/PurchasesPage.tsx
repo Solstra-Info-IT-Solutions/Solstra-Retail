@@ -1,6 +1,6 @@
 import {useCallback,useEffect,useMemo,useState} from 'react';
 import type {FormEvent} from 'react';
-import {Plus,RefreshCw,ClipboardList,PackageCheck,X,Search,ChevronLeft,ChevronRight,CheckCircle2,AlertTriangle} from 'lucide-react';
+import {Plus,RefreshCw,ClipboardList,PackageCheck,X,Search,ChevronLeft,ChevronRight} from 'lucide-react';
 import {api} from '../api/client';import {useAuth} from '../auth/AuthContext';import './ProcurementPage.css';
 type Supplier={_id:string;name:string;phone?:string;email?:string;gstin?:string};
 type Product={_id:string;name:string;sku?:string;unit?:string;purchasePrice:number;gstRate:number;trackStock:boolean;stockQty:number};
@@ -22,7 +22,6 @@ export default function PurchasesPage(){
  const load=useCallback(async()=>{setLoading(true);setError('');try{const r=await api.get<PageData>('/purchases',{params:{page,limit:20}});setData(r.data);}catch{setError('Purchase records could not be loaded. Refresh and retry.');}finally{setLoading(false);}},[page]);
  const loadLookups=useCallback(async()=>{try{const [s,p]=await Promise.all([api.get<{items:Supplier[]}>('/suppliers',{params:{page:1,limit:100}}),api.get<{items:Product[]}>('/products',{params:{page:1,limit:100}})]);setSuppliers(s.data.items||[]);setProducts(p.data.items||[]);}catch{setFormError('Suppliers and products could not be loaded.');}},[]);
  useEffect(()=>{void load();},[load]);
- const stockProducts=useMemo(()=>products.filter(p=>p.trackStock),[products]);
  const visible=(data?.items||[]).filter(p=>(p.purchaseNumber+' '+p.supplierInvoiceNumber+' '+supplierName(p.supplierId)).toLowerCase().includes(query.toLowerCase()));
  const totals=lines.reduce((a,l)=>{const base=(Number(l.quantity)||0)*(Number(l.unitCost)||0);return {subtotal:a.subtotal+base,gst:a.gst+base*(Number(l.gstRate)||0)/100};},{subtotal:0,gst:0});
  function startCreate(){setSupplierId(suppliers[0]?._id||'');setInvoice('');setNotes('');setLines([{productId:products[0]?._id||'',quantity:'1',unitCost:String(products[0]?.purchasePrice??0),gstRate:String(products[0]?.gstRate??18)}]);setFormError('');void loadLookups();setCreateOpen(true);}

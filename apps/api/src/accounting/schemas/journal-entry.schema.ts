@@ -60,8 +60,8 @@ export class JournalEntry {
   @Prop({ required: true, enum: ['POSTED', 'REVERSED'], default: 'POSTED' })
   status!: JournalStatus;
 
-  @Prop({ type: Types.ObjectId, ref: 'JournalEntry', default: null })
-  reversalOf?: Types.ObjectId | null;
+  @Prop({ type: Types.ObjectId, ref: 'JournalEntry' })
+  reversalOf?: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'JournalEntry', default: null })
   reversedBy?: Types.ObjectId | null;
@@ -80,4 +80,7 @@ JournalEntrySchema.index(
   { tenantId: 1, sourceType: 1, sourceId: 1 },
   { unique: true, partialFilterExpression: { sourceId: { $type: 'string' } } },
 );
-JournalEntrySchema.index({ tenantId: 1, reversalOf: 1 }, { unique: true, sparse: true });
+JournalEntrySchema.index(
+  { tenantId: 1, reversalOf: 1 },
+  { unique: true, partialFilterExpression: { reversalOf: { $type: 'objectId' } } },
+);

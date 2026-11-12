@@ -10,9 +10,11 @@ import {
 import { ProductsController } from './products.controller';
 import { ProductsService } from './products.service';
 import { Category, CategorySchema } from '../categories/schemas/category.schema';
+import { AccountingModule } from '../accounting/accounting.module';
 
 @Module({
   imports: [
+    AccountingModule,
     MongooseModule.forFeature([
       { name: Product.name, schema: ProductSchema },
       { name: Category.name, schema: CategorySchema },

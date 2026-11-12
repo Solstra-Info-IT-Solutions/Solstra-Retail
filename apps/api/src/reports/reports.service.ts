@@ -660,11 +660,11 @@ export class ReportsService {
     const classify = (code: string, type?: string): keyof typeof totals => {
       if (type === 'EQUITY') return 'financing';
       if (type === 'ASSET') {
-        if (/^(11|12|13|14)\\d{2}$/.test(code)) return 'operating';
+        if (/^(11|12|13|14)\d{2}$/.test(code)) return 'operating';
         return 'investing';
       }
       if (type === 'LIABILITY') {
-        if (/^(20|21|22)\\d{2}$/.test(code)) return 'operating';
+        if (/^(20|21|22)\d{2}$/.test(code)) return 'operating';
         return 'financing';
       }
       if (type === 'INCOME' || type === 'EXPENSE') return 'operating';

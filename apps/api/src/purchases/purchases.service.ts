@@ -478,6 +478,15 @@ export class PurchasesService {
     let purchase: PurchaseDocument | null = null;
     try {
       await session.withTransaction(async () => {
+        const existingPurchase = await this.purchases.findOne(
+          tenantFilter(tenantId, { _id: new Types.ObjectId(id) }),
+        ).session(session);
+        if (!existingPurchase) return;
+        await this.taxPeriods.assertOpen(
+          tenantId,
+          existingPurchase.supplierInvoiceDate || existingPurchase.purchaseDate,
+          session,
+        );
         purchase = await this.purchases.findOneAndUpdate(
           tenantFilter(tenantId, {
             _id: new Types.ObjectId(id),

@@ -5,6 +5,7 @@ import {
   ChevronRight, Phone, Mail, MapPin, FileText,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { useAuth } from '../auth/AuthContext';
 import './CustomersPage.css';
 
 type Customer = {
@@ -42,6 +43,8 @@ const date = (value?: string) => value ? new Date(value).toLocaleDateString('en-
 const optional = (value: string) => value.trim() || undefined;
 
 export default function CustomersPage() {
+  const { user } = useAuth();
+  const canManageCustomers = user?.role === 'owner' || user?.role === 'admin';
   const [data, setData] = useState<CustomerListResponse | null>(null);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -138,7 +141,7 @@ export default function CustomersPage() {
           <button className="customers-refresh" onClick={() => void loadCustomers()} disabled={loading}>
             <RefreshCw size={16} className={loading ? 'customers-spin' : ''} /> Refresh
           </button>
-          <button className="customers-primary" onClick={startCreate}><Plus size={17} /> Add customer</button>
+          {canManageCustomers && <button className="customers-primary" onClick={startCreate}><Plus size={17} /> Add customer</button>}
         </div>
       </div>
 
@@ -169,7 +172,7 @@ export default function CustomersPage() {
               customers.length === 0 ? <tr><td colSpan={6} className="customers-empty">
                 <Users size={32} /><strong>{search ? 'No matching customers' : 'No customers yet'}</strong>
                 <span>{search ? 'Try a different name, phone or GSTIN.' : 'Add your first customer to start building your customer book.'}</span>
-                {!search && <button className="customers-empty-action" onClick={startCreate}><Plus size={15} /> Add first customer</button>}
+                {!search && canManageCustomers && <button className="customers-empty-action" onClick={startCreate}><Plus size={15} /> Add first customer</button>}
               </td></tr> : customers.map((customer) => (
                 <tr key={customer._id}>
                   <td><button className="customers-name-button" onClick={() => void openDetails(customer)}>{customer.name}</button>
@@ -182,7 +185,7 @@ export default function CustomersPage() {
                   <td>{date(customer.createdAt)}</td>
                   <td><div className="customers-row-actions">
                     <button title="View account" aria-label="View account" onClick={() => void openDetails(customer)}><Eye size={16} /></button>
-                    <button title="Edit customer" aria-label="Edit customer" onClick={() => startEdit(customer)}><Pencil size={16} /></button>
+                    {canManageCustomers && <button title="Edit customer" aria-label="Edit customer" onClick={() => startEdit(customer)}><Pencil size={16} /></button>}
                   </div></td>
                 </tr>
               ))}
@@ -231,7 +234,7 @@ export default function CustomersPage() {
           <div className="customers-modal-header"><div><span className="customers-eyebrow">CUSTOMER ACCOUNT</span>
             <h2>{selected.name}</h2><p>Customer profile and purchase activity</p></div>
             <div className="customers-detail-actions">
-              <button className="customers-secondary" onClick={() => { setSelected(null); startEdit(selected); }}><Pencil size={15} /> Edit</button>
+              {canManageCustomers && <button className="customers-secondary" onClick={() => { setSelected(null); startEdit(selected); }}><Pencil size={15} /> Edit</button>}
               <button className="customers-icon-button" onClick={() => setSelected(null)} aria-label="Close"><X size={20} /></button>
             </div>
           </div>

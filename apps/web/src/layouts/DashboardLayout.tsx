@@ -1,7 +1,7 @@
 ﻿import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
-  LayoutDashboard, ShoppingCart, Package, Users,
+  LayoutDashboard, ShoppingCart, Package, Users, Warehouse,
   Truck, ClipboardList, BarChart3, Settings, ReceiptText,
   Menu, X, LogOut, Search, Languages
 } from 'lucide-react';
@@ -13,6 +13,7 @@ const navigation = [
   { label: 'POS Billing', path: '/pos', icon: ShoppingCart },
   { label: 'Sales Register', path: '/sales', icon: ReceiptText },
   { label: 'Products', path: '/products', icon: Package },
+  { label: 'Inventory', path: '/inventory', icon: Warehouse },
   { label: 'Customers', path: '/customers', icon: Users },
   { label: 'Suppliers', path: '/suppliers', icon: Truck },
   { label: 'Purchases', path: '/purchases', icon: ClipboardList },

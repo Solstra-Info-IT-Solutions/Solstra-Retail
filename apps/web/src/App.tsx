@@ -8,6 +8,7 @@ import POSPage from './pages/POSPage';
 import SalesPage from './pages/SalesPage';
 import CustomersPage from './pages/CustomersPage';
 import ProductsPage from './pages/ProductsPage';
+import InventoryPage from './pages/InventoryPage';
 
 function AppRoutes() {
   const { isAuthenticated } = useAuth();
@@ -27,6 +28,7 @@ function AppRoutes() {
           <Route path="/sales" element={<SalesPage />} />
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/products" element={<ProductsPage />} />
+          <Route path="/inventory" element={<InventoryPage />} />
         </Route>
       </Route>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />

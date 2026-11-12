@@ -57,7 +57,7 @@ export class ProductsService {
           ...dto,
           ...categoryData,
           averageCost: dto.purchasePrice,
-          inventoryValue: dto.trackStock === false ? 0 : Number((dto.stockQty ?? 0) * dto.purchasePrice).toFixed(2),
+          inventoryValue: dto.trackStock === false ? 0 : Number(((dto.stockQty ?? 0) * dto.purchasePrice).toFixed(2)),
           valuationInitialized: dto.trackStock !== false,
           tenantId: new Types.ObjectId(tenantId),
         }],

@@ -14,7 +14,7 @@ describe('AccountingService journal validation', () => {
       create: jest.fn(),
     };
     const journalModel = { findOne: jest.fn(), create: jest.fn(), find: jest.fn(), countDocuments: jest.fn() };
-    return new AccountingService(accountModel as any, journalModel as any);
+    return new AccountingService(accountModel as any, journalModel as any, {} as any);
   };
 
   it('rejects unbalanced journal entries before persistence', async () => {

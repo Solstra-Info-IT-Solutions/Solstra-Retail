@@ -951,6 +951,7 @@ if (existingPayment) {
         let igstTotalPaise = 0;
         let taxTotalPaise = 0;
         let totalAmountPaise = 0;
+        let restockedCostPaise = 0;
 
         for (const requested of dto.items) {
           const original = invoice.items[requested.lineIndex];
@@ -1104,14 +1105,21 @@ if (existingPayment) {
 
             const previousQty = product.stockQty || 0;
             const newQty = previousQty + requested.quantity;
+            const returnedCostPaise = this.toPaise(original.unitCostAtSale || 0) * requested.quantity;
+            restockedCostPaise += returnedCostPaise;
 
             const updatedProduct = await this.products.findOneAndUpdate(
               tenantFilter(tenantId, {
                 _id: product._id,
                 stockQty: previousQty,
               }),
-              { $inc: { stockQty: requested.quantity } },
-              { new: true, session },
+              { $set: {
+                stockQty: newQty,
+                inventoryValue: this.fromPaise(
+                  this.toPaise(product.inventoryValue || 0) + returnedCostPaise,
+                ),
+              } },
+              { new: true, session, runValidators: true },
             );
 
             if (!updatedProduct) {
@@ -1242,6 +1250,18 @@ if (existingPayment) {
           sourceType: 'REFUND', sourceId: `CREDIT_NOTE:${created._id.toString()}`,
           lines: creditJournalLines, session,
         });
+        if (restockedCostPaise > 0) {
+          await this.accounting.postOperationalJournal({
+            tenantId, userId, postingDate: creditNoteDate,
+            narration: `Inventory restored by credit note ${creditNumber}`,
+            sourceType: 'INVENTORY', sourceId: `CREDIT_NOTE_COGS:${created._id.toString()}`,
+            lines: [
+              { accountCode: '1200', debit: this.fromPaise(restockedCostPaise), credit: 0, description: 'Returned inventory at original cost' },
+              { accountCode: '5000', debit: 0, credit: this.fromPaise(restockedCostPaise), description: 'Reverse cost of goods sold' },
+            ],
+            session,
+          });
+        }
         result = {
           creditNote: created,
           invoice: updatedInvoice,

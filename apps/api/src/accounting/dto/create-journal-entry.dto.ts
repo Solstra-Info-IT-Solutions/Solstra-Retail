@@ -33,8 +33,8 @@ export class CreateJournalEntryDto {
   narration!: string;
 
   @IsOptional()
-  @IsIn(['MANUAL', 'SALES', 'PURCHASE', 'PAYMENT', 'REFUND'])
-  sourceType?: 'MANUAL' | 'SALES' | 'PURCHASE' | 'PAYMENT' | 'REFUND';
+  @IsIn(['MANUAL'])
+  sourceType?: 'MANUAL';
 
   @IsOptional()
   @IsString()

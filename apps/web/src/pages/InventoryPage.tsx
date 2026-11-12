@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { FormEvent } from 'react';
 import { AlertTriangle, Boxes, ClipboardList, RefreshCw, SlidersHorizontal, X } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
@@ -76,7 +77,7 @@ export default function InventoryPage() {
     setModalOpen(true);
   }
 
-  async function submitMovement(event: React.FormEvent<HTMLFormElement>) {
+  async function submitMovement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
     setFormError('');

@@ -6,7 +6,7 @@ import { ClientSession, Model, Types } from 'mongoose';
 import { tenantFilter } from '../common/tenant-scoped.service';
 import { CreateAccountDto } from './dto/create-account.dto';
 import { CreateJournalEntryDto } from './dto/create-journal-entry.dto';
-import { Account, AccountDocument } from './schemas/account.schema';
+import { Account, AccountDocument, AccountType } from './schemas/account.schema';
 import { JournalEntry, JournalEntryDocument } from './schemas/journal-entry.schema';
 
 const DEFAULT_ACCOUNTS = [
@@ -76,8 +76,9 @@ export class AccountingService {
     }
 
     const uniqueCodes = [...new Set(normalized.map((line) => line.code))];
-    const defaults = new Map(DEFAULT_ACCOUNTS.map(([code, name, type]) =>
-      [code, { name, type }] as const));
+    const defaults = new Map<string, { name: string; type: AccountType }>(
+      DEFAULT_ACCOUNTS.map(([code, name, type]) => [code, { name, type }]),
+    );
     for (const code of uniqueCodes) {
       const definition = defaults.get(code);
       if (!definition) throw new BadRequestException(`Unsupported system account code: ${code}`);

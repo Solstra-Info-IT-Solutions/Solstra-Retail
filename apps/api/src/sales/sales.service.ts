@@ -23,6 +23,7 @@ import { CreateSaleDto } from './dto/create-sale.dto';
 import { ListSalesDto } from './dto/list-sales.dto';
 import { AddSalePaymentDto } from './dto/add-sale-payment.dto';
 import { AddCreditNoteRefundDto } from './dto/add-credit-note-refund.dto';
+import { AccountingService } from '../accounting/accounting.service';
 
 @Injectable()
 export class SalesService {
@@ -53,6 +54,8 @@ export class SalesService {
 
     @InjectModel(CreditNoteCounter.name)
     private readonly creditNoteCounters: Model<CreditNoteCounter>,
+
+    private readonly accounting: AccountingService,
   ) {}
 
   private toPaise(value: number): number {
@@ -577,6 +580,29 @@ export class SalesService {
         });
 
         await invoice.save({ session });
+        const saleLines: Array<{ accountCode: string; debit: number; credit: number; description: string }> = [];
+        for (const payment of payments) {
+          saleLines.push({
+            accountCode: payment.method === 'CASH' ? '1000' : '1010',
+            debit: payment.amount, credit: 0, description: `Invoice payment - ${payment.method}`,
+          });
+        }
+        if (duePaise > 0) saleLines.push({
+          accountCode: '1100', debit: this.fromPaise(duePaise), credit: 0,
+          description: `Customer receivable - ${customerName || 'Walk-in'}`,
+        });
+        if (taxableTotalPaise > 0) saleLines.push({
+          accountCode: '4000', debit: 0, credit: this.fromPaise(taxableTotalPaise),
+          description: 'Sales revenue',
+        });
+        if (totalTaxPaise > 0) saleLines.push({
+          accountCode: '2100', debit: 0, credit: this.fromPaise(totalTaxPaise),
+          description: 'Output GST liability',
+        });
+        await this.accounting.postOperationalJournal({
+          tenantId, userId, postingDate: now, narration: `Sales invoice ${invoiceNumber}`,
+          sourceType: 'SALES', sourceId: invoice._id.toString(), lines: saleLines, session,
+        });
         result = invoice;
       });
 
@@ -726,6 +752,15 @@ if (existingPayment) {
           );
         }
 
+        const paymentAccount = dto.method === 'CASH' ? '1000' : '1010';
+        await this.accounting.postOperationalJournal({
+          tenantId, userId, postingDate: new Date(), narration: `Payment received for ${invoice.invoiceNumber}`,
+          sourceType: 'PAYMENT', sourceId: `SALE_PAYMENT:${invoice._id.toString()}:${dto.idempotencyKey}`,
+          lines: [
+            { accountCode: paymentAccount, debit: this.fromPaise(amountPaise), credit: 0, description: `Received via ${dto.method}` },
+            { accountCode: '1100', debit: 0, credit: this.fromPaise(amountPaise), description: 'Customer receivable settlement' },
+          ], session,
+        });
         result = updated;
       });
 
@@ -1568,6 +1603,10 @@ if (existingPayment) {
           );
         }
 
+        await this.accounting.reverseOperationalJournal({
+          tenantId, userId, sourceType: 'SALES', sourceId: invoice._id.toString(),
+          reason: reason || 'Sales invoice cancelled', session,
+        });
         result = cancelled;
       });
 

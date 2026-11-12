@@ -514,11 +514,19 @@ export class SalesService {
               stockQty: previousQty,
             }),
             {
-              $inc: { stockQty: -quantity },
+              $set: {
+                stockQty: newQty,
+                inventoryValue: this.fromPaise(Math.max(
+                  0,
+                  this.toPaise(product.inventoryValue || 0) -
+                    this.toPaise(product.averageCost || 0) * quantity,
+                )),
+              },
             },
             {
               new: true,
               session,
+              runValidators: true,
             },
           );
 

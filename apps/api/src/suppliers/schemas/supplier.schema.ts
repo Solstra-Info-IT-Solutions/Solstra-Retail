@@ -35,7 +35,7 @@ export class Supplier {
   @Prop({ trim: true, maxlength: 100, default: '' })
   state!: string;
 
-  @Prop({ trim: true, maxlength: 2, match: /^(0[1-9]|[1-2][0-9]|3[0-8]|97|99)$/, default: null })
+  @Prop({ type: String, trim: true, maxlength: 2, match: /^(0[1-9]|[1-2][0-9]|3[0-8]|97|99)$/, default: null })
   stateCode?: string | null;
 
   @Prop({ trim: true, maxlength: 10, default: '' })

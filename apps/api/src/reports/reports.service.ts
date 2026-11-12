@@ -23,6 +23,8 @@ import {
   InventoryMovementDocument,
 } from '../inventory/schemas/inventory-movement.schema';
 import { ReportDateRangeDto } from './dto/report-date-range.dto';
+import { Account, AccountDocument } from '../accounting/schemas/account.schema';
+import { JournalEntry, JournalEntryDocument } from '../accounting/schemas/journal-entry.schema';
 
 type DateRange = {
   start: Date;
@@ -43,6 +45,12 @@ export class ReportsService {
 
     @InjectModel(InventoryMovement.name)
     private readonly movements: Model<InventoryMovementDocument>,
+
+    @InjectModel(Account.name)
+    private readonly accounts: Model<AccountDocument>,
+
+    @InjectModel(JournalEntry.name)
+    private readonly journals: Model<JournalEntryDocument>,
   ) {}
 
   private resolveRange(dto: ReportDateRangeDto): DateRange {
@@ -501,6 +509,171 @@ export class ReportsService {
       movementSummary,
     };
   }
+
+  private validateTenant(tenantId: string) {
+    if (!Types.ObjectId.isValid(tenantId)) {
+      throw new BadRequestException('Invalid tenant context');
+    }
+  }
+
+  private async accountBalances(tenantId: string, through: Date, from?: Date) {
+    const dateMatch: Record<string, unknown> = { $lte: through };
+    if (from) dateMatch.$gte = from;
+    const [accounts, grouped] = await Promise.all([
+      this.accounts.find(tenantFilter(tenantId, { isActive: true })).sort({ code: 1 }).lean(),
+      this.journals.aggregate([
+        { $match: tenantFilter(tenantId, { status: 'POSTED', postingDate: dateMatch }) },
+        { $unwind: '$lines' },
+        { $group: {
+          _id: { accountId: '$lines.accountId', code: '$lines.accountCode', name: '$lines.accountName' },
+          debit: { $sum: '$lines.debit' },
+          credit: { $sum: '$lines.credit' },
+          entries: { $sum: 1 },
+        } },
+      ]),
+    ]);
+    const byId = new Map(grouped.map((row: any) => [String(row._id.accountId), row]));
+    return accounts.map((account: any) => {
+      const row: any = byId.get(String(account._id));
+      const debit = Math.round((row?.debit ?? 0) * 100) / 100;
+      const credit = Math.round((row?.credit ?? 0) * 100) / 100;
+      const debitNormal = account.type === 'ASSET' || account.type === 'EXPENSE';
+      const net = Math.round((debit - credit) * 100) / 100;
+      return {
+        accountId: account._id, code: account.code, name: account.name, type: account.type,
+        debit, credit, balance: Math.abs(net),
+        balanceSide: net === 0 ? 'ZERO' : ((net > 0) === debitNormal ? 'DEBIT' : 'CREDIT'),
+        entryLineCount: row?.entries ?? 0,
+      };
+    });
+  }
+
+  async trialBalance(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const balances = await this.accountBalances(tenantId, end);
+    const totals = balances.reduce((sum, row) => {
+      if (row.balanceSide === 'DEBIT') sum.debit += row.balance;
+      if (row.balanceSide === 'CREDIT') sum.credit += row.balance;
+      return sum;
+    }, { debit: 0, credit: 0 });
+    const debit = Math.round(totals.debit * 100) / 100;
+    const credit = Math.round(totals.credit * 100) / 100;
+    return {
+      from: start, to: end, asOf: end, currency: 'INR', amountUnit: 'RUPEES',
+      accounts: balances,
+      totals: { debit, credit, difference: Math.round((debit - credit) * 100) / 100 },
+      balanced: Math.abs(debit - credit) < 0.01,
+      basis: 'POSTED_JOURNAL_ENTRIES',
+    };
+  }
+
+  async generalLedger(tenantId: string, accountCode: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const code = accountCode?.trim().toUpperCase();
+    if (!code) throw new BadRequestException('Account code is required');
+    const { start, end } = this.resolveRange(dto);
+    const account = await this.accounts.findOne(tenantFilter(tenantId, { code, isActive: true })).lean();
+    if (!account) throw new BadRequestException('Account not found for this business');
+    const [openingRows, entries] = await Promise.all([
+      this.journals.aggregate([
+        { $match: tenantFilter(tenantId, { status: 'POSTED', postingDate: { $lt: start } }) },
+        { $unwind: '$lines' },
+        { $match: { 'lines.accountCode': code } },
+        { $group: { _id: null, debit: { $sum: '$lines.debit' }, credit: { $sum: '$lines.credit' } } },
+      ]),
+      this.journals.aggregate([
+        { $match: tenantFilter(tenantId, { status: 'POSTED', postingDate: { $gte: start, $lte: end } }) },
+        { $unwind: '$lines' },
+        { $match: { 'lines.accountCode': code } },
+        { $sort: { postingDate: 1, entryNumber: 1 } },
+        { $project: {
+          _id: 0, journalId: '$_id', entryNumber: 1, postingDate: 1, narration: 1,
+          sourceType: 1, sourceId: 1, debit: '$lines.debit', credit: '$lines.credit',
+          description: '$lines.description',
+        } },
+      ]),
+    ]);
+    const openingDebit = openingRows[0]?.debit ?? 0;
+    const openingCredit = openingRows[0]?.credit ?? 0;
+    const debitNormal = account.type === 'ASSET' || account.type === 'EXPENSE';
+    let running = Math.round((openingDebit - openingCredit) * 100) / 100;
+    const openingBalance = Math.abs(running);
+    const openingSide = running === 0 ? 'ZERO' : ((running > 0) === debitNormal ? 'DEBIT' : 'CREDIT');
+    const rows = entries.map((entry: any) => {
+      running = Math.round((running + entry.debit - entry.credit) * 100) / 100;
+      return { ...entry, runningBalance: Math.abs(running),
+        balanceSide: running === 0 ? 'ZERO' : ((running > 0) === debitNormal ? 'DEBIT' : 'CREDIT') };
+    });
+    return {
+      from: start, to: end, currency: 'INR', account: { code: account.code, name: account.name, type: account.type },
+      opening: { balance: openingBalance, side: openingSide },
+      entries: rows,
+      closing: { balance: Math.abs(running), side: running === 0 ? 'ZERO' : ((running > 0) === debitNormal ? 'DEBIT' : 'CREDIT') },
+      totals: {
+        debit: Math.round(rows.reduce((s: number, row: any) => s + row.debit, 0) * 100) / 100,
+        credit: Math.round(rows.reduce((s: number, row: any) => s + row.credit, 0) * 100) / 100,
+      },
+    };
+  }
+
+  async cashBankBook(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const accounts = await this.accounts.find(tenantFilter(tenantId, {
+      code: { $in: ['1000', '1010'] }, isActive: true,
+    })).lean();
+    const books = await Promise.all(accounts.map((account: any) =>
+      this.generalLedger(tenantId, account.code, { from: dto.from ?? start.toISOString().slice(0, 10), to: dto.to ?? end.toISOString().slice(0, 10) }),
+    ));
+    return { from: start, to: end, currency: 'INR', books };
+  }
+
+  async profitAndLoss(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const balances = await this.accountBalances(tenantId, end, start);
+    const income = balances.filter(row => row.type === 'INCOME');
+    const expenses = balances.filter(row => row.type === 'EXPENSE');
+    const incomeTotal = Math.round(income.reduce((s, row) => s + (row.balanceSide === 'CREDIT' ? row.balance : -row.balance), 0) * 100) / 100;
+    const expenseTotal = Math.round(expenses.reduce((s, row) => s + (row.balanceSide === 'DEBIT' ? row.balance : -row.balance), 0) * 100) / 100;
+    return {
+      from: start, to: end, currency: 'INR', basis: 'POSTED_JOURNAL_ENTRIES',
+      income, expenses, totalIncome: incomeTotal, totalExpenses: expenseTotal,
+      netProfit: Math.round((incomeTotal - expenseTotal) * 100) / 100,
+    };
+  }
+
+  async balanceSheet(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const balances = await this.accountBalances(tenantId, end);
+    const assets = balances.filter(row => row.type === 'ASSET');
+    const liabilities = balances.filter(row => row.type === 'LIABILITY');
+    const equityAccounts = balances.filter(row => row.type === 'EQUITY');
+    const income = balances.filter(row => row.type === 'INCOME');
+    const expenses = balances.filter(row => row.type === 'EXPENSE');
+    const sumSide = (rows: typeof balances, side: 'DEBIT' | 'CREDIT') =>
+      Math.round(rows.reduce((s, row) => s + (row.balanceSide === side ? row.balance : 0), 0) * 100) / 100;
+    const totalAssets = sumSide(assets, 'DEBIT') - sumSide(assets, 'CREDIT');
+    const totalLiabilities = sumSide(liabilities, 'CREDIT') - sumSide(liabilities, 'DEBIT');
+    const totalEquityAccounts = sumSide(equityAccounts, 'CREDIT') - sumSide(equityAccounts, 'DEBIT');
+    const cumulativeIncome = sumSide(income, 'CREDIT') - sumSide(income, 'DEBIT');
+    const cumulativeExpenses = sumSide(expenses, 'DEBIT') - sumSide(expenses, 'CREDIT');
+    const retainedEarningsToDate = Math.round((cumulativeIncome - cumulativeExpenses) * 100) / 100;
+    const totalEquity = Math.round((totalEquityAccounts + retainedEarningsToDate) * 100) / 100;
+    const totalLiabilitiesAndEquity = Math.round((totalLiabilities + totalEquity) * 100) / 100;
+    return {
+      asOf: end, currency: 'INR', basis: 'POSTED_JOURNAL_ENTRIES',
+      assets, liabilities, equity: equityAccounts,
+      retainedEarningsToDate, totalAssets: Math.round(totalAssets * 100) / 100,
+      totalLiabilities: Math.round(totalLiabilities * 100) / 100,
+      totalEquity, totalLiabilitiesAndEquity,
+      difference: Math.round((totalAssets - totalLiabilitiesAndEquity) * 100) / 100,
+      balanced: Math.abs(totalAssets - totalLiabilitiesAndEquity) < 0.01,
+    };
+  }
+
 }
 
 

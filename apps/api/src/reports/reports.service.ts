@@ -27,6 +27,7 @@ import { Account, AccountDocument } from '../accounting/schemas/account.schema';
 import { JournalEntry, JournalEntryDocument } from '../accounting/schemas/journal-entry.schema';
 import { Purchase, PurchaseDocument } from '../purchases/schemas/purchase.schema';
 import { Supplier, SupplierDocument } from '../suppliers/schemas/supplier.schema';
+import { Tenant } from '../tenants/schemas/tenant.schema';
 
 type DateRange = {
   start: Date;
@@ -59,6 +60,9 @@ export class ReportsService {
 
     @InjectModel(Supplier.name)
     private readonly suppliers: Model<SupplierDocument>,
+
+    @InjectModel(Tenant.name)
+    private readonly tenants: Model<Tenant>,
   ) {}
 
   private resolveRange(dto: ReportDateRangeDto): DateRange {
@@ -464,6 +468,7 @@ export class ReportsService {
       tax: sum.tax + (invoice.totalTax || 0),
       invoiceValue: sum.invoiceValue + (invoice.grandTotal || 0),
     }), { taxableValue: 0, cgst: 0, sgst: 0, igst: 0, tax: 0, invoiceValue: 0 });
+    const tenant = await this.tenants.findById(tenantId).select('name gstin stateCode').lean();
     const creditTotals = creditNotes.reduce((sum: any, note: any) => ({
       taxableValue: sum.taxableValue + (note.taxableValue || 0),
       cgst: sum.cgst + (note.cgstTotal || 0),
@@ -477,6 +482,7 @@ export class ReportsService {
     return {
       from: start, to: end, currency: 'INR', amountUnit: 'RUPEES',
       basis: 'ISSUED_SALES_INVOICES_AND_DATED_CREDIT_NOTES',
+      seller: { businessName: tenant?.name ?? null, gstin: tenant?.gstin ?? null, stateCode: tenant?.stateCode ?? null },
       classificationNote: 'B2C contains all invoices without a customer GSTIN; B2C large/small turnover thresholds and place-of-supply filing rules are not applied.',
       b2b: { invoiceCount: b2b.length, invoices: b2b },
       b2c: { invoiceCount: b2c.length, invoices: b2c },

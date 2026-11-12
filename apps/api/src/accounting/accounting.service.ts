@@ -242,8 +242,11 @@ export class AccountingService {
       throw new BadRequestException('Journal entry is not balanced: total debit must equal total credit');
     }
 
-    const sourceType = dto.sourceType ?? 'MANUAL';
-    const sourceId = dto.sourceId?.trim() || null;
+    if (dto.sourceType && dto.sourceType !== 'MANUAL') {
+      throw new BadRequestException('Operational journal sources are system-managed');
+    }
+    const sourceType = 'MANUAL';
+    const sourceId = null;
     if (sourceId) {
       const existing = await this.journals.findOne(tenantFilter(tenantId, { sourceType, sourceId })).lean();
       if (existing) throw new ConflictException('A journal entry already exists for this source');
@@ -293,6 +296,9 @@ export class AccountingService {
     if (!reason?.trim()) throw new BadRequestException('Reversal reason is required');
     const original = await this.journals.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(id) }));
     if (!original) throw new NotFoundException('Journal entry not found');
+    if (original.sourceType !== 'MANUAL') {
+      throw new ConflictException('Operational journals must be reversed through their originating business workflow');
+    }
     if (original.status !== 'POSTED' || original.reversalOf) {
       throw new ConflictException('Only an unreversed posted journal can be reversed');
     }

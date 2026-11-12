@@ -1,4 +1,5 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
 import {
   Search, RefreshCw, Plus, Users, X, Eye, Pencil, ChevronLeft,
   ChevronRight, Phone, Mail, MapPin, FileText,
@@ -110,7 +111,7 @@ export default function CustomersPage() {
   }
 
   async function openDetails(customer: Customer, nextPage = 1) {
-    setSelected(customer); setHistoryPage(nextPage); setDetailLoading(true);
+    setSelected(customer); setHistory(null); setHistoryPage(nextPage); setDetailLoading(true);
     try {
       const [customerResponse, historyResponse] = await Promise.all([
         api.get<Customer>('/customers/' + customer._id),

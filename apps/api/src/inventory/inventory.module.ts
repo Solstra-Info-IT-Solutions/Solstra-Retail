@@ -9,9 +9,11 @@ import {
 
 import { InventoryController } from './inventory.controller';
 import { InventoryService } from './inventory.service';
+import { AccountingModule } from '../accounting/accounting.module';
 
 @Module({
   imports: [
+    AccountingModule,
     MongooseModule.forFeature([
       { name: Product.name, schema: ProductSchema },
       {

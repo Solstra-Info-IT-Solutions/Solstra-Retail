@@ -29,6 +29,12 @@ describe('SuppliersService', () => {
     );
   });
 
+  it('rejects supplier GSTIN and state-code mismatches', () => {
+    const service = new SuppliersService({} as any);
+    expect(() => (service as any).validateGstinStateCode('27ABCDE1234F1Z5', '09')).toThrow(BadRequestException);
+    expect(() => (service as any).validateGstinStateCode('27ABCDE1234F1Z5', '27')).not.toThrow();
+  });
+
   it('rejects invalid tenant IDs', async () => {
     const suppliers = { create: jest.fn() };
     const service = new SuppliersService(suppliers as any);

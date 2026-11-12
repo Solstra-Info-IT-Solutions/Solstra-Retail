@@ -1569,17 +1569,15 @@ if (existingPayment) {
 }
 
         const restoreQuantities = new Map<string, number>();
+        const restoreValuesPaise = new Map<string, number>();
 
         for (const item of invoice.items) {
-          if (!item.stockTracked) {
-            continue;
-          }
-
+          if (!item.stockTracked) continue;
           const productId = item.productId.toString();
-
-          restoreQuantities.set(
+          restoreQuantities.set(productId, (restoreQuantities.get(productId) || 0) + item.quantity);
+          restoreValuesPaise.set(
             productId,
-            (restoreQuantities.get(productId) || 0) + item.quantity,
+            (restoreValuesPaise.get(productId) || 0) + this.toPaise(item.costOfGoodsSold || 0),
           );
         }
 
@@ -1607,11 +1605,18 @@ if (existingPayment) {
               stockQty: previousQty,
             }),
             {
-              $inc: { stockQty: quantity },
+              $set: {
+                stockQty: previousQty + quantity,
+                inventoryValue: this.fromPaise(
+                  this.toPaise(product.inventoryValue || 0) +
+                    (restoreValuesPaise.get(productId) || 0),
+                ),
+              },
             },
             {
               new: true,
               session,
+              runValidators: true,
             },
           );
 

@@ -59,6 +59,10 @@ export class TrialGuard implements CanActivate {
     // Active paid subscriptions bypass trial expiry.
     if (tenant.subscriptionStatus === 'active') return true;
 
+    // Expired trials remain read-only: owners must still access billing and export data.
+    const method = String(request.method ?? '').toUpperCase();
+    if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return true;
+
     const now = Date.now();
 
     if (

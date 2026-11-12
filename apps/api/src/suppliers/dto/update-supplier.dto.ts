@@ -56,6 +56,11 @@ export class UpdateSupplierDto {
 
   @IsOptional()
   @IsString()
+  @Matches(/^(0[1-9]|[1-2][0-9]|3[0-8]|97|99)$/)
+  stateCode?: string;
+
+  @IsOptional()
+  @IsString()
   @Matches(/^[1-9][0-9]{5}$/)
   @MaxLength(10)
   pincode?: string;

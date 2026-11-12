@@ -26,7 +26,6 @@ import { ReportDateRangeDto } from './dto/report-date-range.dto';
 import { Account, AccountDocument } from '../accounting/schemas/account.schema';
 import { JournalEntry, JournalEntryDocument } from '../accounting/schemas/journal-entry.schema';
 import { Purchase, PurchaseDocument } from '../purchases/schemas/purchase.schema';
-import { Supplier, SupplierDocument } from '../suppliers/schemas/supplier.schema';
 import { Tenant } from '../tenants/schemas/tenant.schema';
 
 type DateRange = {
@@ -57,9 +56,6 @@ export class ReportsService {
 
     @InjectModel(Purchase.name)
     private readonly purchases: Model<PurchaseDocument>,
-
-    @InjectModel(Supplier.name)
-    private readonly suppliers: Model<SupplierDocument>,
 
     @InjectModel(Tenant.name)
     private readonly tenants: Model<Tenant>,
@@ -518,7 +514,7 @@ export class ReportsService {
       })).select('taxableValue cgstTotal sgstTotal igstTotal totalTax').lean(),
       this.purchases.find(tenantFilter(tenantId, {
         status: { $ne: 'CANCELLED' }, purchaseDate: { $gte: start, $lte: end },
-      })).select('supplierId subtotal gstTotal items status purchaseNumber supplierInvoiceNumber purchaseDate').lean(),
+      })).select('subtotal gstTotal cgstTotal sgstTotal igstTotal gstSplitClassified supplierGstinSnapshot supplierStateCodeSnapshot placeOfSupplyStateCode items status purchaseNumber supplierInvoiceNumber purchaseDate').lean(),
     ]);
     const sum = (rows: any[], field: string) => rows.reduce((total, row) => total + (row[field] || 0), 0);
     const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
@@ -530,16 +526,9 @@ export class ReportsService {
       totalTax: round(sum(invoices, 'totalTax') - sum(creditNotes, 'totalTax')),
     };
     const inputTax = round(sum(purchases, 'gstTotal'));
-    const supplierIds = [...new Set(purchases.map((purchase: any) => String(purchase.supplierId)))];
-    const suppliers = supplierIds.length
-      ? await this.suppliers.find(tenantFilter(tenantId, {
-          _id: { $in: supplierIds.map((id) => new Types.ObjectId(id)) },
-        })).select('_id gstin name').lean()
-      : [];
-    const supplierById = new Map(suppliers.map((supplier: any) => [String(supplier._id), supplier]));
-    const purchasesMissingGstin = purchases.filter((purchase: any) =>
-      !supplierById.get(String(purchase.supplierId))?.gstin,
-    ).length;
+    const classifiedPurchases = purchases.filter((purchase: any) => purchase.gstSplitClassified === true);
+    const unclassifiedPurchases = purchases.filter((purchase: any) => purchase.gstSplitClassified !== true);
+    const purchasesMissingGstin = purchases.filter((purchase: any) => !purchase.supplierGstinSnapshot).length;
     return {
       from: start, to: end, currency: 'INR', amountUnit: 'RUPEES',
       basis: 'ISSUED_SALES_INVOICES_AND_NON_CANCELLED_PURCHASE_RECORDS',
@@ -552,8 +541,13 @@ export class ReportsService {
         purchaseCount: purchases.length,
         taxableValue: round(sum(purchases, 'subtotal')),
         grossInputTaxRecorded: inputTax,
-        cgst: null, sgst: null, igst: null,
-        taxSplitStatus: 'NOT_STORED_ON_PURCHASE_RECORDS',
+        cgst: round(sum(classifiedPurchases, 'cgstTotal')),
+        sgst: round(sum(classifiedPurchases, 'sgstTotal')),
+        igst: round(sum(classifiedPurchases, 'igstTotal')),
+        classifiedPurchaseCount: classifiedPurchases.length,
+        unclassifiedPurchaseCount: unclassifiedPurchases.length,
+        unclassifiedInputTax: round(sum(unclassifiedPurchases, 'gstTotal')),
+        taxSplitStatus: unclassifiedPurchases.length ? 'PARTIALLY_CLASSIFIED' : 'CLASSIFIED',
         purchasesMissingSupplierGstin: purchasesMissingGstin,
         eligibilityStatus: 'UNVERIFIED_REQUIRES_INVOICE_AND_ITC_ELIGIBILITY_REVIEW',
       },
@@ -564,9 +558,9 @@ export class ReportsService {
         status: 'INDICATIVE_NOT_A_FILE_READY_GSTR3B',
       },
       limitations: [
-        'Purchase records currently store one combined GST amount and do not preserve CGST, SGST or IGST split.',
+        'Legacy purchase records created before GST split capture remain unclassified and are reported separately.',
         'Input tax credit eligibility, blocked credits, reverse charge, imports, advances and prior-period adjustments are not represented by the current source records.',
-        'Supplier GSTIN is read from the current supplier profile and may not be a historical snapshot from the purchase date.',
+        'Supplier GSTIN and supplier state are retained as purchase-time snapshots for new records; historical purchases cannot be retroactively reconstructed reliably.',
       ],
     };
   }

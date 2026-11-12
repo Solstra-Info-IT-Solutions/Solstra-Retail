@@ -16,6 +16,7 @@ import { ReceivePurchaseDto } from './dto/receive-purchase.dto';
 import { ListPurchasesDto } from './dto/list-purchases.dto';
 import { AddPurchasePaymentDto } from './dto/add-purchase-payment.dto';
 import { AccountingService } from '../accounting/accounting.service';
+import { Tenant, TenantDocument } from '../tenants/schemas/tenant.schema';
 
 @Injectable()
 export class PurchasesService {
@@ -23,6 +24,7 @@ export class PurchasesService {
     @InjectModel(Purchase.name) private readonly purchases: Model<PurchaseDocument>,
     @InjectModel(Product.name) private readonly products: Model<ProductDocument>,
     @InjectModel(Supplier.name) private readonly suppliers: Model<SupplierDocument>,
+    @InjectModel(Tenant.name) private readonly tenants: Model<TenantDocument>,
     @InjectModel(InventoryMovement.name) private readonly movements: Model<InventoryMovementDocument>,
     private readonly accounting: AccountingService,
   ) {}
@@ -30,6 +32,19 @@ export class PurchasesService {
 
   private toPaise(value: number): number { return Math.round((value + Number.EPSILON) * 100); }
   private fromPaise(value: number): number { return value / 100; }
+
+  private splitGst(gstAmount: number, supplierStateCode?: string | null, placeOfSupplyStateCode?: string | null) {
+    const gstPaise = this.toPaise(gstAmount);
+    if (gstPaise === 0) return { cgstAmount: 0, sgstAmount: 0, igstAmount: 0, classified: true };
+    if (!supplierStateCode || !placeOfSupplyStateCode) {
+      return { cgstAmount: 0, sgstAmount: 0, igstAmount: 0, classified: false };
+    }
+    if (supplierStateCode === placeOfSupplyStateCode) {
+      const cgstPaise = Math.floor(gstPaise / 2);
+      return { cgstAmount: this.fromPaise(cgstPaise), sgstAmount: this.fromPaise(gstPaise - cgstPaise), igstAmount: 0, classified: true };
+    }
+    return { cgstAmount: 0, sgstAmount: 0, igstAmount: this.fromPaise(gstPaise), classified: true };
+  }
 
   async addPayment(tenantId: string, userId: string, id: string, dto: AddPurchasePaymentDto) {
     if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid tenant, user or purchase ID');
@@ -113,10 +128,17 @@ export class PurchasesService {
         ).session(session);
 
         if (!supplier) throw new NotFoundException('Supplier not found');
+        const tenant = await this.tenants.findById(new Types.ObjectId(tenantId)).select('stateCode').session(session).lean();
+        const supplierStateCode = supplier.stateCode || supplier.gstin?.slice(0, 2) || null;
+        const placeOfSupplyStateCode = tenant?.stateCode || null;
 
         const items = [];
         let subtotal = 0;
         let gstTotal = 0;
+        let cgstTotal = 0;
+        let sgstTotal = 0;
+        let igstTotal = 0;
+        let gstSplitClassified = true;
 
         for (const input of dto.items) {
           if (!Types.ObjectId.isValid(input.productId)) {
@@ -135,9 +157,14 @@ export class PurchasesService {
           const taxableValue = Number((input.unitCost * input.quantity).toFixed(2));
           const gstAmount = Number((taxableValue * input.gstRate / 100).toFixed(2));
           const lineTotal = Number((taxableValue + gstAmount).toFixed(2));
+          const gstSplit = this.splitGst(gstAmount, supplierStateCode, placeOfSupplyStateCode);
 
           subtotal += taxableValue;
           gstTotal += gstAmount;
+          cgstTotal += gstSplit.cgstAmount;
+          sgstTotal += gstSplit.sgstAmount;
+          igstTotal += gstSplit.igstAmount;
+          gstSplitClassified = gstSplitClassified && gstSplit.classified;
 
           items.push({
             productId: product._id,
@@ -151,6 +178,10 @@ export class PurchasesService {
             gstRate: input.gstRate,
             taxableValue,
             gstAmount,
+            cgstAmount: gstSplit.cgstAmount,
+            sgstAmount: gstSplit.sgstAmount,
+            igstAmount: gstSplit.igstAmount,
+            gstSplitClassified: gstSplit.classified,
             lineTotal,
             trackStock: product.trackStock,
           });
@@ -165,6 +196,13 @@ export class PurchasesService {
           items,
           subtotal: Number(subtotal.toFixed(2)),
           gstTotal: Number(gstTotal.toFixed(2)),
+          cgstTotal: Number(cgstTotal.toFixed(2)),
+          sgstTotal: Number(sgstTotal.toFixed(2)),
+          igstTotal: Number(igstTotal.toFixed(2)),
+          gstSplitClassified,
+          supplierGstinSnapshot: supplier.gstin || null,
+          supplierStateCodeSnapshot: supplierStateCode,
+          placeOfSupplyStateCode,
           grandTotal: Number((subtotal + gstTotal).toFixed(2)),
           paidAmount: 0,
           dueAmount: Number((subtotal + gstTotal).toFixed(2)),

@@ -20,6 +20,10 @@ export class PurchaseItem {
   @Prop({ required: true, enum: [0, 5, 12, 18, 28] }) gstRate!: number;
   @Prop({ required: true, min: 0 }) taxableValue!: number;
   @Prop({ required: true, min: 0 }) gstAmount!: number;
+  @Prop({ type: Number, default: 0, min: 0 }) cgstAmount!: number;
+  @Prop({ type: Number, default: 0, min: 0 }) sgstAmount!: number;
+  @Prop({ type: Number, default: 0, min: 0 }) igstAmount!: number;
+  @Prop({ type: Boolean, default: false }) gstSplitClassified!: boolean;
   @Prop({ required: true, min: 0 }) lineTotal!: number;
   @Prop({ required: true, default: true }) trackStock!: boolean;
 }
@@ -77,6 +81,13 @@ export class Purchase {
 
   @Prop({ required: true, min: 0 }) subtotal!: number;
   @Prop({ required: true, min: 0 }) gstTotal!: number;
+  @Prop({ type: Number, default: 0, min: 0 }) cgstTotal!: number;
+  @Prop({ type: Number, default: 0, min: 0 }) sgstTotal!: number;
+  @Prop({ type: Number, default: 0, min: 0 }) igstTotal!: number;
+  @Prop({ type: Boolean, default: false }) gstSplitClassified!: boolean;
+  @Prop({ type: String, default: null, maxlength: 15 }) supplierGstinSnapshot?: string | null;
+  @Prop({ type: String, default: null, maxlength: 2 }) supplierStateCodeSnapshot?: string | null;
+  @Prop({ type: String, default: null, maxlength: 2 }) placeOfSupplyStateCode?: string | null;
   @Prop({ required: true, min: 0 }) grandTotal!: number;
   @Prop({ required: true, min: 0, default: 0 }) paidAmount!: number;
   @Prop({ required: true, min: 0, default: 0 }) dueAmount!: number;

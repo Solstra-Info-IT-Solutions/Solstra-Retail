@@ -129,8 +129,17 @@ export class PurchasesService {
 
         if (!supplier) throw new NotFoundException('Supplier not found');
         const tenant = await this.tenants.findById(new Types.ObjectId(tenantId)).select('stateCode').session(session).lean();
-        const supplierStateCode = supplier.stateCode || supplier.gstin?.slice(0, 2) || null;
-        const placeOfSupplyStateCode = tenant?.stateCode || null;
+        const supplierGstin = supplier.gstin?.trim().toUpperCase() || null;
+        const gstinStateCode = supplierGstin?.slice(0, 2) || null;
+        if (supplier.stateCode && gstinStateCode && supplier.stateCode !== gstinStateCode) {
+          throw new BadRequestException('Supplier state code does not match the GSTIN state prefix');
+        }
+        const supplierStateCode = supplier.stateCode || gstinStateCode || null;
+        const placeOfSupplyStateCode = dto.placeOfSupplyStateCode || tenant?.stateCode || null;
+        const supplierInvoiceDate = dto.supplierInvoiceDate ? new Date(`${dto.supplierInvoiceDate}T00:00:00.000Z`) : null;
+        if (supplierInvoiceDate && Number.isNaN(supplierInvoiceDate.getTime())) {
+          throw new BadRequestException('Invalid supplier invoice date');
+        }
 
         const items = [];
         let subtotal = 0;
@@ -193,6 +202,7 @@ export class PurchasesService {
           purchaseNumber,
           supplierId: supplier._id,
           supplierInvoiceNumber: dto.supplierInvoiceNumber.trim(),
+          supplierInvoiceDate,
           items,
           subtotal: Number(subtotal.toFixed(2)),
           gstTotal: Number(gstTotal.toFixed(2)),

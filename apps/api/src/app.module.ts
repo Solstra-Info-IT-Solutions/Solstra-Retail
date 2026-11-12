@@ -14,6 +14,7 @@ import { CategoriesModule } from './categories/categories.module';
 import { PurchasesModule } from './purchases/purchases.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
 import { ReportsModule } from './reports/reports.module';
+import { AccountingModule } from './accounting/accounting.module';
 import { TrialGuard } from './common/guards/trial.guard';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -44,6 +45,7 @@ import { HealthController } from './health.controller';
     PurchasesModule,
     SuppliersModule,
     ReportsModule,
+    AccountingModule,
   ],
 
   controllers: [HealthController],

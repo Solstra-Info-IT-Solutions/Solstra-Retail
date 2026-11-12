@@ -109,6 +109,9 @@ export class SalesInvoice {
   @Prop({ required: true, trim: true })
   requestFingerprint!: string;
 
+  @Prop({ default: 0, min: 0 })
+  costingVersion!: number;
+
   @Prop({ required: true, trim: true })
   invoiceNumber!: string;
 

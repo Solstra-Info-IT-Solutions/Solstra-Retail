@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, ClipboardList, RefreshCw, SlidersHorizontal, X } from 'lucide-react';
+import { AlertTriangle, Boxes, ClipboardList, RefreshCw, SlidersHorizontal, X } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import './InventoryPage.css';
@@ -121,7 +121,7 @@ export default function InventoryPage() {
       <div className="inventory-metrics">
         <div className="inventory-metric"><span className="inventory-metric-icon"><ClipboardList size={18} /></span>
           <div><small>Stock-tracked products</small><strong>{loading && !products.length ? '—' : number(trackedProducts.length)}</strong></div></div>
-        <div className="inventory-metric"><span className="inventory-metric-icon"><BoxesIcon /></span>
+        <div className="inventory-metric"><span className="inventory-metric-icon"><Boxes size={18} /></span>
           <div><small>Total units in stock</small><strong>{loading && !products.length ? '—' : number(totalUnits)}</strong></div></div>
         <div className="inventory-metric"><span className="inventory-metric-icon is-warning"><AlertTriangle size={18} /></span>
           <div><small>Low stock products</small><strong>{loading && !lowStock.length ? '—' : number(lowStock.length)}</strong></div></div>
@@ -217,8 +217,4 @@ export default function InventoryPage() {
       </div>}
     </div>
   );
-}
-
-function BoxesIcon() {
-  return <ClipboardList size={18} />;
 }

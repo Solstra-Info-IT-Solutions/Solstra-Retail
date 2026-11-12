@@ -21,6 +21,7 @@ export class PurchaseItem {
   @Prop({ required: true, min: 0 }) taxableValue!: number;
   @Prop({ required: true, min: 0 }) gstAmount!: number;
   @Prop({ required: true, min: 0 }) lineTotal!: number;
+  @Prop({ required: true, default: true }) trackStock!: boolean;
 }
 
 @Schema({ _id: false })

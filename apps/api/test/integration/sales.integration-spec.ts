@@ -5,6 +5,9 @@ import * as dotenv from 'dotenv';
 import mongoose, { Connection, Model, Types } from 'mongoose';
 
 import { SalesService } from '../../src/sales/sales.service';
+import { AccountingService } from '../../src/accounting/accounting.service';
+import { Account, AccountSchema } from '../../src/accounting/schemas/account.schema';
+import { JournalEntry, JournalEntrySchema } from '../../src/accounting/schemas/journal-entry.schema';
 import { CreateSaleDto } from '../../src/sales/dto/create-sale.dto';
 import { CreateCreditNoteDto } from '../../src/sales/dto/create-credit-note.dto';
 
@@ -53,6 +56,8 @@ describe('SalesService MongoDB integration', () => {
   let CounterModel: Model<InvoiceCounter>;
   let CreditNoteModel: Model<CreditNote>;
   let CreditNoteCounterModel: Model<CreditNoteCounter>;
+  let AccountModel: Model<Account>;
+  let JournalEntryModel: Model<JournalEntry>;
 
   let service: SalesService;
   let tenantId: Types.ObjectId;
@@ -117,6 +122,8 @@ describe('SalesService MongoDB integration', () => {
       CreditNoteCounter.name,
       CreditNoteCounterSchema,
     );
+    AccountModel = connection.model<Account>(Account.name, AccountSchema);
+    JournalEntryModel = connection.model<JournalEntry>(JournalEntry.name, JournalEntrySchema);
 
     // Build only the indexes declared by these test models.
     await Promise.all([
@@ -127,6 +134,8 @@ describe('SalesService MongoDB integration', () => {
       CounterModel.createIndexes(),
       CreditNoteModel.createIndexes(),
       CreditNoteCounterModel.createIndexes(),
+      AccountModel.createIndexes(),
+      JournalEntryModel.createIndexes(),
     ]);
   });
 
@@ -176,6 +185,7 @@ describe('SalesService MongoDB integration', () => {
       CounterModel,
       CreditNoteModel,
       CreditNoteCounterModel,
+      new AccountingService(AccountModel as any, JournalEntryModel as any),
     );
   });
 
@@ -190,6 +200,8 @@ describe('SalesService MongoDB integration', () => {
       CounterModel.deleteMany({ tenantId }),
       CreditNoteModel.deleteMany({ tenantId }),
       CreditNoteCounterModel.deleteMany({ tenantId }),
+      AccountModel.deleteMany({ tenantId }),
+      JournalEntryModel.deleteMany({ tenantId }),
       TenantModel.deleteOne({ _id: tenantId }),
     ]);
   });

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
   Search, RefreshCw, Plus, Package, AlertTriangle, Boxes, X, Eye, Pencil,
-  ChevronLeft, ChevronRight, Barcode, Tag, IndianRupee,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';

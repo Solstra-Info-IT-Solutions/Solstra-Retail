@@ -21,6 +21,7 @@ import { Account, AccountSchema } from '../accounting/schemas/account.schema';
 import { JournalEntry, JournalEntrySchema } from '../accounting/schemas/journal-entry.schema';
 import { Purchase, PurchaseSchema } from '../purchases/schemas/purchase.schema';
 import { Supplier, SupplierSchema } from '../suppliers/schemas/supplier.schema';
+import { Tenant, TenantSchema } from '../tenants/schemas/tenant.schema';
 
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
@@ -39,6 +40,7 @@ import { ReportsService } from './reports.service';
       { name: JournalEntry.name, schema: JournalEntrySchema },
       { name: Purchase.name, schema: PurchaseSchema },
       { name: Supplier.name, schema: SupplierSchema },
+      { name: Tenant.name, schema: TenantSchema },
     ]),
   ],
   controllers: [ReportsController],

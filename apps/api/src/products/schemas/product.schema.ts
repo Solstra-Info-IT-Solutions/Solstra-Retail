@@ -99,6 +99,15 @@ export class Product {
   })
   stockQty!: number;
 
+  @Prop({ default: 0, min: 0 })
+  averageCost!: number;
+
+  @Prop({ default: 0, min: 0 })
+  inventoryValue!: number;
+
+  @Prop({ default: false })
+  valuationInitialized!: boolean;
+
   @Prop({
     default: 5,
     min: 0,

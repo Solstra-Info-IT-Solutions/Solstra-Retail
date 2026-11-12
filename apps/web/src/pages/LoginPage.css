@@ -1,0 +1,122 @@
+﻿.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--color-background);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 440px;
+  padding: 40px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+
+.brand-mark {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: var(--brand-primary);
+  color: var(--brand-dark);
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.login-heading {
+  margin: 42px 0 28px;
+}
+
+.login-eyebrow {
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+}
+
+.login-heading h1 {
+  margin: 10px 0;
+  font-size: 27px;
+  line-height: 1.25;
+  letter-spacing: -0.8px;
+}
+
+.login-heading > p:last-child {
+  color: var(--color-muted);
+  font-size: 14px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.login-form label {
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.login-form input {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: #fff;
+  color: var(--color-text);
+}
+
+.login-form input:focus {
+  border-color: var(--brand-secondary);
+  box-shadow: 0 0 0 3px rgba(241, 195, 135, 0.2);
+}
+
+.login-form button {
+  min-height: 48px;
+  margin-top: 18px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--brand-dark);
+  color: #fff;
+  font-weight: 600;
+}
+
+.login-form button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.login-error {
+  color: var(--color-danger);
+  font-size: 13px;
+}
+
+.login-footer {
+  margin-top: 28px;
+  color: var(--color-muted);
+  text-align: center;
+  font-size: 11px;
+}
+
+@media (max-width: 480px) {
+  .login-card {
+    padding: 28px 22px;
+  }
+}

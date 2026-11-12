@@ -1,20 +1,20 @@
+import { UnauthorizedException } from '@nestjs/common';
 import { Types } from 'mongoose';
 
 /**
- * Use this helper when constructing filters for tenant-owned collections.
- * Never accept tenantId from client input. Pass req.user.tenantId only.
+ * Always scope database filters to the authenticated tenant.
+ * Never accept tenantId from client input.
  */
-export function tenantFilter(tenantId: string, filter: Record<string, unknown> = {}) {
-  if (!Types.ObjectId.isValid(tenantId)) throw new Error('Invalid authenticated tenant context');
-  return { ...filter, tenantId: new Types.ObjectId(tenantId) };
-}
+export function tenantFilter(
+  tenantId: string,
+  filter: Record<string, unknown> = {},
+): Record<string, unknown> & { tenantId: Types.ObjectId } {
+  if (!Types.ObjectId.isValid(tenantId)) {
+    throw new UnauthorizedException('Invalid authenticated tenant context');
+  }
 
-/**
- * Example:
- * const product = await this.products.findOne(
- *   tenantFilter(req.user.tenantId, { _id: productId })
- * );
- *
- * For branch-scoped resources add branchId from a server-validated membership,
- * not from an untrusted body field.
- */
+  return {
+    ...filter,
+    tenantId: new Types.ObjectId(tenantId),
+  };
+}

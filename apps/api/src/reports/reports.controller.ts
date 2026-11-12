@@ -52,6 +52,11 @@ export class ReportsController {
     return this.reportsService.generalLedger(req.user.tenantId, accountCode, query);
   }
 
+  @Get('reports/cash-flow')
+  cashFlowStatement(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
+    return this.reportsService.cashFlowStatement(req.user.tenantId, query);
+  }
+
   @Get('reports/cash-bank-book')
   cashBankBook(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
     return this.reportsService.cashBankBook(req.user.tenantId, query);

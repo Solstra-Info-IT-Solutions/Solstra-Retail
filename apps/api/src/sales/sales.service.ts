@@ -24,6 +24,7 @@ import { ListSalesDto } from './dto/list-sales.dto';
 import { AddSalePaymentDto } from './dto/add-sale-payment.dto';
 import { AddCreditNoteRefundDto } from './dto/add-credit-note-refund.dto';
 import { AccountingService } from '../accounting/accounting.service';
+import { TaxPeriodsService } from '../accounting/tax-periods.service';
 
 @Injectable()
 export class SalesService {
@@ -56,6 +57,7 @@ export class SalesService {
     private readonly creditNoteCounters: Model<CreditNoteCounter>,
 
     private readonly accounting: AccountingService,
+    private readonly taxPeriods: TaxPeriodsService,
   ) {}
 
   private toPaise(value: number): number {
@@ -265,6 +267,7 @@ export class SalesService {
           result = transactionDuplicate;
           return;
         }
+        await this.taxPeriods.assertOpen(tenantId, saleDate, session);
         const tenant = await this.tenants
           .findById(tenantId)
           .session(session)
@@ -928,6 +931,7 @@ if (existingPayment) {
           );
         }
 
+        await this.taxPeriods.assertOpen(tenantId, creditNoteDate, session);
         const previousNotes = await this.creditNotes
           .find(
             tenantFilter(tenantId, {
@@ -1589,6 +1593,8 @@ if (existingPayment) {
             'Issued invoice not found. It may already be cancelled.',
           );
         }
+
+        await this.taxPeriods.assertOpen(tenantId, invoice.invoiceDate, session);
 
         if (
   invoice.paidAmount > 0 ||

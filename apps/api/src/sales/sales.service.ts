@@ -560,6 +560,7 @@ export class SalesService {
           tenantId: new Types.ObjectId(tenantId),
           idempotencyKey,
           requestFingerprint,
+          costingVersion: 1,
           invoiceNumber,
           financialYear: fy,
           invoiceDate: now,
@@ -1108,7 +1109,10 @@ if (existingPayment) {
               throw new ConflictException(`Opening inventory valuation is required before restocking "${original.name}".`);
             }
             const newQty = previousQty + requested.quantity;
-            const returnedCostPaise = this.toPaise(original.unitCostAtSale || 0) * requested.quantity;
+            const returnedUnitCostPaise = invoice.costingVersion === 1
+              ? this.toPaise(original.unitCostAtSale || 0)
+              : this.toPaise(product.averageCost || 0);
+            const returnedCostPaise = returnedUnitCostPaise * requested.quantity;
             restockedCostPaise += returnedCostPaise;
 
             const updatedProduct = await this.products.findOneAndUpdate(
@@ -1602,10 +1606,12 @@ if (existingPayment) {
           if (!item.stockTracked) continue;
           const productId = item.productId.toString();
           restoreQuantities.set(productId, (restoreQuantities.get(productId) || 0) + item.quantity);
-          restoreValuesPaise.set(
-            productId,
-            (restoreValuesPaise.get(productId) || 0) + this.toPaise(item.costOfGoodsSold || 0),
-          );
+          if (invoice.costingVersion === 1) {
+            restoreValuesPaise.set(
+              productId,
+              (restoreValuesPaise.get(productId) || 0) + this.toPaise(item.costOfGoodsSold || 0),
+            );
+          }
         }
 
         for (const [productId, quantity] of restoreQuantities) {
@@ -1628,6 +1634,9 @@ if (existingPayment) {
             throw new ConflictException('Opening inventory valuation is required before restoring stock for this invoice.');
           }
           const newQty = previousQty + quantity;
+          const restoredValuePaise = invoice.costingVersion === 1
+            ? (restoreValuesPaise.get(productId) || 0)
+            : this.toPaise(product.averageCost || 0) * quantity;
 
           const updated = await this.products.findOneAndUpdate(
             tenantFilter(tenantId, {
@@ -1638,16 +1647,14 @@ if (existingPayment) {
               $set: {
                 stockQty: previousQty + quantity,
                 inventoryValue: this.fromPaise(
-                  this.toPaise(product.inventoryValue || 0) +
-                    (restoreValuesPaise.get(productId) || 0),
+                  this.toPaise(product.inventoryValue || 0) + restoredValuePaise,
                 ),
                 averageCost: newQty > 0
                   ? this.fromPaise(Math.round((
-                      this.toPaise(product.inventoryValue || 0) +
-                      (restoreValuesPaise.get(productId) || 0)
+                      this.toPaise(product.inventoryValue || 0) + restoredValuePaise
                     ) / newQty))
                   : product.averageCost,
-                valuationInitialized: product.valuationInitialized || (restoreValuesPaise.get(productId) || 0) > 0,
+                valuationInitialized: product.valuationInitialized || restoredValuePaise > 0,
               },
             },
             {

@@ -19,6 +19,7 @@ describe('PurchasesService validation', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
     );
 
     return { service, purchases };
@@ -75,6 +76,31 @@ describe('PurchasesService validation', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(purchases.db.startSession).not.toHaveBeenCalled();
+  });
+
+
+  it('splits GST into CGST and SGST for same-state purchases with paise precision', () => {
+    const { service } = createService();
+    expect((service as any).splitGst(18, '09', '09')).toEqual({
+      cgstAmount: 9, sgstAmount: 9, igstAmount: 0, classified: true,
+    });
+    expect((service as any).splitGst(0.01, '09', '09')).toEqual({
+      cgstAmount: 0, sgstAmount: 0.01, igstAmount: 0, classified: true,
+    });
+  });
+
+  it('classifies inter-state purchase GST as IGST', () => {
+    const { service } = createService();
+    expect((service as any).splitGst(18, '27', '09')).toEqual({
+      cgstAmount: 0, sgstAmount: 0, igstAmount: 18, classified: true,
+    });
+  });
+
+  it('does not invent a GST split when either state code is unavailable', () => {
+    const { service } = createService();
+    expect((service as any).splitGst(18, null, '09')).toEqual({
+      cgstAmount: 0, sgstAmount: 0, igstAmount: 0, classified: false,
+    });
   });
 
 });

@@ -50,7 +50,9 @@ export class TaxPeriodsService {
   async close(tenantId: string, userId: string, dto: TaxPeriodDto) {
     this.validateIdentity(tenantId, userId);
     const { startDate, endDate } = this.bounds(dto.period);
-    if (endDate >= new Date()) throw new BadRequestException('A GST period can only be closed after the full calendar month has ended');
+    const indiaNow = new Date(Date.now() + 330 * 60 * 1000);
+    const currentPeriod = `${indiaNow.getUTCFullYear()}-${String(indiaNow.getUTCMonth() + 1).padStart(2, '0')}`;
+    if (dto.period >= currentPeriod || endDate >= new Date()) throw new BadRequestException('A GST period can only be closed after the full calendar month has ended');
     const reason = dto.reason.trim();
     if (reason.length < 3) throw new BadRequestException('A closure reason of at least 3 characters is required');
     try {

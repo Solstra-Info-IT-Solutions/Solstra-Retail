@@ -36,8 +36,9 @@ export class TaxPeriodsService {
       if (period) return;
     } catch (error) {
       if ((error as { code?: number }).code !== 11000) throw error;
+      if (session) throw new ConflictException(`GST period ${periodKey} is closed or changed concurrently. Reopen it with an audited owner/admin action before changing tax records.`);
     }
-    const closed = await this.periods.findOne(tenantFilter(tenantId, { periodKey, status: 'CLOSED' })).session(session ?? null).lean();
+    const closed = await this.periods.findOne(tenantFilter(tenantId, { periodKey, status: 'CLOSED' })).lean();
     if (closed) throw new ConflictException(`GST period ${periodKey} is closed. Reopen it with an audited owner/admin action before changing tax records.`);
     throw new ConflictException('GST period changed concurrently. Retry the operation.');
   }

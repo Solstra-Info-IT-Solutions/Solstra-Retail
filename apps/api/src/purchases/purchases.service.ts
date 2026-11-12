@@ -152,6 +152,7 @@ export class PurchasesService {
             taxableValue,
             gstAmount,
             lineTotal,
+            trackStock: product.trackStock,
           });
         }
 
@@ -174,6 +175,33 @@ export class PurchasesService {
           createdBy: new Types.ObjectId(userId),
         }], { session });
 
+        const purchaseJournalLines: Array<{ accountCode: string; debit: number; credit: number; description: string }> = [];
+        const trackedCostPaise = items.reduce((sum: number, item: any) =>
+          sum + (item.trackStock ? this.toPaise(item.taxableValue) : 0), 0);
+        const nonTrackedCostPaise = items.reduce((sum: number, item: any) =>
+          sum + (!item.trackStock ? this.toPaise(item.taxableValue) : 0), 0);
+        if (trackedCostPaise > 0) purchaseJournalLines.push({
+          accountCode: '1210', debit: this.fromPaise(trackedCostPaise), credit: 0,
+          description: 'Inventory in transit',
+        });
+        if (nonTrackedCostPaise > 0) purchaseJournalLines.push({
+          accountCode: '5100', debit: this.fromPaise(nonTrackedCostPaise), credit: 0,
+          description: 'Non-stock purchase expense',
+        });
+        if (gstTotal > 0) purchaseJournalLines.push({
+          accountCode: '1300', debit: Number(gstTotal.toFixed(2)), credit: 0,
+          description: 'Input GST credit',
+        });
+        if (purchase.grandTotal > 0) purchaseJournalLines.push({
+          accountCode: '2000', debit: 0, credit: purchase.grandTotal,
+          description: 'Supplier accounts payable',
+        });
+        await this.accounting.postOperationalJournal({
+          tenantId, userId, postingDate: purchase.purchaseDate,
+          narration: `Supplier invoice ${purchase.supplierInvoiceNumber} - ${purchase.purchaseNumber}`,
+          sourceType: 'PURCHASE', sourceId: purchase._id.toString(),
+          lines: purchaseJournalLines, session,
+        });
         result = purchase;
       });
     } finally {
@@ -239,6 +267,7 @@ export class PurchasesService {
           throw new ConflictException('This purchase cannot receive more stock');
         }
 
+        let inventoryTransferPaise = 0;
         const receivedByProduct = new Map<string, number>();
         for (const item of dto.items) {
           if (!Types.ObjectId.isValid(item.productId)) {
@@ -296,6 +325,11 @@ export class PurchasesService {
             }], { session });
           }
 
+          if (line.trackStock) {
+            const oldAllocated = Math.round(this.toPaise(line.taxableValue) * line.receivedQty / line.quantity);
+            const newAllocated = Math.round(this.toPaise(line.taxableValue) * (line.receivedQty + quantity) / line.quantity);
+            inventoryTransferPaise += newAllocated - oldAllocated;
+          }
           line.receivedQty += quantity;
         }
 
@@ -315,6 +349,18 @@ export class PurchasesService {
         purchase.status = allReceived ? 'RECEIVED' : anyReceived ? 'PARTIALLY_RECEIVED' : 'DRAFT';
 
         await purchase.save({ session });
+        if (inventoryTransferPaise > 0) {
+          const transferAmount = this.fromPaise(inventoryTransferPaise);
+          await this.accounting.postOperationalJournal({
+            tenantId, userId, postingDate: new Date(),
+            narration: `Inventory received against ${purchase.purchaseNumber}`,
+            sourceType: 'PURCHASE', sourceId: `PURCHASE_RECEIPT:${purchase._id.toString()}:${dto.idempotencyKey}`,
+            lines: [
+              { accountCode: '1200', debit: transferAmount, credit: 0, description: 'Received inventory' },
+              { accountCode: '1210', debit: 0, credit: transferAmount, description: 'Release inventory in transit' },
+            ], session,
+          });
+        }
         result = purchase;
       });
     } finally {
@@ -381,7 +427,18 @@ export class PurchasesService {
       { new: true, runValidators: true },
     );
 
-    if (purchase) return purchase;
+    if (purchase) {
+      const session = await this.purchases.db.startSession();
+      try {
+        await session.withTransaction(async () => {
+          await this.accounting.reverseOperationalJournal({
+            tenantId, userId, sourceType: 'PURCHASE', sourceId: purchase._id.toString(),
+            reason: 'Purchase cancelled before stock receipt', session,
+          });
+        });
+      } finally { await session.endSession(); }
+      return purchase;
+    }
 
     const existing = await this.purchases.exists(
       tenantFilter(tenantId, { _id: new Types.ObjectId(id) }),

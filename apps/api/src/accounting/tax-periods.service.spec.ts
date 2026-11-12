@@ -33,4 +33,14 @@ describe('TaxPeriodsService', () => {
     await expect(service.reopen(tenantId, userId, { period: '2026-10', reason: 'Correction required' }))
       .rejects.toBeInstanceOf(ConflictException);
   });
+
+  it('rejects tax mutations when the matching period is closed', async () => {
+    const model = {
+      findOneAndUpdate: jest.fn().mockRejectedValue({ code: 11000 }),
+      findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue({ status: 'CLOSED' }) }),
+    };
+    const service = new TaxPeriodsService(model as any);
+    await expect(service.assertOpen(tenantId, new Date('2026-10-15T12:00:00.000Z')))
+      .rejects.toBeInstanceOf(ConflictException);
+  });
 });

@@ -366,6 +366,7 @@ export class SalesService {
         let igstTotalPaise = 0;
 
         const invoiceItems: any[] = [];
+        let totalCogsPaise = 0;
 
         for (const item of dto.items) {
           const product = productMap.get(item.productId);
@@ -423,6 +424,13 @@ export class SalesService {
           sgstTotalPaise += sgstPaise;
           igstTotalPaise += igstPaise;
 
+          const unitCostPaise = product.trackStock ? this.toPaise(product.averageCost || 0) : 0;
+          if (product.trackStock && product.stockQty > 0 && !product.valuationInitialized) {
+            throw new BadRequestException(`Inventory valuation is not initialized for ${product.name}. Reconcile opening stock before selling this item.`);
+          }
+          const lineCogsPaise = unitCostPaise * quantity;
+          totalCogsPaise += lineCogsPaise;
+
           invoiceItems.push({
             productId: product._id,
             name: product.name,
@@ -436,6 +444,8 @@ export class SalesService {
             gstRate,
             priceIncludesTax: product.priceIncludesTax,
             stockTracked: product.trackStock,
+            unitCostAtSale: this.fromPaise(unitCostPaise),
+            costOfGoodsSold: this.fromPaise(lineCogsPaise),
             cgstAmount: this.fromPaise(cgstPaise),
             sgstAmount: this.fromPaise(sgstPaise),
             igstAmount: this.fromPaise(igstPaise),
@@ -603,6 +613,18 @@ export class SalesService {
           tenantId, userId, postingDate: now, narration: `Sales invoice ${invoiceNumber}`,
           sourceType: 'SALES', sourceId: invoice._id.toString(), lines: saleLines, session,
         });
+        if (totalCogsPaise > 0) {
+          await this.accounting.postOperationalJournal({
+            tenantId, userId, postingDate: now,
+            narration: `Cost of goods sold for ${invoiceNumber}`,
+            sourceType: 'INVENTORY', sourceId: `SALE_COGS:${invoice._id.toString()}`,
+            lines: [
+              { accountCode: '5000', debit: this.fromPaise(totalCogsPaise), credit: 0, description: 'Cost of goods sold' },
+              { accountCode: '1200', debit: 0, credit: this.fromPaise(totalCogsPaise), description: 'Inventory asset relieved' },
+            ],
+            session,
+          });
+        }
         result = invoice;
       });
 
@@ -1638,6 +1660,11 @@ if (existingPayment) {
 
         await this.accounting.reverseOperationalJournal({
           tenantId, userId, sourceType: 'SALES', sourceId: invoice._id.toString(),
+          reason: reason || 'Sales invoice cancelled', session,
+        });
+        await this.accounting.reverseOperationalJournal({
+          tenantId, userId, sourceType: 'INVENTORY',
+          sourceId: `SALE_COGS:${invoice._id.toString()}`,
           reason: reason || 'Sales invoice cancelled', session,
         });
         result = cancelled;

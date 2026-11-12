@@ -83,7 +83,7 @@ export class ProductsService {
 
       if (product.trackStock && product.stockQty > 0) {
         const openingValue = Number((product.stockQty * product.averageCost).toFixed(2));
-        await this.accounting.postOperationalJournal({
+        if (openingValue > 0) await this.accounting.postOperationalJournal({
           tenantId, userId, postingDate: new Date(),
           narration: `Opening inventory for product ${product.name}`,
           sourceType: 'INVENTORY', sourceId: `PRODUCT_OPENING:${product._id.toString()}`,

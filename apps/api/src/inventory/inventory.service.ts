@@ -74,7 +74,7 @@ export class InventoryService {
       if (previousQty > 0 && !product.valuationInitialized) {
         throw new ConflictException('Opening inventory valuation must be initialized before adjusting existing stock.');
       }
-      const unitCostPaise = Math.round(((product.averageCost || product.purchasePrice || 0) + Number.EPSILON) * 100);
+      const unitCostPaise = Math.round((((product.valuationInitialized ? product.averageCost : product.purchasePrice) || 0) + Number.EPSILON) * 100);
       let newQty = previousQty;
 
       if (dto.type === 'IN') {

@@ -14,6 +14,7 @@ import { Purchase, PurchaseDocument } from './schemas/purchase.schema';
 import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { ReceivePurchaseDto } from './dto/receive-purchase.dto';
 import { ListPurchasesDto } from './dto/list-purchases.dto';
+import { AddPurchasePaymentDto } from './dto/add-purchase-payment.dto';
 
 @Injectable()
 export class PurchasesService {
@@ -23,6 +24,61 @@ export class PurchasesService {
     @InjectModel(Supplier.name) private readonly suppliers: Model<SupplierDocument>,
     @InjectModel(InventoryMovement.name) private readonly movements: Model<InventoryMovementDocument>,
   ) {}
+
+
+  private toPaise(value: number): number { return Math.round((value + Number.EPSILON) * 100); }
+  private fromPaise(value: number): number { return value / 100; }
+
+  async addPayment(tenantId: string, userId: string, id: string, dto: AddPurchasePaymentDto) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid tenant, user or purchase ID');
+    const amountPaise = this.toPaise(dto.amount);
+    const session = await this.purchases.db.startSession();
+    let result: PurchaseDocument | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const purchase = await this.purchases.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(id) })).session(session);
+        if (!purchase) throw new NotFoundException('Purchase not found');
+        const existing = (purchase.payments || []).find((payment: any) => payment.idempotencyKey === dto.idempotencyKey);
+        if (existing) {
+          if (existing.method !== dto.method || this.toPaise(existing.amount) !== amountPaise || (existing.reference || '') !== (dto.reference || '')) throw new ConflictException('This idempotency key was already used for a different payment');
+          result = purchase;
+          return;
+        }
+        if (purchase.status === 'CANCELLED') throw new ConflictException('Cancelled purchases cannot accept payments');
+        const paidPaise = this.toPaise(purchase.paidAmount || 0);
+        const totalPaise = this.toPaise(purchase.grandTotal);
+        const duePaise = Math.max(0, totalPaise - paidPaise);
+        if (duePaise <= 0) throw new ConflictException('This purchase is already fully paid');
+        if (amountPaise <= 0) throw new BadRequestException('Payment must be greater than zero');
+        if (amountPaise > duePaise) throw new BadRequestException('Payment exceeds the outstanding purchase balance');
+        purchase.payments = purchase.payments || [];
+        purchase.payments.push({ idempotencyKey: dto.idempotencyKey, method: dto.method, amount: this.fromPaise(amountPaise), reference: dto.reference || '', paidAt: new Date(), receivedBy: new Types.ObjectId(userId) } as any);
+        purchase.paidAmount = this.fromPaise(paidPaise + amountPaise);
+        purchase.dueAmount = this.fromPaise(totalPaise - paidPaise - amountPaise);
+        await purchase.save({ session });
+        result = purchase;
+      });
+    } finally { await session.endSession(); }
+    if (!result) throw new Error('Purchase payment could not be recorded');
+    return result;
+  }
+
+  async supplierLedger(tenantId: string, supplierId: string, query: ListPurchasesDto) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(supplierId)) throw new BadRequestException('Invalid tenant or supplier ID');
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const filter = tenantFilter(tenantId, { supplierId: new Types.ObjectId(supplierId) });
+    const [items, total] = await Promise.all([
+      this.purchases.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit)
+        .select('purchaseNumber supplierInvoiceNumber purchaseDate grandTotal paidAmount dueAmount payments status createdAt').lean(),
+      this.purchases.countDocuments(filter),
+    ]);
+    const totals = await this.purchases.aggregate([
+      { $match: { tenantId: new Types.ObjectId(tenantId), supplierId: new Types.ObjectId(supplierId), status: { $ne: 'CANCELLED' } } },
+      { $group: { _id: null, purchases: { $sum: '$grandTotal' }, paid: { $sum: { $ifNull: ['$paidAmount', 0] } }, outstanding: { $sum: { $subtract: ['$grandTotal', { $ifNull: ['$paidAmount', 0] }] } } } },
+    ]);
+    return { summary: { purchaseTotal: totals[0]?.purchases || 0, paidTotal: totals[0]?.paid || 0, outstanding: totals[0]?.outstanding || 0 }, items, pagination: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+  }
 
   async create(tenantId: string, userId: string, dto: CreatePurchaseDto) {
     if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(userId)) {
@@ -98,6 +154,9 @@ export class PurchasesService {
           subtotal: Number(subtotal.toFixed(2)),
           gstTotal: Number(gstTotal.toFixed(2)),
           grandTotal: Number((subtotal + gstTotal).toFixed(2)),
+          paidAmount: 0,
+          dueAmount: Number((subtotal + gstTotal).toFixed(2)),
+          payments: [],
           status: 'DRAFT',
           notes: dto.notes?.trim() ?? '',
           receipts: [],
@@ -299,6 +358,7 @@ export class PurchasesService {
       tenantFilter(tenantId, {
         _id: new Types.ObjectId(id),
         status: 'DRAFT',
+        $or: [{ paidAmount: 0 }, { paidAmount: { $exists: false } }],
       }),
       {
         $set: {

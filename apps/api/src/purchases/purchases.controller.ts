@@ -5,6 +5,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { PurchasesService } from './purchases.service';
 import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { ReceivePurchaseDto } from './dto/receive-purchase.dto';
+import { AddPurchasePaymentDto } from './dto/add-purchase-payment.dto';
 import { ListPurchasesDto } from './dto/list-purchases.dto';
 
 @Controller('purchases')
@@ -31,6 +32,17 @@ export class PurchasesController {
   @Roles('owner', 'admin')
   receive(@Req() req: any, @Param('id') id: string, @Body() dto: ReceivePurchaseDto) {
     return this.purchasesService.receive(req.user.tenantId, req.user.userId, id, dto);
+  }
+
+  @Post(':id/payments')
+  @Roles('owner', 'admin')
+  addPayment(@Req() req: any, @Param('id') id: string, @Body() dto: AddPurchasePaymentDto) {
+    return this.purchasesService.addPayment(req.user.tenantId, req.user.userId, id, dto);
+  }
+
+  @Get('supplier/:supplierId/ledger')
+  supplierLedger(@Req() req: any, @Param('supplierId') supplierId: string, @Query() query: ListPurchasesDto) {
+    return this.purchasesService.supplierLedger(req.user.tenantId, supplierId, query);
   }
 
   @Post(':id/cancel')

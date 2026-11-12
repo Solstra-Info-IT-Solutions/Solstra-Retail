@@ -3,6 +3,7 @@ import { HydratedDocument, Types } from 'mongoose';
 
 export type PurchaseStatus = 'DRAFT' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED';
 export type PurchaseDocument = HydratedDocument<Purchase>;
+export type PurchasePaymentMethod = 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'OTHER';
 
 @Schema({ _id: false })
 export class PurchaseItem {
@@ -20,6 +21,16 @@ export class PurchaseItem {
   @Prop({ required: true, min: 0 }) taxableValue!: number;
   @Prop({ required: true, min: 0 }) gstAmount!: number;
   @Prop({ required: true, min: 0 }) lineTotal!: number;
+}
+
+@Schema({ _id: false })
+export class PurchasePayment {
+  @Prop({ required: true }) idempotencyKey!: string;
+  @Prop({ required: true, enum: ['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'OTHER'] }) method!: PurchasePaymentMethod;
+  @Prop({ required: true, min: 0.01 }) amount!: number;
+  @Prop({ trim: true, default: '' }) reference!: string;
+  @Prop({ required: true, default: Date.now }) paidAt!: Date;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true }) receivedBy!: Types.ObjectId;
 }
 
 @Schema({ _id: false })
@@ -66,6 +77,9 @@ export class Purchase {
   @Prop({ required: true, min: 0 }) subtotal!: number;
   @Prop({ required: true, min: 0 }) gstTotal!: number;
   @Prop({ required: true, min: 0 }) grandTotal!: number;
+  @Prop({ required: true, min: 0, default: 0 }) paidAmount!: number;
+  @Prop({ required: true, min: 0, default: 0 }) dueAmount!: number;
+  @Prop({ type: [PurchasePayment], default: [] }) payments!: PurchasePayment[];
 
   @Prop({ required: true, enum: ['DRAFT', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED'], default: 'DRAFT' })
   status!: PurchaseStatus;

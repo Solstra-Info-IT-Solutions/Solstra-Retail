@@ -24,6 +24,7 @@ export class SuppliersService {
       throw new BadRequestException('Invalid tenant');
     }
 
+    this.validateGstinStateCode(dto.gstin, dto.stateCode);
     return this.suppliers.create({
       ...dto,
       tenantId: new Types.ObjectId(tenantId),
@@ -85,6 +86,11 @@ export class SuppliersService {
       throw new BadRequestException('At least one supplier field must be provided');
     }
     const supplierId = this.validateId(id);
+    const existing = await this.suppliers.findOne(tenantFilter(tenantId, { _id: supplierId, isDeleted: false })).lean();
+    if (!existing) throw new NotFoundException('Supplier not found');
+    const effectiveGstin = dto.gstin !== undefined ? dto.gstin : existing.gstin;
+    const effectiveStateCode = dto.stateCode !== undefined ? dto.stateCode : existing.stateCode;
+    this.validateGstinStateCode(effectiveGstin, effectiveStateCode);
     const update: Record<string, unknown> = { ...dto };
 
     if (dto.phone !== undefined) update.phone = dto.phone.trim() || undefined;
@@ -115,6 +121,13 @@ export class SuppliersService {
       message: 'Supplier deleted successfully',
       supplierId: String(supplier._id),
     };
+  }
+
+  private validateGstinStateCode(gstin?: string | null, stateCode?: string | null) {
+    const normalizedGstin = gstin?.trim().toUpperCase();
+    if (normalizedGstin && stateCode && normalizedGstin.slice(0, 2) !== stateCode) {
+      throw new BadRequestException('Supplier state code must match the first two digits of the GSTIN');
+    }
   }
 
   private validateId(id: string): Types.ObjectId {

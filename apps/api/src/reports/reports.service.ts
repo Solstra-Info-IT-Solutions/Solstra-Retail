@@ -513,8 +513,12 @@ export class ReportsService {
         creditNoteDate: { $gte: start, $lte: end },
       })).select('taxableValue cgstTotal sgstTotal igstTotal totalTax').lean(),
       this.purchases.find(tenantFilter(tenantId, {
-        status: { $ne: 'CANCELLED' }, purchaseDate: { $gte: start, $lte: end },
-      })).select('subtotal gstTotal cgstTotal sgstTotal igstTotal gstSplitClassified supplierGstinSnapshot supplierStateCodeSnapshot placeOfSupplyStateCode items status purchaseNumber supplierInvoiceNumber purchaseDate').lean(),
+        status: { $ne: 'CANCELLED' },
+        $or: [
+          { supplierInvoiceDate: { $gte: start, $lte: end } },
+          { supplierInvoiceDate: null, purchaseDate: { $gte: start, $lte: end } },
+        ],
+      })).select('subtotal gstTotal cgstTotal sgstTotal igstTotal gstSplitClassified supplierGstinSnapshot supplierStateCodeSnapshot placeOfSupplyStateCode items status purchaseNumber supplierInvoiceNumber purchaseDate supplierInvoiceDate').lean(),
     ]);
     const sum = (rows: any[], field: string) => rows.reduce((total, row) => total + (row[field] || 0), 0);
     const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
@@ -529,9 +533,10 @@ export class ReportsService {
     const classifiedPurchases = purchases.filter((purchase: any) => purchase.gstSplitClassified === true);
     const unclassifiedPurchases = purchases.filter((purchase: any) => purchase.gstSplitClassified !== true);
     const purchasesMissingGstin = purchases.filter((purchase: any) => !purchase.supplierGstinSnapshot).length;
+    const purchasesUsingEntryDateFallback = purchases.filter((purchase: any) => !purchase.supplierInvoiceDate).length;
     return {
       from: start, to: end, currency: 'INR', amountUnit: 'RUPEES',
-      basis: 'ISSUED_SALES_INVOICES_AND_NON_CANCELLED_PURCHASE_RECORDS',
+      basis: 'SALES_INVOICE_DATE_AND_SUPPLIER_INVOICE_DATE_WITH_LEGACY_ENTRY_DATE_FALLBACK',
       outwardTaxableSupplies: {
         invoiceCount: invoices.length,
         creditNoteCount: creditNotes.length,

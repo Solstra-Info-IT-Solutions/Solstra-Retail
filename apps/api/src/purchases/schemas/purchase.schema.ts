@@ -76,6 +76,9 @@ export class Purchase {
   @Prop({ required: true, default: Date.now })
   purchaseDate!: Date;
 
+  @Prop({ type: Date, default: null })
+  supplierInvoiceDate?: Date | null;
+
   @Prop({ type: [PurchaseItem], required: true })
   items!: PurchaseItem[];
 

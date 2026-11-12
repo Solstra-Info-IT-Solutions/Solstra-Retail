@@ -398,6 +398,9 @@ export class AccountingService {
     if (original.sourceType !== 'MANUAL') {
       throw new ConflictException('Operational journals must be reversed through their originating business workflow');
     }
+    if (original.sourceId === 'OPENING_BALANCES') {
+      throw new ConflictException('Opening balances are immutable; use a separately audited adjustment journal');
+    }
     if (original.status !== 'POSTED' || original.reversalOf) {
       throw new ConflictException('Only an unreversed posted journal can be reversed');
     }

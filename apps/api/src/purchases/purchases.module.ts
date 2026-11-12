@@ -3,6 +3,7 @@ import { AccountingModule } from '../accounting/accounting.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Product, ProductSchema } from '../products/schemas/product.schema';
 import { Supplier, SupplierSchema } from '../suppliers/schemas/supplier.schema';
+import { Tenant, TenantSchema } from '../tenants/schemas/tenant.schema';
 import { InventoryMovement, InventoryMovementSchema } from '../inventory/schemas/inventory-movement.schema';
 import { Purchase, PurchaseSchema } from './schemas/purchase.schema';
 import { PurchasesController } from './purchases.controller';
@@ -15,6 +16,7 @@ import { PurchasesService } from './purchases.service';
       { name: Purchase.name, schema: PurchaseSchema },
       { name: Product.name, schema: ProductSchema },
       { name: Supplier.name, schema: SupplierSchema },
+      { name: Tenant.name, schema: TenantSchema },
       { name: InventoryMovement.name, schema: InventoryMovementSchema },
     ]),
   ],

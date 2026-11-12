@@ -17,12 +17,12 @@ describe('TrialGuard', () => {
 
   const tenantId = '507f1f77bcf86cd799439011';
 
-  const createContext = (user?: { tenantId?: string }) =>
+  const createContext = (user?: { tenantId?: string }, method = 'POST') =>
     ({
       getHandler: jest.fn(),
       getClass: jest.fn(),
       switchToHttp: () => ({
-        getRequest: () => ({ user }),
+        getRequest: () => ({ user, method }),
       }),
     }) as unknown as ExecutionContext;
 
@@ -110,6 +110,17 @@ describe('TrialGuard', () => {
 
     await expect(
       guard.canActivate(createContext({ tenantId })),
+    ).resolves.toBe(true);
+  });
+
+  it('allows read-only requests after trial expiry', async () => {
+    mockTenant({
+      subscriptionStatus: 'trial',
+      trialEndsAt: new Date(Date.now() - 86400000),
+    });
+
+    await expect(
+      guard.canActivate(createContext({ tenantId }, 'GET')),
     ).resolves.toBe(true);
   });
 

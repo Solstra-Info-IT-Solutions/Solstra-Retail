@@ -43,6 +43,12 @@ export class InvoiceLineItem {
   @Prop({ required: true, default: false })
   stockTracked!: boolean;
 
+  @Prop({ required: true, min: 0, default: 0 })
+  unitCostAtSale!: number;
+
+  @Prop({ required: true, min: 0, default: 0 })
+  costOfGoodsSold!: number;
+
   @Prop({ required: true, default: 0 })
   cgstAmount!: number;
 

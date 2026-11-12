@@ -655,7 +655,6 @@ export class ReportsService {
     const unclassifiedAccounts = new Map<string, { code: string; name: string; inflows: number; outflows: number }>();
     let cashInflows = 0;
     let cashOutflows = 0;
-    let cashMovement = 0;
 
     const classify = (code: string, type?: string): keyof typeof totals => {
       if (type === 'EQUITY') return 'financing';
@@ -684,7 +683,6 @@ export class ReportsService {
 
       cashInflows += Math.max(0, net);
       cashOutflows += Math.max(0, -net);
-      cashMovement += net;
 
       const counterpartLines = entry.lines.filter((line: any) => !cashCodes.includes(line.accountCode));
       const side = net > 0 ? 'credit' : 'debit';

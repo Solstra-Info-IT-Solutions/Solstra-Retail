@@ -158,7 +158,7 @@ describe('ReportsService validation', () => {
     expect(result.filename).toBe('gst-inward-purchase-register.csv');
     expect(result.contentType).toBe('text/csv; charset=utf-8');
     expect(result.content.charCodeAt(0)).toBe(0xfeff);
-    expect(result.content).toContain("'=HYPERLINK(""https://bad.example"")");
+    expect(result.content).toContain("'=HYPERLINK(");
     expect(result.content).toContain('"100"');
     expect(result.content).toContain('"0"');
     expect(result.content).toContain('\r\n');

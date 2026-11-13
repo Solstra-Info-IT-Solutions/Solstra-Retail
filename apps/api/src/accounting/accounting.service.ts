@@ -49,7 +49,7 @@ export class AccountingService {
     userId: string;
     postingDate: Date;
     narration: string;
-    sourceType: 'SALES' | 'PAYMENT' | 'PURCHASE' | 'REFUND' | 'INVENTORY';
+    sourceType: 'SALES' | 'PAYMENT' | 'PURCHASE' | 'REFUND' | 'INVENTORY' | 'EXPENSE';
     sourceId: string;
     lines: Array<{ accountCode: string; debit: number; credit: number; description?: string }>;
     session: ClientSession;

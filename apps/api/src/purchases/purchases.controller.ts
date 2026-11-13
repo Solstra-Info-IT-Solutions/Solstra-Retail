@@ -7,6 +7,7 @@ import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { ReceivePurchaseDto } from './dto/receive-purchase.dto';
 import { AddPurchasePaymentDto } from './dto/add-purchase-payment.dto';
 import { ListPurchasesDto } from './dto/list-purchases.dto';
+import { ReviewPurchaseItcDto } from './dto/review-purchase-itc.dto';
 
 @Controller('purchases')
 export class PurchasesController {
@@ -21,6 +22,17 @@ export class PurchasesController {
   @Get()
   findAll(@Req() req: any, @Query() query: ListPurchasesDto) {
     return this.purchasesService.findAll(req.user.tenantId, query);
+  }
+
+  @Get('itc-review-summary')
+  itcReviewSummary(@Req() req: any) {
+    return this.purchasesService.itcReviewSummary(req.user.tenantId);
+  }
+
+  @Post(':id/itc-review')
+  @Roles('owner', 'admin')
+  reviewItc(@Req() req: any, @Param('id') id: string, @Body() dto: ReviewPurchaseItcDto) {
+    return this.purchasesService.reviewItc(req.user.tenantId, req.user.userId, id, dto);
   }
 
   @Get(':id')

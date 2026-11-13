@@ -6,6 +6,8 @@ import mongoose, { Connection, Model, Types } from 'mongoose';
 
 import { SalesService } from '../../src/sales/sales.service';
 import { AccountingService } from '../../src/accounting/accounting.service';
+import { TaxPeriodsService } from '../../src/accounting/tax-periods.service';
+import { TaxPeriod, TaxPeriodSchema } from '../../src/accounting/schemas/tax-period.schema';
 import { Account, AccountSchema } from '../../src/accounting/schemas/account.schema';
 import { JournalEntry, JournalEntrySchema } from '../../src/accounting/schemas/journal-entry.schema';
 import { CreateSaleDto } from '../../src/sales/dto/create-sale.dto';
@@ -58,6 +60,7 @@ describe('SalesService MongoDB integration', () => {
   let CreditNoteCounterModel: Model<CreditNoteCounter>;
   let AccountModel: Model<Account>;
   let JournalEntryModel: Model<JournalEntry>;
+  let TaxPeriodModel: Model<TaxPeriod>;
 
   let service: SalesService;
   let tenantId: Types.ObjectId;
@@ -124,6 +127,7 @@ describe('SalesService MongoDB integration', () => {
     );
     AccountModel = connection.model<Account>(Account.name, AccountSchema);
     JournalEntryModel = connection.model<JournalEntry>(JournalEntry.name, JournalEntrySchema);
+    TaxPeriodModel = connection.model<TaxPeriod>(TaxPeriod.name, TaxPeriodSchema);
 
     // Build only the indexes declared by these test models.
     await Promise.all([
@@ -136,6 +140,7 @@ describe('SalesService MongoDB integration', () => {
       CreditNoteCounterModel.createIndexes(),
       AccountModel.createIndexes(),
       JournalEntryModel.createIndexes(),
+      TaxPeriodModel.createIndexes(),
     ]);
   });
 
@@ -185,7 +190,12 @@ describe('SalesService MongoDB integration', () => {
       CounterModel,
       CreditNoteModel,
       CreditNoteCounterModel,
-      new AccountingService(AccountModel as any, JournalEntryModel as any),
+      new AccountingService(
+        AccountModel as any,
+        JournalEntryModel as any,
+        new TaxPeriodsService(TaxPeriodModel as any),
+      ),
+      new TaxPeriodsService(TaxPeriodModel as any),
     );
   });
 
@@ -202,6 +212,7 @@ describe('SalesService MongoDB integration', () => {
       CreditNoteCounterModel.deleteMany({ tenantId }),
       AccountModel.deleteMany({ tenantId }),
       JournalEntryModel.deleteMany({ tenantId }),
+      TaxPeriodModel.deleteMany({ tenantId }),
       TenantModel.deleteOne({ _id: tenantId }),
     ]);
   });

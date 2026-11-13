@@ -125,4 +125,50 @@ describe('ReportsService validation', () => {
     expect(result.purchasesUsingEntryDateFallback).toBe(1);
     expect(result.unclassifiedPurchaseCount).toBe(1);
   });
+
+  it('exports a tenant-scoped purchase register as spreadsheet-safe CSV', async () => {
+    const { service, purchases } = createService();
+    purchases.find.mockReturnValue({
+      select: () => ({
+        sort: () => ({
+          lean: async () => [{
+            purchaseNumber: 'PUR-CSV-01',
+            supplierInvoiceNumber: '=HYPERLINK("https://bad.example")',
+            supplierInvoiceDate: new Date('2026-10-12T00:00:00.000Z'),
+            purchaseDate: new Date('2026-10-12T00:00:00.000Z'),
+            supplierGstinSnapshot: '27ABCDE1234F1Z5',
+            supplierStateCodeSnapshot: '27',
+            placeOfSupplyStateCode: '27',
+            subtotal: 100,
+            gstTotal: 18,
+            cgstTotal: 9,
+            sgstTotal: 9,
+            igstTotal: 0,
+            grandTotal: 118,
+            gstSplitClassified: true,
+          }],
+        }),
+      }),
+    });
+
+    const result = await service.gstCsvExport('507f1f77bcf86cd799439011', 'purchase-register', {
+      from: '2026-10-01', to: '2026-10-31',
+    });
+
+    expect(result.filename).toBe('gst-inward-purchase-register.csv');
+    expect(result.contentType).toBe('text/csv; charset=utf-8');
+    expect(result.content.charCodeAt(0)).toBe(0xfeff);
+    expect(result.content).toContain("'=HYPERLINK(""https://bad.example"")");
+    expect(result.content).toContain('"100"');
+    expect(result.content).toContain('"0"');
+    expect(result.content).toContain('\\r\\n');
+    expect(purchases.find).toHaveBeenCalledWith(expect.objectContaining({ tenantId: expect.anything() }));
+  });
+
+  it('rejects unsupported GST CSV export types', async () => {
+    const { service, purchases } = createService();
+    await expect(service.gstCsvExport('507f1f77bcf86cd799439011', 'unknown', {}))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(purchases.find).not.toHaveBeenCalled();
+  });
 });

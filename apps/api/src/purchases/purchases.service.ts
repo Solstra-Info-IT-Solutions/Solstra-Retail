@@ -15,6 +15,7 @@ import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { ReceivePurchaseDto } from './dto/receive-purchase.dto';
 import { ListPurchasesDto } from './dto/list-purchases.dto';
 import { AddPurchasePaymentDto } from './dto/add-purchase-payment.dto';
+import { ReviewPurchaseItcDto } from './dto/review-purchase-itc.dto';
 import { AccountingService } from '../accounting/accounting.service';
 import { TaxPeriodsService } from '../accounting/tax-periods.service';
 import { Tenant, TenantDocument } from '../tenants/schemas/tenant.schema';
@@ -46,6 +47,74 @@ export class PurchasesService {
       return { cgstAmount: this.fromPaise(cgstPaise), sgstAmount: this.fromPaise(gstPaise - cgstPaise), igstAmount: 0, classified: true };
     }
     return { cgstAmount: 0, sgstAmount: 0, igstAmount: this.fromPaise(gstPaise), classified: true };
+  }
+
+  async reviewItc(tenantId: string, userId: string, id: string, dto: ReviewPurchaseItcDto) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid tenant, user or purchase ID');
+    }
+    const reason = dto.reason?.trim();
+    if (!reason || reason.length < 5 || reason.length > 500) {
+      throw new BadRequestException('ITC review reason must contain 5 to 500 characters');
+    }
+    const session = await this.purchases.db.startSession();
+    let result: PurchaseDocument | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const purchase = await this.purchases.findOne(
+          tenantFilter(tenantId, { _id: new Types.ObjectId(id) }),
+        ).session(session);
+        if (!purchase) throw new NotFoundException('Purchase not found');
+        if (purchase.status === 'CANCELLED') {
+          throw new ConflictException('Cancelled purchases cannot be reviewed for input tax credit');
+        }
+        const previousStatus = purchase.itcReviewStatus || 'NOT_REVIEWED';
+        const reviewedAt = new Date();
+        purchase.itcReviewStatus = dto.status;
+        purchase.itcReviewReason = reason;
+        purchase.itcReviewedAt = reviewedAt;
+        purchase.itcReviewedBy = new Types.ObjectId(userId);
+        purchase.itcReviewHistory = purchase.itcReviewHistory || [];
+        purchase.itcReviewHistory.push({
+          previousStatus,
+          status: dto.status,
+          reason,
+          reviewedBy: new Types.ObjectId(userId),
+          reviewedAt,
+        } as any);
+        await purchase.save({ session });
+        result = purchase;
+      });
+    } finally {
+      await session.endSession();
+    }
+    if (!result) throw new Error('Purchase ITC review could not be saved');
+    return result;
+  }
+
+  async itcReviewSummary(tenantId: string) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant ID');
+    const rows = await this.purchases.aggregate([
+      { $match: { tenantId: new Types.ObjectId(tenantId), status: { $ne: 'CANCELLED' } } },
+      { $group: {
+        _id: { $ifNull: ['$itcReviewStatus', 'NOT_REVIEWED'] },
+        purchaseCount: { $sum: 1 },
+        gstAmount: { $sum: { $ifNull: ['$gstTotal', 0] } },
+      } },
+    ]);
+    const statuses = ['NOT_REVIEWED', 'PENDING_DOCUMENTS', 'ELIGIBLE', 'INELIGIBLE', 'DISPUTED'];
+    const byStatus = Object.fromEntries(statuses.map((status) => {
+      const row = rows.find((item: any) => item._id === status);
+      return [status, { purchaseCount: row?.purchaseCount || 0, gstAmount: row?.gstAmount || 0 }];
+    }));
+    return {
+      byStatus,
+      totals: rows.reduce((sum: any, row: any) => ({
+        purchaseCount: sum.purchaseCount + row.purchaseCount,
+        gstAmount: Number((sum.gstAmount + row.gstAmount).toFixed(2)),
+      }), { purchaseCount: 0, gstAmount: 0 }),
+      note: 'Review labels are user-entered workflow statuses only. They do not determine statutory ITC eligibility or replace GST compliance verification.',
+    };
   }
 
   async addPayment(tenantId: string, userId: string, id: string, dto: AddPurchasePaymentDto) {

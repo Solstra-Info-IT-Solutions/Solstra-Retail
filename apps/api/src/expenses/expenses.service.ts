@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { tenantFilter } from '../common/tenant-scoped.service';
@@ -114,9 +114,14 @@ export class ExpensesService {
     const filter: Record<string, any> = {};
     if (query.status) filter.status = query.status;
     if (query.from || query.to) {
+      const from = query.from ? new Date(query.from) : null;
+      const to = query.to ? new Date(query.to) : null;
+      if ((from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime())) || (from && to && from > to)) {
+        throw new BadRequestException('Invalid expense date range');
+      }
       filter.expenseDate = {};
-      if (query.from) filter.expenseDate.$gte = new Date(query.from);
-      if (query.to) filter.expenseDate.$lte = new Date(query.to);
+      if (from) filter.expenseDate.$gte = from;
+      if (to) filter.expenseDate.$lte = to;
     }
     if (query.search?.trim()) {
       const escaped = query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

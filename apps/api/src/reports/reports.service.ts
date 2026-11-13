@@ -570,6 +570,129 @@ export class ReportsService {
     };
   }
 
+  private purchaseTaxDateFilter(start: Date, end: Date) {
+    return {
+      status: { $ne: 'CANCELLED' },
+      $or: [
+        { supplierInvoiceDate: { $gte: start, $lte: end } },
+        { supplierInvoiceDate: null, purchaseDate: { $gte: start, $lte: end } },
+      ],
+    };
+  }
+
+  async gstPurchaseRegister(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const purchases = await this.purchases.find(tenantFilter(
+      tenantId,
+      this.purchaseTaxDateFilter(start, end),
+    )).select(
+      'purchaseNumber supplierId supplierInvoiceNumber supplierInvoiceDate purchaseDate supplierGstinSnapshot supplierStateCodeSnapshot placeOfSupplyStateCode items subtotal gstTotal cgstTotal sgstTotal igstTotal gstSplitClassified grandTotal status',
+    ).sort({ supplierInvoiceDate: 1, purchaseDate: 1, purchaseNumber: 1 }).lean();
+
+    const totals = purchases.reduce((sum: any, purchase: any) => ({
+      purchaseCount: sum.purchaseCount + 1,
+      taxableValue: sum.taxableValue + (purchase.subtotal || 0),
+      gst: sum.gst + (purchase.gstTotal || 0),
+      cgst: sum.cgst + (purchase.cgstTotal || 0),
+      sgst: sum.sgst + (purchase.sgstTotal || 0),
+      igst: sum.igst + (purchase.igstTotal || 0),
+      invoiceValue: sum.invoiceValue + (purchase.grandTotal || 0),
+    }), { purchaseCount: 0, taxableValue: 0, gst: 0, cgst: 0, sgst: 0, igst: 0, invoiceValue: 0 });
+
+    return {
+      from: start,
+      to: end,
+      currency: 'INR',
+      amountUnit: 'RUPEES',
+      basis: 'SUPPLIER_INVOICE_DATE_WITH_LEGACY_PURCHASE_DATE_FALLBACK',
+      purchases: purchases.map((purchase: any) => ({
+        ...purchase,
+        taxDate: purchase.supplierInvoiceDate || purchase.purchaseDate,
+        taxDateBasis: purchase.supplierInvoiceDate ? 'SUPPLIER_INVOICE_DATE' : 'PURCHASE_ENTRY_DATE_FALLBACK',
+      })),
+      totals: Object.fromEntries(Object.entries(totals).map(([key, value]) => [
+        key,
+        typeof value === 'number' ? Math.round((value + Number.EPSILON) * 100) / 100 : value,
+      ])),
+      purchasesUsingEntryDateFallback: purchases.filter((purchase: any) => !purchase.supplierInvoiceDate).length,
+      purchasesMissingSupplierGstin: purchases.filter((purchase: any) => !purchase.supplierGstinSnapshot).length,
+      unclassifiedPurchaseCount: purchases.filter((purchase: any) => purchase.gstSplitClassified !== true).length,
+    };
+  }
+
+  async inwardHsnSummary(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const purchases = await this.purchases.find(tenantFilter(
+      tenantId,
+      this.purchaseTaxDateFilter(start, end),
+    )).select('items').lean();
+
+    const grouped = new Map<string, any>();
+    const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+    for (const purchase of purchases as any[]) {
+      for (const item of purchase.items || []) {
+        const hsnCode = item.hsnCode || '';
+        const gstRate = item.gstRate ?? 0;
+        const key = `${hsnCode || 'MISSING'}|${gstRate}`;
+        const row = grouped.get(key) ?? {
+          hsnCode: hsnCode || null,
+          gstRate,
+          quantity: 0,
+          taxableValue: 0,
+          cgst: 0,
+          sgst: 0,
+          igst: 0,
+          totalTax: 0,
+          lineCount: 0,
+          classifiedLineCount: 0,
+          unclassifiedLineCount: 0,
+        };
+        row.quantity = round(row.quantity + (item.quantity || 0));
+        row.taxableValue = round(row.taxableValue + (item.taxableValue || 0));
+        row.cgst = round(row.cgst + (item.cgstAmount || 0));
+        row.sgst = round(row.sgst + (item.sgstAmount || 0));
+        row.igst = round(row.igst + (item.igstAmount || 0));
+        row.totalTax = round(row.totalTax + (item.gstAmount || 0));
+        row.lineCount += 1;
+        if (item.gstSplitClassified === true) row.classifiedLineCount += 1;
+        else row.unclassifiedLineCount += 1;
+        grouped.set(key, row);
+      }
+    }
+    const rows = [...grouped.values()].sort((a, b) =>
+      String(a.hsnCode || '').localeCompare(String(b.hsnCode || '')) || a.gstRate - b.gstRate,
+    );
+    const totals = rows.reduce((sum, row) => ({
+      quantity: round(sum.quantity + row.quantity),
+      taxableValue: round(sum.taxableValue + row.taxableValue),
+      cgst: round(sum.cgst + row.cgst),
+      sgst: round(sum.sgst + row.sgst),
+      igst: round(sum.igst + row.igst),
+      totalTax: round(sum.totalTax + row.totalTax),
+      lineCount: sum.lineCount + row.lineCount,
+      classifiedLineCount: sum.classifiedLineCount + row.classifiedLineCount,
+      unclassifiedLineCount: sum.unclassifiedLineCount + row.unclassifiedLineCount,
+    }), {
+      quantity: 0, taxableValue: 0, cgst: 0, sgst: 0, igst: 0, totalTax: 0,
+      lineCount: 0, classifiedLineCount: 0, unclassifiedLineCount: 0,
+    });
+    return {
+      from: start,
+      to: end,
+      currency: 'INR',
+      amountUnit: 'RUPEES',
+      basis: 'PURCHASE_ITEMS_BY_SUPPLIER_INVOICE_DATE_WITH_LEGACY_ENTRY_DATE_FALLBACK',
+      purchaseCount: purchases.length,
+      rows,
+      totals,
+      missingHsnLineCount: rows.filter((row) => !row.hsnCode).reduce((sum, row) => sum + row.lineCount, 0),
+      classificationStatus: totals.unclassifiedLineCount ? 'PARTIALLY_CLASSIFIED' : 'CLASSIFIED',
+      note: 'This is a source-document inward HSN summary. It does not determine input tax credit eligibility or blocked credits.',
+    };
+  }
+
   async hsnSummary(tenantId: string, dto: ReportDateRangeDto) {
     this.validateTenant(tenantId);
     const { start, end } = this.resolveRange(dto);
@@ -646,9 +769,10 @@ export class ReportsService {
       this.creditNotes.find(tenantFilter(tenantId, {
         creditNoteDate: { $gte: start, $lte: end },
       })).select('totalTax').lean(),
-      this.purchases.find(tenantFilter(tenantId, {
-        status: { $ne: 'CANCELLED' }, purchaseDate: { $gte: start, $lte: end },
-      })).select('gstTotal').lean(),
+      this.purchases.find(tenantFilter(
+        tenantId,
+        this.purchaseTaxDateFilter(start, end),
+      )).select('gstTotal').lean(),
       this.journals.aggregate([
         { $match: tenantFilter(tenantId, {
           status: 'POSTED', postingDate: { $gte: start, $lte: end },

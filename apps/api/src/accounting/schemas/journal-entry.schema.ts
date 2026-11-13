@@ -42,7 +42,7 @@ export class JournalEntry {
   @Prop({ required: true, trim: true, maxlength: 500 })
   narration!: string;
 
-  @Prop({ required: true, enum: ['MANUAL', 'SALES', 'PURCHASE', 'PAYMENT', 'REFUND', 'REVERSAL', 'INVENTORY'] })
+  @Prop({ required: true, enum: ['MANUAL', 'SALES', 'PURCHASE', 'PAYMENT', 'REFUND', 'REVERSAL', 'INVENTORY', 'EXPENSE'] })
   sourceType!: string;
 
   @Prop({ type: String, default: null, trim: true })

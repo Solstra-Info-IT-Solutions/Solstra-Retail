@@ -575,7 +575,7 @@ export class ReportsService {
     const raw = value instanceof Date
       ? value.toISOString()
       : typeof value === 'object' ? JSON.stringify(value) : String(value);
-    const safe = /^[=+@\t\r-]/.test(raw) ? `'${raw}` : raw;
+    const safe = typeof value === 'string' && /^[=+@\t\r-]/.test(raw) ? `'${raw}` : raw;
     return `"${safe.replace(/"/g, '""')}"`;
   }
 

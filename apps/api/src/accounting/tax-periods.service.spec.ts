@@ -36,7 +36,9 @@ describe('TaxPeriodsService', () => {
 
   it('rejects tax mutations when the matching period is closed', async () => {
     const model = {
-      findOneAndUpdate: jest.fn().mockRejectedValue({ code: 11000 }),
+      findOneAndUpdate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockRejectedValue({ code: 11000 }),
+      }),
       findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue({ status: 'CLOSED' }) }),
     };
     const service = new TaxPeriodsService(model as any);

@@ -570,6 +570,91 @@ export class ReportsService {
     };
   }
 
+  private csvCell(value: unknown): string {
+    if (value === null || value === undefined) return '""';
+    const raw = value instanceof Date
+      ? value.toISOString()
+      : typeof value === 'object' ? JSON.stringify(value) : String(value);
+    const safe = typeof value === 'string' && /^[=+@\t\r-]/.test(raw) ? `'${raw}` : raw;
+    return `"${safe.replace(/"/g, '""')}"`;
+  }
+
+  private csvDocument(headers: string[], rows: unknown[][]) {
+    const lines = [headers, ...rows].map((row) => row.map((value) => this.csvCell(value)).join(','));
+    return `\uFEFF${lines.join('\r\n')}\r\n`;
+  }
+
+  async gstCsvExport(tenantId: string, report: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    let headers: string[];
+    let rows: unknown[][];
+    let filename: string;
+
+    if (report === 'gstr1') {
+      const data = await this.gstr1(tenantId, dto);
+      headers = ['record_type', 'document_number', 'document_date', 'customer_name', 'customer_gstin', 'place_of_supply_state_code', 'taxable_value', 'cgst', 'sgst', 'igst', 'total_tax', 'document_value', 'financial_year'];
+      rows = [
+        ...[...data.b2b.invoices, ...data.b2c.invoices].map((invoice: any) => [
+          invoice.customerGstin ? 'B2B_INVOICE' : 'B2C_INVOICE', invoice.invoiceNumber, invoice.invoiceDate,
+          invoice.customerName, invoice.customerGstin, invoice.placeOfSupplyStateCode, invoice.taxableValue,
+          invoice.cgstTotal, invoice.sgstTotal, invoice.igstTotal, invoice.totalTax, invoice.grandTotal, invoice.financialYear,
+        ]),
+        ...data.creditNotes.map((note: any) => [
+          'CREDIT_NOTE', note.creditNoteNumber, note.creditNoteDate, '', note.customerGstin,
+          note.placeOfSupplyStateCode, -(note.taxableValue || 0), -(note.cgstTotal || 0), -(note.sgstTotal || 0),
+          -(note.igstTotal || 0), -(note.totalTax || 0), -(note.totalAmount || 0), '',
+        ]),
+      ];
+      filename = 'gstr1-outward-register.csv';
+    } else if (report === 'gstr3b') {
+      const data = await this.gstr3b(tenantId, dto);
+      headers = ['section', 'metric', 'amount_rupees', 'status'];
+      rows = [
+        ...Object.entries(data.outwardTaxableSupplies).filter(([key, value]) => typeof value === 'number')
+          .map(([key, value]) => ['OUTWARD_SUPPLIES', key, value, 'SOURCE_REPORTED']),
+        ...Object.entries(data.inwardSupplies).filter(([key, value]) => typeof value === 'number')
+          .map(([key, value]) => ['INWARD_SUPPLIES', key, value, 'SOURCE_REPORTED']),
+        ['NET_TAX_POSITION', 'output_tax_after_credit_notes', data.netTaxPosition.outputTaxAfterCreditNotes, data.netTaxPosition.status],
+        ['NET_TAX_POSITION', 'less_recorded_input_tax', data.netTaxPosition.lessRecordedInputTax, data.netTaxPosition.status],
+        ['NET_TAX_POSITION', 'indicative_net_tax', data.netTaxPosition.indicativeNetTax, data.netTaxPosition.status],
+      ];
+      filename = 'gstr3b-summary-review.csv';
+    } else if (report === 'purchase-register') {
+      const data = await this.gstPurchaseRegister(tenantId, dto);
+      headers = ['purchase_number', 'supplier_invoice_number', 'tax_date', 'tax_date_basis', 'supplier_gstin', 'supplier_state_code', 'place_of_supply_state_code', 'taxable_value', 'cgst', 'sgst', 'igst', 'total_gst', 'invoice_value', 'gst_split_classified'];
+      rows = data.purchases.map((purchase: any) => [
+        purchase.purchaseNumber, purchase.supplierInvoiceNumber, purchase.taxDate, purchase.taxDateBasis,
+        purchase.supplierGstinSnapshot, purchase.supplierStateCodeSnapshot, purchase.placeOfSupplyStateCode,
+        purchase.subtotal, purchase.cgstTotal, purchase.sgstTotal, purchase.igstTotal, purchase.gstTotal,
+        purchase.grandTotal, purchase.gstSplitClassified === true ? 'YES' : 'NO',
+      ]);
+      filename = 'gst-inward-purchase-register.csv';
+    } else if (report === 'hsn-outward') {
+      const data = await this.hsnSummary(tenantId, dto);
+      headers = ['hsn_code', 'gst_rate_percent', 'quantity_net', 'taxable_value_net', 'cgst_net', 'sgst_net', 'igst_net', 'total_tax_net', 'net_line_count'];
+      rows = data.rows.map((row: any) => [
+        row.hsnCode, row.gstRate, row.quantity, row.taxableValue, row.cgst, row.sgst, row.igst, row.totalTax, row.lineCount,
+      ]);
+      filename = 'gst-hsn-outward-summary.csv';
+    } else if (report === 'hsn-inward') {
+      const data = await this.inwardHsnSummary(tenantId, dto);
+      headers = ['hsn_code', 'gst_rate_percent', 'quantity', 'taxable_value', 'cgst', 'sgst', 'igst', 'total_tax', 'line_count', 'classified_line_count', 'unclassified_line_count'];
+      rows = data.rows.map((row: any) => [
+        row.hsnCode, row.gstRate, row.quantity, row.taxableValue, row.cgst, row.sgst, row.igst, row.totalTax,
+        row.lineCount, row.classifiedLineCount, row.unclassifiedLineCount,
+      ]);
+      filename = 'gst-hsn-inward-summary.csv';
+    } else {
+      throw new BadRequestException('Unsupported GST CSV export. Use gstr1, gstr3b, purchase-register, hsn-outward or hsn-inward.');
+    }
+
+    return {
+      filename,
+      contentType: 'text/csv; charset=utf-8',
+      content: this.csvDocument(headers, rows),
+    };
+  }
+
   private purchaseTaxDateFilter(start: Date, end: Date) {
     return {
       status: { $ne: 'CANCELLED' },

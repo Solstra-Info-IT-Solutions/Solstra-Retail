@@ -4,8 +4,9 @@
   Param,
   Query,
   Req,
+  Res,
 } from '@nestjs/common';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 
 import { ReportsService } from './reports.service';
 import { ReportDateRangeDto } from './dto/report-date-range.dto';
@@ -81,6 +82,25 @@ export class ReportsController {
       req.user.tenantId,
       query,
     );
+  }
+
+  @Get('reports/gst/export/:report')
+  async gstCsvExport(
+    @Req() req: AuthenticatedRequest,
+    @Param('report') report: string,
+    @Query() query: ReportDateRangeDto,
+    @Res() response: Response,
+  ) {
+    const file = await this.reportsService.gstCsvExport(req.user.tenantId, report, query);
+    return response
+      .status(200)
+      .set({
+        'Content-Type': file.contentType,
+        'Content-Disposition': `attachment; filename="${file.filename}"`,
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      })
+      .send(file.content);
   }
 
   @Get('reports/gst/gstr1')

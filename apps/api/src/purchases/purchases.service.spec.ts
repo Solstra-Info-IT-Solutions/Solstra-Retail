@@ -125,10 +125,11 @@ describe('PurchasesService validation', () => {
       status: 'PENDING_DOCUMENTS',
       reason: 'Supplier invoice copy is awaited',
     });
+    const reviewed = result as any;
 
-    expect(result.itcReviewStatus).toBe('PENDING_DOCUMENTS');
-    expect(result.itcReviewHistory).toHaveLength(1);
-    expect(result.itcReviewHistory[0]).toMatchObject({
+    expect(reviewed.itcReviewStatus).toBe('PENDING_DOCUMENTS');
+    expect(reviewed.itcReviewHistory).toHaveLength(1);
+    expect(reviewed.itcReviewHistory[0]).toMatchObject({
       previousStatus: 'NOT_REVIEWED',
       status: 'PENDING_DOCUMENTS',
       reason: 'Supplier invoice copy is awaited',

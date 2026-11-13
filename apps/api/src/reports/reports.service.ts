@@ -581,7 +581,7 @@ export class ReportsService {
 
   private csvDocument(headers: string[], rows: unknown[][]) {
     const lines = [headers, ...rows].map((row) => row.map((value) => this.csvCell(value)).join(','));
-    return `\uFEFF${lines.join('\r\\n')}\r\\n`;
+    return `\uFEFF${lines.join('\r\n')}\r\n`;
   }
 
   async gstCsvExport(tenantId: string, report: string, dto: ReportDateRangeDto) {

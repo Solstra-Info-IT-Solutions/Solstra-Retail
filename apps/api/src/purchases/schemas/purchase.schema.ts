@@ -4,6 +4,21 @@ import { HydratedDocument, Types } from 'mongoose';
 export type PurchaseStatus = 'DRAFT' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED';
 export type PurchaseDocument = HydratedDocument<Purchase>;
 export type PurchasePaymentMethod = 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'OTHER';
+export type ItcReviewStatus = 'NOT_REVIEWED' | 'PENDING_DOCUMENTS' | 'ELIGIBLE' | 'INELIGIBLE' | 'DISPUTED';
+
+@Schema({ _id: false })
+export class ItcReviewEvent {
+  @Prop({ type: String, required: true, enum: ['NOT_REVIEWED', 'PENDING_DOCUMENTS', 'ELIGIBLE', 'INELIGIBLE', 'DISPUTED'] })
+  previousStatus!: ItcReviewStatus;
+  @Prop({ type: String, required: true, enum: ['PENDING_DOCUMENTS', 'ELIGIBLE', 'INELIGIBLE', 'DISPUTED'] })
+  status!: Exclude<ItcReviewStatus, 'NOT_REVIEWED'>;
+  @Prop({ required: true, trim: true, minlength: 5, maxlength: 500 })
+  reason!: string;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  reviewedBy!: Types.ObjectId;
+  @Prop({ required: true, default: Date.now })
+  reviewedAt!: Date;
+}
 
 @Schema({ _id: false })
 export class PurchaseItem {
@@ -98,6 +113,21 @@ export class Purchase {
 
   @Prop({ required: true, enum: ['DRAFT', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED'], default: 'DRAFT' })
   status!: PurchaseStatus;
+
+  @Prop({ type: String, enum: ['NOT_REVIEWED', 'PENDING_DOCUMENTS', 'ELIGIBLE', 'INELIGIBLE', 'DISPUTED'], default: 'NOT_REVIEWED' })
+  itcReviewStatus!: ItcReviewStatus;
+
+  @Prop({ type: String, default: '', maxlength: 500 })
+  itcReviewReason!: string;
+
+  @Prop({ type: Date, default: null })
+  itcReviewedAt?: Date | null;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  itcReviewedBy?: Types.ObjectId | null;
+
+  @Prop({ type: [ItcReviewEvent], default: [] })
+  itcReviewHistory!: ItcReviewEvent[];
 
   @Prop({ default: '' }) notes!: string;
 

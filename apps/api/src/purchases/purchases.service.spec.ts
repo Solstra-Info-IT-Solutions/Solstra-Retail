@@ -104,4 +104,54 @@ describe('PurchasesService validation', () => {
     });
   });
 
+  it('records ITC review decisions with a reason and append-only history', async () => {
+    const { service, purchases } = createService();
+    const session = {
+      withTransaction: jest.fn(async (callback: () => Promise<void>) => callback()),
+      endSession: jest.fn(),
+    };
+    const purchase: any = {
+      status: 'RECEIVED',
+      itcReviewStatus: 'NOT_REVIEWED',
+      itcReviewHistory: [],
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    purchases.db.startSession.mockResolvedValue(session as any);
+    (purchases as any).findOne = jest.fn().mockReturnValue({
+      session: jest.fn().mockResolvedValue(purchase),
+    });
+
+    const result = await service.reviewItc(tenantId, userId, new Types.ObjectId().toString(), {
+      status: 'PENDING_DOCUMENTS',
+      reason: 'Supplier invoice copy is awaited',
+    });
+    const reviewed = result as any;
+
+    expect(reviewed.itcReviewStatus).toBe('PENDING_DOCUMENTS');
+    expect(reviewed.itcReviewHistory).toHaveLength(1);
+    expect(reviewed.itcReviewHistory[0]).toMatchObject({
+      previousStatus: 'NOT_REVIEWED',
+      status: 'PENDING_DOCUMENTS',
+      reason: 'Supplier invoice copy is awaited',
+    });
+    expect(purchase.save).toHaveBeenCalledWith({ session });
+    expect(session.endSession).toHaveBeenCalled();
+  });
+
+  it('rejects short ITC review reasons before opening a transaction', async () => {
+    const { service, purchases } = createService();
+    await expect(service.reviewItc(tenantId, userId, new Types.ObjectId().toString(), {
+      status: 'ELIGIBLE',
+      reason: 'no',
+    } as any)).rejects.toBeInstanceOf(BadRequestException);
+    expect(purchases.db.startSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid tenant IDs for ITC review summaries', async () => {
+    const { service, purchases } = createService();
+    await expect(service.itcReviewSummary('invalid-tenant'))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(purchases.db.startSession).not.toHaveBeenCalled();
+  });
+
 });

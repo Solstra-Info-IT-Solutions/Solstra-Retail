@@ -93,6 +93,16 @@ export class ReportsController {
     return this.reportsService.gstr3b(req.user.tenantId, query);
   }
 
+  @Get('reports/gst/purchase-register')
+  gstPurchaseRegister(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
+    return this.reportsService.gstPurchaseRegister(req.user.tenantId, query);
+  }
+
+  @Get('reports/gst/hsn-inward-summary')
+  inwardHsnSummary(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
+    return this.reportsService.inwardHsnSummary(req.user.tenantId, query);
+  }
+
   @Get('reports/gst/hsn-summary')
   hsnSummary(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
     return this.reportsService.hsnSummary(req.user.tenantId, query);

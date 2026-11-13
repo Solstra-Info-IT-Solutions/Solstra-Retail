@@ -16,6 +16,7 @@ import { ReceivePurchaseDto } from './dto/receive-purchase.dto';
 import { ListPurchasesDto } from './dto/list-purchases.dto';
 import { AddPurchasePaymentDto } from './dto/add-purchase-payment.dto';
 import { AccountingService } from '../accounting/accounting.service';
+import { TaxPeriodsService } from '../accounting/tax-periods.service';
 import { Tenant, TenantDocument } from '../tenants/schemas/tenant.schema';
 
 @Injectable()
@@ -27,6 +28,7 @@ export class PurchasesService {
     @InjectModel(Tenant.name) private readonly tenants: Model<TenantDocument>,
     @InjectModel(InventoryMovement.name) private readonly movements: Model<InventoryMovementDocument>,
     private readonly accounting: AccountingService,
+    private readonly taxPeriods: TaxPeriodsService,
   ) {}
 
 
@@ -137,6 +139,7 @@ export class PurchasesService {
         const supplierStateCode = supplier.stateCode || gstinStateCode || null;
         const placeOfSupplyStateCode = dto.placeOfSupplyStateCode || tenant?.stateCode || null;
         const supplierInvoiceDate = dto.supplierInvoiceDate ? new Date(`${dto.supplierInvoiceDate}T00:00:00.000Z`) : null;
+        await this.taxPeriods.assertOpen(tenantId, supplierInvoiceDate || new Date(), session);
         if (supplierInvoiceDate && Number.isNaN(supplierInvoiceDate.getTime())) {
           throw new BadRequestException('Invalid supplier invoice date');
         }
@@ -475,6 +478,15 @@ export class PurchasesService {
     let purchase: PurchaseDocument | null = null;
     try {
       await session.withTransaction(async () => {
+        const existingPurchase = await this.purchases.findOne(
+          tenantFilter(tenantId, { _id: new Types.ObjectId(id) }),
+        ).session(session);
+        if (!existingPurchase) return;
+        await this.taxPeriods.assertOpen(
+          tenantId,
+          existingPurchase.supplierInvoiceDate || existingPurchase.purchaseDate,
+          session,
+        );
         purchase = await this.purchases.findOneAndUpdate(
           tenantFilter(tenantId, {
             _id: new Types.ObjectId(id),

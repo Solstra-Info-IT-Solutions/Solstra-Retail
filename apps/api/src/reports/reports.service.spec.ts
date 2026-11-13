@@ -161,7 +161,7 @@ describe('ReportsService validation', () => {
     expect(result.content).toContain("'=HYPERLINK(""https://bad.example"")");
     expect(result.content).toContain('"100"');
     expect(result.content).toContain('"0"');
-    expect(result.content).toContain('\\r\\n');
+    expect(result.content).toContain('\r\n');
     expect(purchases.find).toHaveBeenCalledWith(expect.objectContaining({ tenantId: expect.anything() }));
   });
 

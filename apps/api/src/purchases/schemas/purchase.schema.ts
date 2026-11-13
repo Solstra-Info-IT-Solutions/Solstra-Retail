@@ -8,9 +8,9 @@ export type ItcReviewStatus = 'NOT_REVIEWED' | 'PENDING_DOCUMENTS' | 'ELIGIBLE' 
 
 @Schema({ _id: false })
 export class ItcReviewEvent {
-  @Prop({ required: true, enum: ['NOT_REVIEWED', 'PENDING_DOCUMENTS', 'ELIGIBLE', 'INELIGIBLE', 'DISPUTED'] })
+  @Prop({ type: String, required: true, enum: ['NOT_REVIEWED', 'PENDING_DOCUMENTS', 'ELIGIBLE', 'INELIGIBLE', 'DISPUTED'] })
   previousStatus!: ItcReviewStatus;
-  @Prop({ required: true, enum: ['PENDING_DOCUMENTS', 'ELIGIBLE', 'INELIGIBLE', 'DISPUTED'] })
+  @Prop({ type: String, required: true, enum: ['PENDING_DOCUMENTS', 'ELIGIBLE', 'INELIGIBLE', 'DISPUTED'] })
   status!: Exclude<ItcReviewStatus, 'NOT_REVIEWED'>;
   @Prop({ required: true, trim: true, minlength: 5, maxlength: 500 })
   reason!: string;

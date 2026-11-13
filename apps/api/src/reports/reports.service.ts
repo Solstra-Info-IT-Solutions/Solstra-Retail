@@ -575,13 +575,13 @@ export class ReportsService {
     const raw = value instanceof Date
       ? value.toISOString()
       : typeof value === 'object' ? JSON.stringify(value) : String(value);
-    const safe = /^[=+@\\t\\r-]/.test(raw) ? `'${raw}` : raw;
+    const safe = /^[=+@\t\r-]/.test(raw) ? `'${raw}` : raw;
     return `"${safe.replace(/"/g, '""')}"`;
   }
 
   private csvDocument(headers: string[], rows: unknown[][]) {
     const lines = [headers, ...rows].map((row) => row.map((value) => this.csvCell(value)).join(','));
-    return `\\uFEFF${lines.join('\\r\\n')}\\r\\n`;
+    return `\uFEFF${lines.join('\r\\n')}\r\\n`;
   }
 
   async gstCsvExport(tenantId: string, report: string, dto: ReportDateRangeDto) {

@@ -35,7 +35,8 @@ export class InventoryController {
   constructor(
     private readonly inventoryService: InventoryService,
     private readonly warehouseInventory: WarehouseInventoryService,
-    private readonly replenishment: ReplenishmentService,\n    private readonly advancedInventory: AdvancedInventoryService,
+    private readonly replenishment: ReplenishmentService,
+    private readonly advancedInventory: AdvancedInventoryService,
   ) {}
 
   @Roles('owner', 'admin')

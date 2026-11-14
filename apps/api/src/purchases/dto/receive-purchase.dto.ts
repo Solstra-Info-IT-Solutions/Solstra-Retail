@@ -1,7 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, IsArray, IsInt, IsMongoId,
-  IsUUID, Max, Min, ValidateNested,
+  IsUUID, IsOptional, Max, Min, ValidateNested,
 } from 'class-validator';
 
 export class ReceivePurchaseItemDto {
@@ -18,6 +18,10 @@ export class ReceivePurchaseItemDto {
 export class ReceivePurchaseDto {
   @IsUUID()
   idempotencyKey!: string;
+
+  @IsOptional()
+  @IsMongoId()
+  warehouseId?: string;
 
   @IsArray()
   @ArrayMinSize(1)

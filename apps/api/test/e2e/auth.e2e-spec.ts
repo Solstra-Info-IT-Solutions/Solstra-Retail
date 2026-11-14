@@ -895,7 +895,6 @@ describe('Authentication HTTP E2E', () => {
       .set(headers);
 
     expect(trialBalance.status).toBe(200);
-    console.log('E2E_TRIAL_BALANCE', JSON.stringify({ totals: trialBalance.body.totals, accounts: trialBalance.body.accounts }));
     expect(trialBalance.body.balanced).toBe(true);
     expect(trialBalance.body.totals.difference).toBe(0);
 

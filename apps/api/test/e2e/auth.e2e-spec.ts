@@ -18,6 +18,9 @@ import { Customer } from '../../src/customers/schemas/customer.schema';
 import { Supplier } from '../../src/suppliers/schemas/supplier.schema';
 import { Purchase } from '../../src/purchases/schemas/purchase.schema';
 import { JournalEntry } from '../../src/accounting/schemas/journal-entry.schema';
+import { CreditNote } from '../../src/sales/schemas/credit-note.schema';
+import { CreditNoteCounter } from '../../src/sales/schemas/credit-note-counter.schema';
+import { Expense } from '../../src/expenses/schemas/expense.schema';
 
 describe('Authentication HTTP E2E', () => {
   let app: INestApplication;
@@ -31,6 +34,9 @@ describe('Authentication HTTP E2E', () => {
   let suppliers: Model<Supplier>;
   let purchases: Model<Purchase>;
   let journalEntries: Model<JournalEntry>;
+  let creditNotes: Model<CreditNote>;
+  let creditNoteCounters: Model<CreditNoteCounter>;
+  let expenses: Model<Expense>;
 
   const createdUserIds: string[] = [];
   const createdTenantIds: string[] = [];
@@ -112,6 +118,9 @@ describe('Authentication HTTP E2E', () => {
     suppliers = app.get<Model<Supplier>>(getModelToken(Supplier.name));
     purchases = app.get<Model<Purchase>>(getModelToken(Purchase.name));
     journalEntries = app.get<Model<JournalEntry>>(getModelToken(JournalEntry.name));
+    creditNotes = app.get<Model<CreditNote>>(getModelToken(CreditNote.name));
+    creditNoteCounters = app.get<Model<CreditNoteCounter>>(getModelToken(CreditNoteCounter.name));
+    expenses = app.get<Model<Expense>>(getModelToken(Expense.name));
 
     await Promise.all([
       users.createIndexes(),
@@ -124,6 +133,9 @@ describe('Authentication HTTP E2E', () => {
       suppliers.createIndexes(),
       purchases.createIndexes(),
       journalEntries.createIndexes(),
+      creditNotes.createIndexes(),
+      creditNoteCounters.createIndexes(),
+      expenses.createIndexes(),
     ]);
   });
 
@@ -141,6 +153,9 @@ describe('Authentication HTTP E2E', () => {
           suppliers.deleteMany({ tenantId: { $in: tenantIds } }),
           purchases.deleteMany({ tenantId: { $in: tenantIds } }),
           journalEntries.deleteMany({ tenantId: { $in: tenantIds } }),
+          creditNotes.deleteMany({ tenantId: { $in: tenantIds } }),
+          creditNoteCounters.deleteMany({ tenantId: { $in: tenantIds } }),
+          expenses.deleteMany({ tenantId: { $in: tenantIds } }),
         ]);
       }
 
@@ -1057,6 +1072,197 @@ describe('Authentication HTTP E2E', () => {
     expect(history.body.items[0]._id).toBe(sale.body._id);
     expect(history.body.summary.invoiceCount).toBe(1);
     expect(history.body.summary.totalBilled).toBe(200);
+  });
+
+  it('reconciles sales returns, customer refunds, expense approvals and expense payments through HTTP', async () => {
+    const registration = await registerAccount();
+    expect(registration.status).toBe(201);
+    const headers = { Authorization: `Bearer ${registration.body.accessToken}` };
+    const tenantId = new Types.ObjectId(registration.body.tenant.id);
+
+    await tenants.updateOne(
+      { _id: registration.body.tenant.id },
+      { $set: { stateCode: '09' } },
+    );
+
+    const product = await request(app.getHttpServer())
+      .post('/api/v1/products')
+      .set(headers)
+      .send({
+        name: 'E2E Returns and Expense Product',
+        purchasePrice: 30,
+        sellingPrice: 100,
+        mrp: 100,
+        gstRate: 0,
+        stockQty: 5,
+      });
+    expect(product.status).toBe(201);
+
+    const sale = await request(app.getHttpServer())
+      .post('/api/v1/sales')
+      .set(headers)
+      .send({
+        idempotencyKey: randomUUID(),
+        items: [{ productId: product.body._id, quantity: 2 }],
+        placeOfSupplyStateCode: '09',
+        payments: [{ method: 'CASH', amount: 200, reference: 'E2E full payment' }],
+      });
+    expect(sale.status).toBe(201);
+    expect(sale.body.grandTotal).toBe(200);
+    expect(sale.body.paidAmount).toBe(200);
+    expect(sale.body.dueAmount).toBe(0);
+
+    const returnPayload = {
+      idempotencyKey: randomUUID(),
+      reason: 'E2E customer return - unopened goods',
+      items: [{ lineIndex: 0, quantity: 1, restock: true }],
+    };
+    const creditNoteResponse = await request(app.getHttpServer())
+      .post(`/api/v1/sales/${sale.body._id}/credit-notes`)
+      .set(headers)
+      .send(returnPayload);
+    expect(creditNoteResponse.status).toBe(201);
+    const creditNote = creditNoteResponse.body.creditNote;
+    expect(creditNote.totalAmount).toBe(100);
+    expect(creditNote.refundableAmount).toBe(100);
+    expect(creditNote.refundedAmount).toBe(0);
+
+    const returnRetry = await request(app.getHttpServer())
+      .post(`/api/v1/sales/${sale.body._id}/credit-notes`)
+      .set(headers)
+      .send(returnPayload);
+    expect(returnRetry.status).toBe(201);
+    expect(returnRetry.body.creditNote._id).toBe(creditNote._id);
+
+    const returnedProduct = await products.findById(product.body._id).lean();
+    expect(returnedProduct?.stockQty).toBe(4);
+
+    const refundPayload = {
+      idempotencyKey: randomUUID(),
+      method: 'UPI',
+      amount: 100,
+      reference: 'E2E customer refund',
+    };
+    const refund = await request(app.getHttpServer())
+      .post(`/api/v1/sales/${sale.body._id}/credit-notes/${creditNote._id}/refunds`)
+      .set(headers)
+      .send(refundPayload);
+    expect(refund.status).toBe(201);
+    expect(refund.body.creditNote.refundedAmount).toBe(100);
+    expect(refund.body.creditNote.refunds).toHaveLength(1);
+
+    const refundRetry = await request(app.getHttpServer())
+      .post(`/api/v1/sales/${sale.body._id}/credit-notes/${creditNote._id}/refunds`)
+      .set(headers)
+      .send(refundPayload);
+    expect(refundRetry.status).toBe(201);
+    expect(refundRetry.body.creditNote.refunds).toHaveLength(1);
+
+    const refundOverpayment = await request(app.getHttpServer())
+      .post(`/api/v1/sales/${sale.body._id}/credit-notes/${creditNote._id}/refunds`)
+      .set(headers)
+      .send({ ...refundPayload, idempotencyKey: randomUUID(), amount: 0.01 });
+    expect(refundOverpayment.status).toBe(400);
+
+    const listedCreditNotes = await request(app.getHttpServer())
+      .get(`/api/v1/sales/${sale.body._id}/credit-notes`)
+      .set(headers);
+    expect(listedCreditNotes.status).toBe(200);
+    expect(listedCreditNotes.body).toHaveLength(1);
+
+    const expense = await request(app.getHttpServer())
+      .post('/api/v1/expenses')
+      .set(headers)
+      .send({
+        title: 'E2E Store Utilities',
+        category: 'Utilities',
+        amount: 250,
+        expenseDate: '2026-11-14',
+        payee: 'E2E Utility Provider',
+        reference: 'E2E-UTILITY-001',
+      });
+    expect(expense.status).toBe(201);
+    expect(expense.body.approvalStatus).toBe('APPROVED');
+    expect(expense.body.status).toBe('UNPAID');
+    expect(expense.body.dueAmount).toBe(250);
+
+    const expensePaymentPayload = {
+      idempotencyKey: randomUUID(),
+      method: 'BANK_TRANSFER',
+      amount: 100,
+      reference: 'E2E partial utility payment',
+    };
+    const expensePayment = await request(app.getHttpServer())
+      .post(`/api/v1/expenses/${expense.body._id}/payments`)
+      .set(headers)
+      .send(expensePaymentPayload);
+    expect(expensePayment.status).toBe(201);
+    expect(expensePayment.body.paidAmount).toBe(100);
+    expect(expensePayment.body.dueAmount).toBe(150);
+    expect(expensePayment.body.status).toBe('PARTIALLY_PAID');
+
+    const expensePaymentRetry = await request(app.getHttpServer())
+      .post(`/api/v1/expenses/${expense.body._id}/payments`)
+      .set(headers)
+      .send(expensePaymentPayload);
+    expect(expensePaymentRetry.status).toBe(201);
+    expect(expensePaymentRetry.body.payments).toHaveLength(1);
+    expect(expensePaymentRetry.body.paidAmount).toBe(100);
+
+    const expenseOverpayment = await request(app.getHttpServer())
+      .post(`/api/v1/expenses/${expense.body._id}/payments`)
+      .set(headers)
+      .send({ ...expensePaymentPayload, idempotencyKey: randomUUID(), amount: 150.01 });
+    expect(expenseOverpayment.status).toBe(400);
+
+    const finalExpensePayment = await request(app.getHttpServer())
+      .post(`/api/v1/expenses/${expense.body._id}/payments`)
+      .set(headers)
+      .send({ ...expensePaymentPayload, idempotencyKey: randomUUID(), amount: 150 });
+    expect(finalExpensePayment.status).toBe(201);
+    expect(finalExpensePayment.body.paidAmount).toBe(250);
+    expect(finalExpensePayment.body.dueAmount).toBe(0);
+    expect(finalExpensePayment.body.status).toBe('PAID');
+
+    const expenseList = await request(app.getHttpServer())
+      .get('/api/v1/expenses?search=E2E%20Store%20Utilities')
+      .set(headers);
+    expect(expenseList.status).toBe(200);
+    expect(expenseList.body.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ _id: expense.body._id, paidAmount: 250, dueAmount: 0 }),
+      ]),
+    );
+
+    const expenseReconciliation = await request(app.getHttpServer())
+      .get('/api/v1/expenses/reconciliation?from=2026-11-01&to=2026-11-30')
+      .set(headers);
+    expect(expenseReconciliation.status).toBe(200);
+    expect(expenseReconciliation.body.summary).toEqual(expect.objectContaining({
+      expenseAmount: 250,
+      journalExpenseAmount: 250,
+      paidAmount: 250,
+      journalPaymentAmount: 250,
+      balanced: true,
+    }));
+
+    const trialBalance = await request(app.getHttpServer())
+      .get('/api/v1/reports/trial-balance')
+      .set(headers);
+    expect(trialBalance.status).toBe(200);
+    expect(trialBalance.body.balanced).toBe(true);
+    expect(trialBalance.body.totals.difference).toBe(0);
+
+    const persistedCreditNote = await creditNotes.findById(creditNote._id).lean();
+    expect(persistedCreditNote?.refundedAmount).toBe(100);
+    expect(persistedCreditNote?.refunds).toHaveLength(1);
+    const persistedExpense = await expenses.findById(expense.body._id).lean();
+    expect(persistedExpense?.paidAmount).toBe(250);
+    expect(persistedExpense?.payments).toHaveLength(2);
+    expect(await journalEntries.countDocuments({
+      tenantId,
+      sourceType: { $in: ['EXPENSE', 'PAYMENT', 'REFUND'] },
+    })).toBeGreaterThanOrEqual(6);
   });
 
   it('rejects invalid customer sales history pagination', async () => {

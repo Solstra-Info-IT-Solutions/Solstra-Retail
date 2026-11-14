@@ -209,7 +209,7 @@ export default function POSPage() {
   useEffect(() => {
     let active = true;
     if (!warehouseId) { setAvailableSerials([]); return; }
-    api.get<AvailableSerial[]>('/inventory/serials', { params: { status: 'IN_STOCK' } })
+    api.get<AvailableSerial[]>('/sales/available-serials', { params: { warehouseId, status: 'IN_STOCK' } })
       .then(response => { if (active) setAvailableSerials(response.data || []); })
       .catch(() => { if (active) setAvailableSerials([]); });
     return () => { active = false; };

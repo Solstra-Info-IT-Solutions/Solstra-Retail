@@ -38,7 +38,7 @@ export class AuthController {
 
   @Roles('owner', 'admin')
   @Get('users')
-  listUsers(@Req() req: Request & { user: any }) {
+  listUsers(@Req() req: Request & { user: any }): Promise<any[]> {
     return this.auth.listTenantUsers(req.user.tenantId);
   }
 

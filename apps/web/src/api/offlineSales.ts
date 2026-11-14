@@ -10,6 +10,7 @@ export type QueuedOfflineSale = {
   attempts?: number;
   nextAttemptAt?: string;
   lastAttemptAt?: string;
+  blocked?: boolean;
 };
 
 const DB_NAME = 'solstra-retail-offline';
@@ -86,7 +87,7 @@ export async function syncQueuedOfflineSales(scope: string) {
   const maxBatches = Math.ceil(remaining.length / 100);
   for (let batchIndex = 0; batchIndex < maxBatches && remaining.length; batchIndex += 1) {
     const now = Date.now();
-    const batch = remaining.filter(item => !item.nextAttemptAt || new Date(item.nextAttemptAt).getTime() <= now).slice(0, 100);
+    const batch = remaining.filter(item => !item.blocked && (!item.nextAttemptAt || new Date(item.nextAttemptAt).getTime() <= now)).slice(0, 100);
     if (!batch.length) break;
     const response = await api.post<{ results: Array<{ idempotencyKey: string; status: string; error?: string }> }>('/platform/offline/sync', {
       operations: batch.map(item => ({ type: 'SALE', idempotencyKey: item.idempotencyKey, payload: item.payload })),
@@ -100,6 +101,7 @@ export async function syncQueuedOfflineSales(scope: string) {
         const item = batch.find(row => row.idempotencyKey === result.idempotencyKey);
         if (!item) continue;
         if (result.status === 'SUCCEEDED') store.delete(item.queueId);
+        else if (result.status === 'CONFLICT') { store.put({ ...item, blocked: true, lastError: result.error || 'Invoice payload conflict; manual review required', lastAttemptAt: new Date().toISOString() }); }
         else if (result.status === 'FAILED') { const attempts = Number(item.attempts || 0) + 1; const delayMinutes = Math.min(60, 2 ** attempts); store.put({ ...item, attempts, lastError: result.error || 'Sync failed', lastAttemptAt: new Date().toISOString(), nextAttemptAt: new Date(Date.now() + delayMinutes * 60_000).toISOString() }); }
       }
       tx.oncomplete = () => resolve();

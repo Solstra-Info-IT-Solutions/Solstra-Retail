@@ -1583,6 +1583,125 @@ if (existingPayment) {
     }
   }
 
+  async findInvoiceWarranties(tenantId: string, invoiceId: string) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(invoiceId)) throw new BadRequestException('Invalid tenant or invoice ID');
+    const invoice = await this.invoices.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(invoiceId) })).lean();
+    if (!invoice) throw new NotFoundException('Invoice not found');
+    await this.warranties.updateMany(
+      tenantFilter(tenantId, { invoiceId: invoice._id, status: 'ACTIVE', coverageEndsAt: { $lte: new Date() } }),
+      { $set: { status: 'EXPIRED' } },
+    );
+    return this.warranties.find(tenantFilter(tenantId, { invoiceId: invoice._id })).sort({ lineIndex: 1 }).lean();
+  }
+
+  async createWarrantyClaim(tenantId: string, userId: string, invoiceId: string, warrantyId: string, dto: CreateWarrantyClaimDto) {
+    if (![tenantId, userId, invoiceId, warrantyId].every(Types.ObjectId.isValid)) throw new BadRequestException('Invalid tenant, user, invoice or warranty ID');
+    if (!Number.isInteger(dto.quantity) || dto.quantity < 1 || !dto.issueDescription?.trim()) throw new BadRequestException('A valid claim quantity and issue description are required');
+    const session = await this.connection.startSession();
+    try {
+      let result: any;
+      await session.withTransaction(async () => {
+        const warranty = await this.warranties.findOne(tenantFilter(tenantId, {
+          _id: new Types.ObjectId(warrantyId), invoiceId: new Types.ObjectId(invoiceId),
+        })).session(session);
+        if (!warranty) throw new NotFoundException('Warranty registration not found for this invoice');
+        if (warranty.coverageEndsAt <= new Date()) {
+          if (warranty.status !== 'EXPIRED') { warranty.status = 'EXPIRED'; await warranty.save({ session }); }
+          throw new ConflictException('Warranty coverage has expired');
+        }
+        if (warranty.claimedQuantity + dto.quantity > warranty.quantity) throw new ConflictException('Claim quantity exceeds the unclaimed warranty quantity');
+        const previousClaimed = warranty.claimedQuantity;
+        const updated = await this.warranties.findOneAndUpdate(
+          tenantFilter(tenantId, { _id: warranty._id, claimedQuantity: previousClaimed, coverageEndsAt: { $gt: new Date() } }),
+          { $inc: { claimedQuantity: dto.quantity } },
+          { new: true, session },
+        );
+        if (!updated) throw new ConflictException('Warranty claim quantity changed concurrently. Refresh and retry.');
+        const [claim] = await this.warrantyClaims.create([{
+          tenantId: new Types.ObjectId(tenantId), warrantyId: warranty._id,
+          invoiceId: warranty.invoiceId, claimCode: 'WC' + randomBytes(6).toString('hex').toUpperCase(),
+          quantity: dto.quantity, issueDescription: dto.issueDescription.trim(),
+          status: 'OPEN', createdBy: new Types.ObjectId(userId),
+        }], { session });
+        result = claim;
+      });
+      return result;
+    } finally { await session.endSession(); }
+  }
+
+  async listWarrantyClaims(tenantId: string, page = 1, limit = 20, status?: string) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    const filter: any = tenantFilter(tenantId, {});
+    if (status) {
+      const normalized = status.toUpperCase();
+      if (!['OPEN', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'RESOLVED'].includes(normalized)) throw new BadRequestException('Invalid warranty claim status');
+      filter.status = normalized;
+    }
+    const [items, total] = await Promise.all([
+      this.warrantyClaims.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      this.warrantyClaims.countDocuments(filter),
+    ]);
+    return { items, pagination: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+  }
+
+  async reviewWarrantyClaim(tenantId: string, userId: string, claimId: string, dto: ReviewWarrantyClaimDto) {
+    if (![tenantId, userId, claimId].every(Types.ObjectId.isValid)) throw new BadRequestException('Invalid tenant, user or claim ID');
+    const reason = dto.reason?.trim();
+    if (!reason || reason.length < 5 || reason.length > 500) throw new BadRequestException('Review reason must contain 5 to 500 characters');
+    const session = await this.connection.startSession();
+    try {
+      let result: any;
+      await session.withTransaction(async () => {
+        const claim = await this.warrantyClaims.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(claimId) })).session(session);
+        if (!claim) throw new NotFoundException('Warranty claim not found');
+        if (claim.status === 'REJECTED' || claim.status === 'RESOLVED') throw new ConflictException('Rejected or resolved warranty claims cannot be changed');
+        if (claim.status === 'APPROVED' && dto.status !== 'RESOLVED') throw new ConflictException('An approved claim can only be marked resolved');
+        if (dto.status === 'RESOLVED' && !dto.resolutionType) throw new BadRequestException('Choose a resolution type before resolving the claim');
+        if ((dto.status === 'APPROVED' || dto.status === 'RESOLVED') && !dto.resolutionType) throw new BadRequestException('An approved claim requires a resolution type');
+        const warranty = await this.warranties.findOne(tenantFilter(tenantId, { _id: claim.warrantyId })).session(session);
+        if (!warranty) throw new NotFoundException('Warranty registration not found');
+        let creditNote: any = null;
+        let replacementInvoice: any = null;
+        if (dto.resolutionType === 'REFUND' || dto.resolutionType === 'EXCHANGE') {
+          if (!dto.creditNoteId) throw new BadRequestException('A linked credit note is required for refund or exchange resolution');
+          creditNote = await this.creditNotes.findOne(tenantFilter(tenantId, {
+            _id: new Types.ObjectId(dto.creditNoteId), invoiceId: warranty.invoiceId,
+          })).session(session).lean();
+          if (!creditNote || !creditNote.items.some((line: any) => String(line.productId) === String(warranty.productId) && line.quantity >= claim.quantity)) {
+            throw new BadRequestException('The credit note must return the claimed product and quantity from the original invoice');
+          }
+        }
+        if (dto.resolutionType === 'EXCHANGE') {
+          if (!dto.replacementInvoiceId) throw new BadRequestException('A replacement invoice is required for exchange resolution');
+          replacementInvoice = await this.invoices.findOne(tenantFilter(tenantId, {
+            _id: new Types.ObjectId(dto.replacementInvoiceId), status: 'ISSUED',
+            ...(warranty.customerId ? { customerId: warranty.customerId } : {}),
+          })).session(session).lean();
+          if (!replacementInvoice || !replacementInvoice.items.some((line: any) => String(line.productId) === String(warranty.productId) && line.quantity >= claim.quantity)) {
+            throw new BadRequestException('Replacement invoice must be issued to the same customer and contain the exchanged product quantity');
+          }
+        }
+        if (dto.status === 'REJECTED') {
+          await this.warranties.updateOne(
+            tenantFilter(tenantId, { _id: warranty._id }),
+            { $inc: { claimedQuantity: -claim.quantity }, $set: { status: warranty.coverageEndsAt > new Date() ? 'ACTIVE' : 'EXPIRED' } },
+            { session },
+          );
+        }
+        claim.status = dto.status;
+        claim.reviewReason = reason;
+        claim.reviewedBy = new Types.ObjectId(userId);
+        claim.reviewedAt = new Date();
+        if (dto.resolutionType) claim.resolutionType = dto.resolutionType;
+        if (creditNote) claim.creditNoteId = creditNote._id;
+        if (replacementInvoice) claim.replacementInvoiceId = replacementInvoice._id;
+        await claim.save({ session });
+        result = claim;
+      });
+      return result;
+    } finally { await session.endSession(); }
+  }
+
   async findCreditNotes(tenantId: string, invoiceId: string) {
     if (
       !Types.ObjectId.isValid(tenantId) ||

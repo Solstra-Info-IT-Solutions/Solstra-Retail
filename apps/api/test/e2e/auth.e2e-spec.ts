@@ -1281,7 +1281,7 @@ describe('Authentication HTTP E2E', () => {
     expect(staffRegistration.status).toBe(201);
     await users.updateOne(
       { _id: staffRegistration.body.user.id, tenantId: staffRegistration.body.tenant.id },
-      { $set: { role: 'staff', permissions: ['expenses.create', 'expenses.view'] } },
+      { $set: { role: 'staff', permissions: ['expenses.create', 'expenses.view'], tenantId: owner.body.tenant.id } },
     );
     const staffLogin = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
@@ -1380,7 +1380,6 @@ describe('Authentication HTTP E2E', () => {
         idempotencyKey: randomUUID(),
         items: [{ productId: product.body._id, quantity: 2 }],
         placeOfSupplyStateCode: '09',
-        invoiceDate: '2026-11-14',
       });
     expect(sale.status).toBe(201);
     const creditNote = await request(app.getHttpServer())

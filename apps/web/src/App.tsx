@@ -1,30 +1,32 @@
-﻿import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import ProtectedRoute from './routes/ProtectedRoute';
-import LoginPage from './pages/LoginPage';
-import DashboardPage from './pages/DashboardPage';
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 import DashboardLayout from './layouts/DashboardLayout';
-import POSPage from './pages/POSPage';
-import SalesPage from './pages/SalesPage';
-import CustomersPage from './pages/CustomersPage';
-import ProductsPage from './pages/ProductsPage';
-import InventoryPage from './pages/InventoryPage';
-import AdvancedInventoryPage from './pages/AdvancedInventoryPage';
-import SuppliersPage from './pages/SuppliersPage';
-import PurchasesPage from './pages/PurchasesPage';
-import BranchesPage from './pages/BranchesPage';
-import StaffPage from './pages/StaffPage';
-import AuditPage from './pages/AuditPage';
-import ReportsPage from './pages/ReportsPage';
-import ExpensesPage from './pages/ExpensesPage';
-import PromotionsPage from './pages/PromotionsPage';
-import PlatformOperationsPage from './pages/PlatformOperationsPage';
-import BusinessServicesPage from './pages/BusinessServicesPage';
+const POSPage = lazy(() => import('./pages/POSPage'));
+const SalesPage = lazy(() => import('./pages/SalesPage'));
+const CustomersPage = lazy(() => import('./pages/CustomersPage'));
+const ProductsPage = lazy(() => import('./pages/ProductsPage'));
+const InventoryPage = lazy(() => import('./pages/InventoryPage'));
+const AdvancedInventoryPage = lazy(() => import('./pages/AdvancedInventoryPage'));
+const SuppliersPage = lazy(() => import('./pages/SuppliersPage'));
+const PurchasesPage = lazy(() => import('./pages/PurchasesPage'));
+const BranchesPage = lazy(() => import('./pages/BranchesPage'));
+const StaffPage = lazy(() => import('./pages/StaffPage'));
+const AuditPage = lazy(() => import('./pages/AuditPage'));
+const ReportsPage = lazy(() => import('./pages/ReportsPage'));
+const ExpensesPage = lazy(() => import('./pages/ExpensesPage'));
+const PromotionsPage = lazy(() => import('./pages/PromotionsPage'));
+const PlatformOperationsPage = lazy(() => import('./pages/PlatformOperationsPage'));
+const BusinessServicesPage = lazy(() => import('./pages/BusinessServicesPage'));
 
 function AppRoutes() {
   const { isAuthenticated } = useAuth();
 
   return (
+    <Suspense fallback={<div className="app-loading" role="status" aria-live="polite">Loading workspace…</div>}>
     <Routes>
       <Route
         path="/login"
@@ -56,6 +58,7 @@ function AppRoutes() {
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </Suspense>
   );
 }
 

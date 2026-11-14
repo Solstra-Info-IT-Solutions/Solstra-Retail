@@ -237,7 +237,7 @@ BackupReplicationEventSchema.index({ tenantId: 1, artifactId: 1, createdAt: -1 }
 export class BackupRestoreDrill {
   @Prop(tenantRef) tenantId!: Types.ObjectId;
   @Prop({ type: Types.ObjectId, ref: 'BackupArtifact', required: true, index: true }) artifactId!: Types.ObjectId;
-  @Prop({ type: String, required: true, enum: ['PASSED', 'FAILED'], index: true }) status!: string;
+  @Prop({ type: String, required: true, enum: ['PASSED', 'FAILED', 'VALIDATED_ONLY'], index: true }) status!: string;
   @Prop({ type: String, default: '', maxlength: 500 }) message!: string;
   @Prop({ type: Number, default: 0 }) collectionCount!: number;
   @Prop({ type: Number, default: 0 }) documentCount!: number;

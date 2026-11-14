@@ -295,13 +295,28 @@ export class ReportsService {
       url.hostname.endsWith('.local') || url.hostname.endsWith('.internal')) {
       throw new BadRequestException('GST GSP adapter must be a public HTTPS endpoint on port 443');
     }
+    const payload = {
+      contract: 'SOLSTRA_GST_EINVOICE_V1',
+      invoice: {
+        invoiceNumber: invoice.invoiceNumber, invoiceDate: invoice.invoiceDate,
+        seller: { name: invoice.sellerName, gstin: invoice.sellerGstin, stateCode: invoice.sellerStateCode, address: invoice.sellerAddress },
+        recipient: { name: invoice.customerName, gstin: invoice.customerGstin, stateCode: invoice.placeOfSupplyStateCode },
+        items: invoice.items, taxableValue: invoice.taxableValue, totalTax: invoice.totalTax,
+        cgstTotal: invoice.cgstTotal, sgstTotal: invoice.sgstTotal, igstTotal: invoice.igstTotal, grandTotal: invoice.grandTotal,
+      },
+    };
+    const payloadSha256 = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
     const existing: any = await this.gstSubmissions.findOne(tenantFilter(tenantId, { invoiceId: invoice._id })).lean();
+    if (existing?.payloadSha256 && existing.payloadSha256 !== payloadSha256) {
+      throw new BadRequestException('Invoice data changed after e-invoice submission was initiated. Use the GSP amendment/cancellation workflow; do not resubmit a changed payload.');
+    }
+    if (existing?.status === 'CANCELLED') throw new BadRequestException('This e-invoice has been cancelled by the GSP and cannot be resubmitted with the same invoice identity');
     if (existing?.status === 'SUBMITTED') {
       return { status: 'SUBMITTED', irn: existing.irn, acknowledgementNumber: existing.acknowledgementNumber, submittedAt: existing.submittedAt, duplicate: true };
     }
     const submission: any = await this.gstSubmissions.findOneAndUpdate(
       tenantFilter(tenantId, { invoiceId: invoice._id }),
-      { $set: { invoiceNumber: invoice.invoiceNumber, status: 'PENDING', lastError: '' }, $inc: { attempts: 1 } },
+      { $set: { invoiceNumber: invoice.invoiceNumber, payloadSha256, status: 'PENDING', lastError: '' }, $inc: { attempts: 1 } },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     ).lean();
     const controller = new AbortController();
@@ -310,16 +325,7 @@ export class ReportsService {
       const response = await fetch(endpoint, {
         method: 'POST', redirect: 'error', signal: controller.signal,
         headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', 'idempotency-key': String(submission._id) },
-        body: JSON.stringify({
-          contract: 'SOLSTRA_GST_EINVOICE_V1',
-          invoice: {
-            invoiceNumber: invoice.invoiceNumber, invoiceDate: invoice.invoiceDate,
-            seller: { name: invoice.sellerName, gstin: invoice.sellerGstin, stateCode: invoice.sellerStateCode, address: invoice.sellerAddress },
-            recipient: { name: invoice.customerName, gstin: invoice.customerGstin, stateCode: invoice.placeOfSupplyStateCode },
-            items: invoice.items, taxableValue: invoice.taxableValue, totalTax: invoice.totalTax,
-            cgstTotal: invoice.cgstTotal, sgstTotal: invoice.sgstTotal, igstTotal: invoice.igstTotal, grandTotal: invoice.grandTotal,
-          },
-        }),
+        body: JSON.stringify(payload),
       });
       const result: any = await response.json().catch(() => ({}));
       if (!response.ok || !result.irn || !result.ackNo) {
@@ -333,10 +339,11 @@ export class ReportsService {
           status: 'SUBMITTED', providerReference: String(result.referenceId || '').slice(0, 120),
           irn: String(result.irn).slice(0, 120), acknowledgementNumber: String(result.ackNo).slice(0, 120),
           acknowledgementDate: ackDate && !Number.isNaN(ackDate.getTime()) ? ackDate : null,
+          signedQrCode: String(result.signedQRCode || result.signedQrCode || '').slice(0, 20000),
           submittedAt: new Date(), lastError: '',
         },
       });
-      return { status: 'SUBMITTED', irn: result.irn, acknowledgementNumber: result.ackNo, acknowledgementDate: ackDate, duplicate: false };
+      return { status: 'SUBMITTED', irn: result.irn, acknowledgementNumber: result.ackNo, acknowledgementDate: ackDate, signedQrCodeAvailable: Boolean(result.signedQRCode || result.signedQrCode), duplicate: false };
     } catch (error: any) {
       if (!(error instanceof BadRequestException)) {
         await this.gstSubmissions.updateOne(tenantFilter(tenantId, { _id: submission._id }), {
@@ -345,6 +352,60 @@ export class ReportsService {
         throw new BadRequestException('GST GSP adapter request failed; submission can be retried after checking provider status');
       }
       throw error;
+    } finally { clearTimeout(timeout); }
+  }
+
+  async listGstEInvoiceSubmissions(tenantId: string, page = 1) {
+    this.validateTenant(tenantId);
+    const safePage = Number.isInteger(page) && page > 0 ? Math.min(page, 10000) : 1;
+    const filter = tenantFilter(tenantId, {});
+    const [items, total] = await Promise.all([
+      this.gstSubmissions.find(filter).sort({ updatedAt: -1 }).skip((safePage - 1) * 20).limit(20)
+        .select('invoiceId invoiceNumber status providerReference irn acknowledgementNumber acknowledgementDate cancellationReference cancellationReason cancelledAt attempts lastError submittedAt createdAt').lean(),
+      this.gstSubmissions.countDocuments(filter),
+    ]);
+    return { items, pagination: { page: safePage, limit: 20, total, totalPages: Math.ceil(total / 20) } };
+  }
+
+  async cancelGstEInvoice(tenantId: string, invoiceId: string, reason: string) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(invoiceId)) throw new BadRequestException('Invalid tenant or invoice ID');
+    const cancellationReason = String(reason || '').trim();
+    if (cancellationReason.length < 10 || cancellationReason.length > 500) throw new BadRequestException('E-invoice cancellation reason must contain 10 to 500 characters');
+    const submission: any = await this.gstSubmissions.findOne(tenantFilter(tenantId, { invoiceId: new Types.ObjectId(invoiceId) })).lean();
+    if (!submission) throw new BadRequestException('E-invoice submission not found in this workspace');
+    if (submission.status === 'CANCELLED') return { status: 'CANCELLED', cancellationReference: submission.cancellationReference, cancelledAt: submission.cancelledAt, duplicate: true };
+    if (submission.status !== 'SUBMITTED' || !submission.irn) throw new BadRequestException('Only an acknowledged e-invoice with an IRN can be cancelled');
+    const endpoint = process.env.GST_GSP_ADAPTER_URL || '';
+    const token = process.env.GST_GSP_ADAPTER_TOKEN || '';
+    if (!endpoint || !token) throw new ServiceUnavailableException('GST GSP adapter is not configured');
+    let url: URL;
+    try { url = new URL(endpoint); } catch { throw new BadRequestException('GST GSP adapter URL is invalid'); }
+    if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443') ||
+      ['localhost', '127.0.0.1', '::1'].includes(url.hostname.toLowerCase()) || url.hostname.endsWith('.local') || url.hostname.endsWith('.internal')) {
+      throw new BadRequestException('GST GSP adapter must be a public HTTPS endpoint on port 443');
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST', redirect: 'error', signal: controller.signal,
+        headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', 'idempotency-key': String(submission._id) + ':cancel' },
+        body: JSON.stringify({ contract: 'SOLSTRA_GST_EINVOICE_CANCEL_V1', irn: submission.irn, invoiceNumber: submission.invoiceNumber, reason: cancellationReason }),
+      });
+      const result: any = await response.json().catch(() => ({}));
+      if (!response.ok || result.status !== 'CANCELLED' || !result.cancellationReference) {
+        throw new ServiceUnavailableException(String(result.message || result.error || 'GSP adapter did not confirm e-invoice cancellation').slice(0, 500));
+      }
+      const updated: any = await this.gstSubmissions.findOneAndUpdate(
+        tenantFilter(tenantId, { _id: submission._id, status: 'SUBMITTED', irn: submission.irn }),
+        { $set: { status: 'CANCELLED', cancellationReference: String(result.cancellationReference).slice(0, 120), cancellationReason, cancelledAt: new Date(), lastError: '' } },
+        { new: true },
+      ).lean();
+      if (!updated) throw new BadRequestException('E-invoice status changed during cancellation; verify provider status before retrying');
+      return { status: 'CANCELLED', cancellationReference: updated.cancellationReference, cancelledAt: updated.cancelledAt, duplicate: false };
+    } catch (error: any) {
+      if (error instanceof BadRequestException || error instanceof ServiceUnavailableException) throw error;
+      throw new ServiceUnavailableException('GST GSP cancellation request failed; verify IRP status before retrying');
     } finally { clearTimeout(timeout); }
   }
 
@@ -1410,6 +1471,63 @@ export class ReportsService {
       return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'Sales performance', period, answer: `There were ${result.invoiceCount} issued invoices with gross sales of ₹${result.grossSalesRupees.toFixed(2)} and net sales after credit notes of ₹${result.netSalesRupees.toFixed(2)}.`, data: result, disclaimer: 'Based on issued sales invoices and credit notes; payments and receivables are separate measures.' };
     }
     return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'Question not matched to a supported report', period, answer: 'I can currently answer questions about sales, profit and margin, top-selling products, low stock, GST reconciliation and cash flow. Try asking with a period such as today, last 7 days or this month.', supportedTopics: ['sales', 'profit and margin', 'top-selling products', 'low stock', 'GST reconciliation', 'cash flow'], disclaimer: 'This assistant uses an explicit allowlist of tenant-scoped reports. It does not execute arbitrary database queries or take business actions.' };
+  }
+
+  async demandForecast(tenantId: string, horizonDays = 30) {
+    this.validateTenant(tenantId);
+    if (!Number.isInteger(horizonDays) || horizonDays < 7 || horizonDays > 90) {
+      throw new BadRequestException('Forecast horizon must be between 7 and 90 days');
+    }
+    const end = new Date();
+    const start = new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const [dailyRows, products] = await Promise.all([
+      this.invoices.aggregate([
+        { $match: tenantFilter(tenantId, { status: 'ISSUED', invoiceDate: { $gte: start, $lte: end } }) },
+        { $unwind: '$items' },
+        { $match: { 'items.productId': { $exists: true, $ne: null }, 'items.quantity': { $gt: 0 } } },
+        { $group: { _id: { productId: '$items.productId', day: { $dateToString: { date: '$invoiceDate', format: '%Y-%m-%d', timezone: 'Asia/Kolkata' } } }, units: { $sum: '$items.quantity' } } },
+        { $group: { _id: '$_id.productId', days: { $push: { day: '$_id.day', units: '$units' } }, totalUnits: { $sum: '$units' } } },
+        { $sort: { totalUnits: -1 } }, { $limit: 500 },
+      ]),
+      this.products.find(tenantFilter(tenantId, { isDeleted: false, trackStock: true }))
+        .select('name sku stockQty lowStockThreshold purchasePrice sellingPrice').limit(500).lean(),
+    ]);
+    const productMap = new Map((products as any[]).map(product => [String(product._id), product]));
+    const forecasts = (dailyRows as any[]).map(row => {
+      const product: any = productMap.get(String(row._id));
+      if (!product) return null;
+      const daily = new Map<string, number>((row.days || []).map((entry: any) => [entry.day, Number(entry.units || 0)]));
+      const recentStart = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+      let recentUnits = 0, priorUnits = 0;
+      for (const [day, units] of daily) {
+        const date = new Date(day + 'T00:00:00');
+        if (date >= recentStart) recentUnits += units;
+        else priorUnits += units;
+      }
+      const recentDaily = recentUnits / 30;
+      const priorDaily = priorUnits / 60;
+      const weightedDaily = recentDaily * 0.7 + priorDaily * 0.3;
+      const trendPercent = priorDaily > 0 ? Math.round(((recentDaily - priorDaily) / priorDaily) * 10000) / 100 : recentDaily > 0 ? 100 : 0;
+      const expectedDemand = Math.max(0, Math.round(weightedDaily * horizonDays * 100) / 100);
+      const safetyStock = Math.ceil(weightedDaily * 7);
+      const targetStock = Math.ceil(expectedDemand + safetyStock);
+      const currentStock = Number(product.stockQty || 0);
+      return {
+        productId: String(product._id), name: product.name, sku: product.sku || '',
+        currentStock, averageDailyUnits: Math.round(weightedDaily * 100) / 100,
+        forecastUnits: expectedDemand, trendPercent, safetyStock,
+        suggestedReorderQty: Math.max(0, targetStock - currentStock),
+        lowStockThreshold: Number(product.lowStockThreshold || 0),
+        model: 'WEIGHTED_30_60_DAY_MOVING_AVERAGE',
+      };
+    }).filter(Boolean).sort((a: any, b: any) => b.suggestedReorderQty - a.suggestedReorderQty).slice(0, 100);
+    return {
+      generatedAt: end, historyDays: 90, horizonDays, currency: 'INR',
+      model: 'WEIGHTED_30_60_DAY_MOVING_AVERAGE_WITH_7_DAY_SAFETY_STOCK',
+      sampleProducts: forecasts.length,
+      forecasts,
+      limitations: ['Uses issued invoice quantities; credit-note returns are not subtracted from historical demand.', 'Forecast is a transparent statistical baseline, not a trained machine-learning model.', 'Stock is aggregate product stock; branch/warehouse allocation and supplier lead times are not modeled in this endpoint.', 'Review suggestions before creating purchase orders.'],
+    };
   }
 
   async advancedAnalytics(tenantId: string, dto: ReportDateRangeDto) {

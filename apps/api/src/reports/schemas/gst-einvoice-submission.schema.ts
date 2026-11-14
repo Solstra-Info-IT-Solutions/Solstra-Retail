@@ -6,10 +6,15 @@ export class GstEInvoiceSubmission {
   @Prop({ type: Types.ObjectId, ref: 'Tenant', required: true, index: true }) tenantId!: Types.ObjectId;
   @Prop({ type: Types.ObjectId, ref: 'SalesInvoice', required: true, index: true }) invoiceId!: Types.ObjectId;
   @Prop({ type: String, required: true, maxlength: 60 }) invoiceNumber!: string;
-  @Prop({ type: String, required: true, enum: ['PENDING', 'SUBMITTED', 'FAILED'], default: 'PENDING' }) status!: string;
+  @Prop({ type: String, required: true, enum: ['PENDING', 'SUBMITTED', 'FAILED', 'CANCELLED'], default: 'PENDING' }) status!: string;
+  @Prop({ type: String, default: '', maxlength: 64 }) payloadSha256!: string;
+  @Prop({ type: String, default: '', maxlength: 120 }) cancellationReference!: string;
+  @Prop({ type: String, default: '', maxlength: 500 }) cancellationReason!: string;
+  @Prop({ type: Date, default: null }) cancelledAt?: Date | null;
   @Prop({ type: String, default: '', maxlength: 120 }) providerReference!: string;
   @Prop({ type: String, default: '', maxlength: 120 }) irn!: string;
   @Prop({ type: String, default: '', maxlength: 120 }) acknowledgementNumber!: string;
+  @Prop({ type: String, default: '', maxlength: 20000 }) signedQrCode!: string;
   @Prop({ type: Date, default: null }) acknowledgementDate?: Date | null;
   @Prop({ type: String, default: '', maxlength: 500 }) lastError!: string;
   @Prop({ type: Number, default: 0 }) attempts!: number;

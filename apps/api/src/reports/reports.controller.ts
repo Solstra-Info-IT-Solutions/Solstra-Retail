@@ -1,4 +1,5 @@
 ﻿import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -86,6 +87,18 @@ export class ReportsController {
     return this.reportsService.balanceSheet(req.user.tenantId, query);
   }
 
+  @Permissions('reports.view')
+  @Get('reports/gst/einvoice-submissions')
+  listGstEInvoiceSubmissions(@Req() req: AuthenticatedRequest, @Query('page') page = '1') {
+    return this.reportsService.listGstEInvoiceSubmissions(req.user.tenantId, Number(page));
+  }
+
+  @Roles('owner', 'admin')
+  @Post('reports/gst/einvoice/:invoiceId/cancel')
+  cancelGstEInvoice(@Req() req: AuthenticatedRequest, @Param('invoiceId') invoiceId: string, @Body() body: { reason?: string }) {
+    return this.reportsService.cancelGstEInvoice(req.user.tenantId, invoiceId, String(body?.reason || ''));
+  }
+
   @Roles('owner', 'admin')
   @Post('reports/gst/einvoice/:invoiceId/submit')
   submitGstEInvoice(@Req() req: AuthenticatedRequest, @Param('invoiceId') invoiceId: string) {
@@ -132,6 +145,16 @@ export class ReportsController {
   @Post('reports/assistant/query')
   answerBusinessQuestion(@Req() req: AuthenticatedRequest, @Body() dto: BusinessQuestionDto) {
     return this.reportsService.answerBusinessQuestion(req.user.tenantId, dto.question);
+  }
+
+  @Permissions('reports.view')
+  @Get('reports/analytics/demand-forecast')
+  demandForecast(@Req() req: AuthenticatedRequest, @Query('horizonDays') horizonDays = '30') {
+    const parsed = Number(horizonDays);
+    if (!Number.isInteger(parsed) || parsed < 7 || parsed > 90) {
+      throw new BadRequestException('Forecast horizon must be between 7 and 90 days');
+    }
+    return this.reportsService.demandForecast(req.user.tenantId, parsed);
   }
 
   @Permissions('reports.view')

@@ -165,7 +165,7 @@ export class AuthService {
       accessToken,
       tokenType: 'Bearer',
       expiresIn: this.config.get<string>('JWT_ACCESS_TTL') ?? '15m',
-      user: { id: String(user._id), name: user.name, email: user.email, role: user.role, permissions: user.permissions || [] },
+      user: { id: String(user._id), tenantId: String(tenant._id), name: user.name, email: user.email, role: user.role, permissions: user.permissions || [] },
       tenant: {
         id: String(tenant._id),
         name: tenant.name,

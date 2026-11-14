@@ -93,6 +93,12 @@ export class ReportsController {
   }
 
   @Roles('owner', 'admin')
+  @Post('reports/gst/submissions/:type/:reference')
+  submitGstCompliance(@Req() req: AuthenticatedRequest, @Param('type') type: string, @Param('reference') reference: string) {
+    return this.reportsService.submitGstCompliance(req.user.tenantId, type.toUpperCase(), reference);
+  }
+
+  @Roles('owner', 'admin')
   @Get('reports/migration/readiness')
   migrationReadiness(@Req() req: AuthenticatedRequest) {
     return this.reportsService.migrationReadiness(req.user.tenantId);

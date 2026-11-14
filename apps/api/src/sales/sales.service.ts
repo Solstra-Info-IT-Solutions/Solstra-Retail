@@ -1375,6 +1375,31 @@ if (existingPayment) {
             ),
           );
 
+          const originalBatchAllocations = (original.batchAllocations || []).map((row: any) => ({ batchId: row.batchId, quantity: Number(row.quantity) }));
+          const batchReturnAllocations: Array<{ batchId: Types.ObjectId; quantity: number }> = [];
+          if (originalBatchAllocations.length) {
+            let batchNeeded = requested.quantity;
+            for (const allocation of originalBatchAllocations) {
+              const alreadyReturned = previousLineReturns.reduce((sum: number, line: any) =>
+                sum + (line.batchAllocations || []).filter((row: any) => String(row.batchId) === String(allocation.batchId)).reduce((value: number, row: any) => value + Number(row.quantity || 0), 0), 0);
+              const availableFromBatch = Math.max(0, allocation.quantity - alreadyReturned);
+              const take = Math.min(batchNeeded, availableFromBatch);
+              if (take <= 0) continue;
+              if (requested.restock !== false) {
+                const batchRow: any = await this.connection.db!.collection('inventory_batches').findOne({
+                  _id: allocation.batchId, tenantId: new Types.ObjectId(tenantId), productId: original.productId,
+                }, { session });
+                if (!batchRow || batchRow.status === 'EXPIRED' || new Date(batchRow.expiresAt) <= creditNoteDate) {
+                  throw new ConflictException(`The original batch for "${original.name}" has expired or is unavailable. Issue this return without restocking the units.`);
+                }
+              }
+              batchReturnAllocations.push({ batchId: allocation.batchId, quantity: take });
+              batchNeeded -= take;
+              if (batchNeeded <= 0) break;
+            }
+            if (batchNeeded > 0) throw new ConflictException(`Returned quantity for "${original.name}" exceeds its original batch allocation.`);
+          }
+
           const cumulativeQty =
             previousReturnedQty + requested.quantity;
 
@@ -1462,6 +1487,7 @@ if (existingPayment) {
             lineTotal: this.fromPaise(lineTotalPaise),
             restocked,
             serialNumbers: requestedSerials,
+            batchAllocations: batchReturnAllocations,
           });
 
           discountTotalPaise += discountPaise;
@@ -1656,6 +1682,16 @@ if (existingPayment) {
         );
 
         for (const line of creditLines) {
+          if (line.restocked) {
+            for (const allocation of line.batchAllocations || []) {
+              const restoredBatch = await this.connection.db!.collection('inventory_batches').updateOne(
+                { _id: allocation.batchId, tenantId: new Types.ObjectId(tenantId), productId: line.productId, status: { $in: ['ACTIVE', 'DEPLETED'] }, expiresAt: { $gt: creditNoteDate } },
+                { $inc: { quantity: allocation.quantity }, $set: { status: 'ACTIVE' } },
+                { session },
+              );
+              if (restoredBatch.modifiedCount !== 1) throw new ConflictException('Original batch changed during return; please retry');
+            }
+          }
           const serialNumbers = line.serialNumbers || [];
           if (!serialNumbers.length) continue;
           const updatedSerials = await this.connection.db!.collection('inventory_serials').updateMany(

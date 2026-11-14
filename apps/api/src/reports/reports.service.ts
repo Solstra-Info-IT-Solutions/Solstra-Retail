@@ -354,6 +354,18 @@ export class ReportsService {
     } finally { clearTimeout(timeout); }
   }
 
+  async listGstEInvoiceSubmissions(tenantId: string, page = 1) {
+    this.validateTenant(tenantId);
+    const safePage = Number.isInteger(page) && page > 0 ? Math.min(page, 10000) : 1;
+    const filter = tenantFilter(tenantId, {});
+    const [items, total] = await Promise.all([
+      this.gstSubmissions.find(filter).sort({ updatedAt: -1 }).skip((safePage - 1) * 20).limit(20)
+        .select('invoiceId invoiceNumber status providerReference irn acknowledgementNumber acknowledgementDate cancellationReference cancellationReason cancelledAt attempts lastError submittedAt createdAt').lean(),
+      this.gstSubmissions.countDocuments(filter),
+    ]);
+    return { items, pagination: { page: safePage, limit: 20, total, totalPages: Math.ceil(total / 20) } };
+  }
+
   async cancelGstEInvoice(tenantId: string, invoiceId: string, reason: string) {
     if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(invoiceId)) throw new BadRequestException('Invalid tenant or invoice ID');
     const cancellationReason = String(reason || '').trim();

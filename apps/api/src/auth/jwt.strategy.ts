@@ -29,12 +29,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       _id: new Types.ObjectId(payload.sub),
       tenantId: new Types.ObjectId(payload.tenantId),
       isActive: true,
-    }).select('_id tenantId role name email').lean();
+    }).select('_id tenantId role permissions name email').lean();
     if (!user) throw new UnauthorizedException();
     return {
       userId: String(user._id),
       tenantId: String(user.tenantId),
       role: user.role,
+      permissions: user.permissions || [],
       name: user.name,
       email: user.email,
     };

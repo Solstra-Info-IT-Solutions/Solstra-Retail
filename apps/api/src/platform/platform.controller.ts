@@ -212,18 +212,21 @@ export class PlatformController {
     return this.platform.retryCommunicationDelivery(req.user.tenantId, id);
   }
 
+  @SkipTrial()
   @Roles('owner', 'admin')
   @Get('billing/invoices')
   listSubscriptionInvoices(@Req() req: AuthenticatedRequest) {
     return this.platform.listSubscriptionInvoices(req.user.tenantId);
   }
 
+  @SkipTrial()
   @Roles('owner', 'admin')
   @Post('billing/invoices')
   requestSubscriptionInvoice(@Req() req: AuthenticatedRequest) {
     return this.platform.requestSubscriptionInvoice(req.user.tenantId, req.user.userId);
   }
 
+  @SkipTrial()
   @Roles('owner', 'admin')
   @Post('billing/invoices/:id/checkout')
   createSubscriptionCheckout(@Req() req: AuthenticatedRequest, @Param('id') id: string) {

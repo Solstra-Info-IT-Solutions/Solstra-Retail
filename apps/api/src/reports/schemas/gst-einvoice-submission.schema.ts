@@ -14,6 +14,7 @@ export class GstEInvoiceSubmission {
   @Prop({ type: String, default: '', maxlength: 120 }) providerReference!: string;
   @Prop({ type: String, default: '', maxlength: 120 }) irn!: string;
   @Prop({ type: String, default: '', maxlength: 120 }) acknowledgementNumber!: string;
+  @Prop({ type: String, default: '', maxlength: 20000 }) signedQrCode!: string;
   @Prop({ type: Date, default: null }) acknowledgementDate?: Date | null;
   @Prop({ type: String, default: '', maxlength: 500 }) lastError!: string;
   @Prop({ type: Number, default: 0 }) attempts!: number;

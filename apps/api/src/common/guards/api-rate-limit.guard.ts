@@ -64,7 +64,7 @@ export class ApiRateLimitGuard implements CanActivate, OnModuleInit {
     if (path.includes('/health')) return true;
 
     const now = Date.now();
-    const isAuthentication = /^\/api\/v1\/auth\/(login|register|refresh)(?:\\?|$)/i.test(path);
+    const isAuthentication = /^\/api\/v1\/auth\/(login|register|refresh)(?:\?|$)/i.test(path);
     const limit = isAuthentication ? this.authLimit : this.generalLimit;
     const duration = isAuthentication ? 15 * this.windowMs : this.windowMs;
     const identity = String(request.ip || request.socket?.remoteAddress || 'unknown').slice(0, 100);

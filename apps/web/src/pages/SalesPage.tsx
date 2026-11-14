@@ -53,6 +53,8 @@ type Invoice = {
   placeOfSupplyStateCode: string;
 };
 
+type Warranty = { _id: string; invoiceId: string; productId: string; productName: string; invoiceNumber: string; quantity: number; claimedQuantity: number; warrantyDays: number; terms: string; coverageEndsAt: string; status: string };
+type WarrantyClaim = { _id: string; warrantyId: string; invoiceId: string; claimCode: string; quantity: number; issueDescription: string; status: string; reviewReason: string; resolutionType?: string; creditNoteId?: string; replacementInvoiceId?: string };
 type CreditNote = { _id: string; creditNoteNumber: string; totalAmount: number; refundableAmount: number; refundedAmount: number; appliedToDueAmount: number; reason: string; items: Array<{ name: string; quantity: number; restocked: boolean }>; refunds: Array<{ method: string; amount: number; reference?: string; refundedAt: string }> };
 
 type SalesResponse = {
@@ -99,6 +101,19 @@ export default function SalesPage() {
   const { user } = useAuth();
   const canManageReturns = user?.role === 'owner' || user?.role === 'admin';
   const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
+  const [warranties, setWarranties] = useState<Warranty[]>([]);
+  const [warrantyClaims, setWarrantyClaims] = useState<WarrantyClaim[]>([]);
+  const [claimWarranty, setClaimWarranty] = useState<Warranty | null>(null);
+  const [claimQuantity, setClaimQuantity] = useState('1');
+  const [claimIssue, setClaimIssue] = useState('');
+  const [claimSaving, setClaimSaving] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState<WarrantyClaim | null>(null);
+  const [reviewStatus, setReviewStatus] = useState('UNDER_REVIEW');
+  const [reviewReason, setReviewReason] = useState('');
+  const [resolutionType, setResolutionType] = useState('REPAIR');
+  const [resolutionCreditNoteId, setResolutionCreditNoteId] = useState('');
+  const [replacementInvoiceId, setReplacementInvoiceId] = useState('');
+  const [reviewSaving, setReviewSaving] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnReason, setReturnReason] = useState('');
   const [returnQty, setReturnQty] = useState<Record<number, string>>({});
@@ -137,8 +152,14 @@ export default function SalesPage() {
     try {
       const response = await api.get<Invoice>(`/sales/${invoice._id}`);
       setSelected(response.data);
-      const notes = await api.get<CreditNote[]>(`/sales/${invoice._id}/credit-notes`);
+      const [notes, warrantyResponse, claimsResponse] = await Promise.all([
+        api.get<CreditNote[]>(`/sales/${invoice._id}/credit-notes`),
+        api.get<Warranty[]>(`/sales/${invoice._id}/warranties`),
+        api.get<{ items: WarrantyClaim[] }>('/sales/warranty-claims', { params: { page: 1, limit: 100 } }),
+      ]);
       setCreditNotes(notes.data || []);
+      setWarranties(warrantyResponse.data || []);
+      setWarrantyClaims((claimsResponse.data.items || []).filter(claim => claim.invoiceId === invoice._id));
     } catch {
       setSelected(invoice);
     } finally {
@@ -160,6 +181,47 @@ export default function SalesPage() {
       const message = (requestError as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
       setReturnError(Array.isArray(message) ? message.join(', ') : message || 'Return could not be recorded.');
     } finally { setReturnSaving(false); }
+  }
+
+  async function createWarrantyClaim(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!selected || !claimWarranty) return;
+    setClaimSaving(true); setReturnError('');
+    try {
+      await api.post('/sales/' + selected._id + '/warranties/' + claimWarranty._id + '/claims', {
+        quantity: Number(claimQuantity), issueDescription: claimIssue.trim(),
+      });
+      const [warrantyResponse, claimsResponse] = await Promise.all([
+        api.get<Warranty[]>('/sales/' + selected._id + '/warranties'),
+        api.get<{ items: WarrantyClaim[] }>('/sales/warranty-claims', { params: { page: 1, limit: 100 } }),
+      ]);
+      setWarranties(warrantyResponse.data || []);
+      setWarrantyClaims((claimsResponse.data.items || []).filter(claim => claim.invoiceId === selected._id));
+      setClaimWarranty(null); setClaimIssue(''); setClaimQuantity('1');
+    } catch (requestError: unknown) {
+      const message = (requestError as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      setReturnError(Array.isArray(message) ? message.join(', ') : message || 'Warranty claim could not be created.');
+    } finally { setClaimSaving(false); }
+  }
+
+  async function saveWarrantyReview(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!reviewTarget) return;
+    setReviewSaving(true); setReturnError('');
+    try {
+      await api.patch('/sales/warranty-claims/' + reviewTarget._id, {
+        status: reviewStatus, reason: reviewReason.trim(),
+        ...(reviewStatus === 'APPROVED' || reviewStatus === 'RESOLVED' ? {
+          resolutionType,
+          ...(resolutionCreditNoteId ? { creditNoteId: resolutionCreditNoteId } : {}),
+          ...(replacementInvoiceId.trim() ? { replacementInvoiceId: replacementInvoiceId.trim() } : {}),
+        } : {}),
+      });
+      const claimsResponse = await api.get<{ items: WarrantyClaim[] }>('/sales/warranty-claims', { params: { page: 1, limit: 100 } });
+      setWarrantyClaims((claimsResponse.data.items || []).filter(claim => claim.invoiceId === selected?._id));
+      setReviewTarget(null); setReviewReason(''); setReplacementInvoiceId(''); setResolutionCreditNoteId('');
+    } catch (requestError: unknown) {
+      const message = (requestError as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      setReturnError(Array.isArray(message) ? message.join(', ') : message || 'Warranty claim could not be updated.');
+    } finally { setReviewSaving(false); }
   }
 
   async function recordRefund(event: FormEvent<HTMLFormElement>) {
@@ -359,6 +421,20 @@ export default function SalesPage() {
               </div>
             </div>
             {creditNotes.length > 0 && <section className="sales-credit-notes"><h3>Returns & credit notes</h3>{creditNotes.map(note=><article key={note._id}><div><strong>{note.creditNoteNumber}</strong><small>{note.reason}</small><small>{note.items.map(item=>item.name+' × '+item.quantity+(item.restocked?' · restocked':'')).join(', ')}</small></div><div className="sales-credit-note-values"><b>{money(note.totalAmount)}</b><small>Refunded {money(note.refundedAmount)} · Due adjusted {money(note.appliedToDueAmount)}</small>{canManageReturns && note.refundableAmount>note.refundedAmount && <button onClick={()=>{setRefundTarget(note);setRefundAmount((note.refundableAmount-note.refundedAmount).toFixed(2));setRefundReference('');setReturnError('');}}>Record refund</button>}</div></article>)}</section>}
+            {warranties.length > 0 && <section className="sales-warranties"><h3>Product warranty registrations</h3>
+              {warranties.map(warranty => <article key={warranty._id}>
+                <div><strong>{warranty.productName}</strong><small>{warranty.warrantyDays} days · coverage until {date(warranty.coverageEndsAt)}</small>{warranty.terms && <small>{warranty.terms}</small>}<small>{warranty.claimedQuantity} of {warranty.quantity} units claimed</small></div>
+                <div><span className={'warranty-status warranty-' + warranty.status.toLowerCase()}>{warranty.status}</span>
+                  {canManageReturns && warranty.coverageEndsAt > new Date().toISOString() && warranty.claimedQuantity < warranty.quantity && <button onClick={() => { setClaimWarranty(warranty); setClaimQuantity('1'); setClaimIssue(''); setReturnError(''); }}>Register claim</button>}
+                </div>
+              </article>)}
+            </section>}
+            {warrantyClaims.length > 0 && <section className="sales-warranties"><h3>Warranty & exchange cases</h3>
+              {warrantyClaims.map(claim => <article key={claim._id}>
+                <div><strong>{claim.claimCode} · {claim.status.replace('_',' ')}</strong><small>{claim.issueDescription}</small><small>Quantity: {claim.quantity}{claim.resolutionType ? ' · Resolution: ' + claim.resolutionType : ''}</small>{claim.reviewReason && <small>Review: {claim.reviewReason}</small>}</div>
+                {canManageReturns && !['REJECTED','RESOLVED'].includes(claim.status) && <button onClick={() => { setReviewTarget(claim); setReviewStatus(claim.status === 'APPROVED' ? 'RESOLVED' : 'UNDER_REVIEW'); setReviewReason(''); setResolutionType(claim.resolutionType || 'REPAIR'); setResolutionCreditNoteId(claim.creditNoteId || ''); setReplacementInvoiceId(claim.replacementInvoiceId || ''); }}>Review case</button>}
+              </article>)}
+            </section>}
             <div className="sales-detail-footer">
               <span>Place of supply: {selected.placeOfSupplyStateCode}</span>
               <span className={selected.status === 'CANCELLED' ? 'status-cancelled' : 'status-issued'}>{selected.status}</span>
@@ -366,6 +442,23 @@ export default function SalesPage() {
           </section>
         </div>
       )}
+      {claimWarranty && selected && <div className="sales-modal-backdrop"><form className="sales-return-modal" onSubmit={createWarrantyClaim}>
+        <h2>Register warranty claim</h2><p>{claimWarranty.productName} · coverage until {date(claimWarranty.coverageEndsAt)}</p>
+        <label className="sales-return-reason">Units affected<input type="number" min="1" max={claimWarranty.quantity-claimWarranty.claimedQuantity} step="1" value={claimQuantity} onChange={e=>setClaimQuantity(e.target.value)}/></label>
+        <label className="sales-return-reason">Issue description<textarea required minLength={5} maxLength={1000} rows={4} value={claimIssue} onChange={e=>setClaimIssue(e.target.value)} placeholder="Describe the fault or issue"/></label>
+        {returnError&&<div className="sales-error">{returnError}</div>}<footer><button type="button" onClick={()=>setClaimWarranty(null)}>Cancel</button><button disabled={claimSaving}>{claimSaving?'Registering...':'Submit claim'}</button></footer>
+      </form></div>}
+      {reviewTarget && <div className="sales-modal-backdrop"><form className="sales-return-modal" onSubmit={saveWarrantyReview}>
+        <h2>Review warranty case</h2><p>{reviewTarget.claimCode} · {reviewTarget.issueDescription}</p>
+        <label className="sales-return-reason">Case status<select value={reviewStatus} onChange={e=>setReviewStatus(e.target.value)}>{(reviewTarget.status==='APPROVED'?['RESOLVED']:['UNDER_REVIEW','APPROVED','REJECTED']).map(s=><option key={s}>{s}</option>)}</select></label>
+        {(reviewStatus==='APPROVED'||reviewStatus==='RESOLVED') && <>
+          <label className="sales-return-reason">Resolution type<select value={resolutionType} onChange={e=>setResolutionType(e.target.value)}>{['REPAIR','EXCHANGE','REFUND'].map(s=><option key={s}>{s}</option>)}</select></label>
+          {(resolutionType==='EXCHANGE'||resolutionType==='REFUND') && <label className="sales-return-reason">Original return credit note<select required value={resolutionCreditNoteId} onChange={e=>setResolutionCreditNoteId(e.target.value)}><option value="">Select credit note</option>{creditNotes.map(note=><option key={note._id} value={note._id}>{note.creditNoteNumber} · {money(note.totalAmount)}</option>)}</select></label>}
+          {resolutionType==='EXCHANGE' && <label className="sales-return-reason">Replacement invoice ID<input required value={replacementInvoiceId} onChange={e=>setReplacementInvoiceId(e.target.value)} placeholder="Paste replacement invoice ID"/></label>}
+        </>}
+        <label className="sales-return-reason">Review rationale<textarea required minLength={5} maxLength={500} rows={3} value={reviewReason} onChange={e=>setReviewReason(e.target.value)} placeholder="Decision rationale and customer communication notes"/></label>
+        {returnError&&<div className="sales-error">{returnError}</div>}<footer><button type="button" onClick={()=>setReviewTarget(null)}>Cancel</button><button disabled={reviewSaving}>{reviewSaving?'Saving...':'Save decision'}</button></footer>
+      </form></div>}
       {returnOpen && selected && <div className="sales-modal-backdrop"><form className="sales-return-modal" onSubmit={createReturn}><h2>Record customer return</h2><p>Select the quantity physically returned. Returned stock is restored only when you select Restock.</p>
         {selected.items.map((item,index)=><div className="sales-return-line" key={index}><div><strong>{item.name}</strong><small>Sold {item.quantity} · {money(item.unitPrice)} each</small></div><label>Return qty<input type="number" min="0" max={item.quantity} step="1" value={returnQty[index]||''} onChange={e=>setReturnQty(old=>({...old,[index]:e.target.value}))}/></label><label className="sales-restock-check"><input type="checkbox" checked={returnRestock[index]===true} onChange={e=>setReturnRestock(old=>({...old,[index]:e.target.checked}))}/> Restock</label></div>)}
         <label className="sales-return-reason">Return reason<textarea required minLength={3} maxLength={250} rows={3} value={returnReason} onChange={e=>setReturnReason(e.target.value)} placeholder="Customer return reason / condition"/></label>

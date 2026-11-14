@@ -1086,7 +1086,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     this.identity(tenantId);
     const filter = (extra: Record<string, any> = {}) => tenantFilter(tenantId, extra);
     const now = new Date();
-    const [pendingWebhooks, deadWebhooks, pendingCommunications, deadCommunications, failedCommunications, latestBackup, latestReplication, pendingOffline, failedOffline] = await Promise.all([
+    const [pendingWebhooks, deadWebhooks, pendingCommunications, deadCommunications, failedCommunications, latestBackupResult, latestReplicationResult, pendingOffline, failedOffline] = await Promise.all([
       this.deliveries.countDocuments(filter({ status: { $in: ['PENDING', 'DELIVERING'] } })),
       this.deliveries.countDocuments(filter({ status: 'DEAD' })),
       this.communicationDeliveries.countDocuments(filter({ status: { $in: ['PENDING', 'DELIVERING'] } })),
@@ -1097,6 +1097,8 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       this.syncRecords.countDocuments(filter({ status: 'PROCESSING' })),
       this.syncRecords.countDocuments(filter({ status: 'FAILED' })),
     ]);
+    const latestBackup: any = latestBackupResult;
+    const latestReplication: any = latestReplicationResult;
     const backupAgeMinutes = latestBackup?.createdAt ? Math.max(0, Math.floor((now.getTime() - new Date(latestBackup.createdAt).getTime()) / 60000)) : null;
     return {
       generatedAt: now,

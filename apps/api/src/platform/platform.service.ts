@@ -493,13 +493,13 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       }
       if (!existing) {
         try {
-          await this.syncRecords.create({ tenantId: new Types.ObjectId(tenantId), idempotencyKey: operation.idempotencyKey, payloadSha256, status: 'PROCESSING', createdBy: new Types.ObjectId(userId) });
+          await this.syncRecords.create({ tenantId: new Types.ObjectId(tenantId), idempotencyKey: operation.idempotencyKey, payloadSha256, status: 'PROCESSING', createdBy: new Types.ObjectId(userId), deviceId: dto.deviceId || '', batchSequence: dto.batchSequence ?? null });
         } catch (error: any) {
           if (error?.code !== 11000) throw error;
           results.push({ idempotencyKey: operation.idempotencyKey, status: 'PROCESSING', replayed: true }); continue;
         }
       } else {
-        await this.syncRecords.updateOne(tenantFilter(tenantId, { _id: existing._id, status: 'FAILED' }), { $set: { status: 'PROCESSING', payloadSha256, errorMessage: '' } });
+        await this.syncRecords.updateOne(tenantFilter(tenantId, { _id: existing._id, status: 'FAILED' }), { $set: { status: 'PROCESSING', payloadSha256, errorMessage: '', deviceId: dto.deviceId || '', batchSequence: dto.batchSequence ?? null } });
       }
       try {
         const payload = plainToInstance(CreateSaleDto, operation.payload);
@@ -640,6 +640,27 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     }
     const overdueInvoices = await this.subscriptionInvoices.find({ status: 'DUE', dueAt: { $lte: new Date() } }).select('tenantId').lean();
     for (const invoice of overdueInvoices) await this.tenants.updateOne({ _id: invoice.tenantId }, { $set: { billingStatus: 'PAST_DUE' } });
+    const reminderCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const reminderCandidates = await this.subscriptionInvoices.find({
+      status: 'DUE', dueAt: { $lte: new Date() }, reminderCount: { $lt: 7 },
+      $or: [{ lastReminderAt: null }, { lastReminderAt: { $lte: reminderCutoff } }, { lastReminderAt: { $exists: false } }],
+    }).limit(100).lean();
+    let billingReminders = 0;
+    for (const invoice of reminderCandidates) {
+      const claimed: any = await this.subscriptionInvoices.findOneAndUpdate({
+        _id: invoice._id, tenantId: invoice.tenantId, status: 'DUE', reminderCount: { $lt: 7 },
+        $or: [{ lastReminderAt: null }, { lastReminderAt: { $lte: reminderCutoff } }, { lastReminderAt: { $exists: false } }],
+      }, { $inc: { reminderCount: 1 }, $set: { lastReminderAt: new Date() } }, { new: true }).lean();
+      if (!claimed) continue;
+      const overdueDays = Math.max(1, Math.floor((Date.now() - new Date(invoice.dueAt).getTime()) / 86400000));
+      await this.createNotification(String(invoice.tenantId), {
+        title: 'Subscription payment overdue · ' + String(invoice.invoiceNumber),
+        body: 'Subscription invoice ' + String(invoice.invoiceNumber) + ' is overdue by ' + overdueDays + ' day(s). Please settle the outstanding amount to avoid workspace service interruption.',
+        severity: claimed.reminderCount >= 5 ? 'CRITICAL' : 'WARNING',
+        category: 'BILLING', sourceId: String(invoice.invoiceNumber) + '-REMINDER-' + claimed.reminderCount,
+      });
+      billingReminders += 1;
+    }
     const backups = await this.runScheduledBackupJobs();
     const tenantIds = await this.deliveries.distinct('tenantId', { status: 'PENDING', nextAttemptAt: { $lte: new Date() } });
     let webhookDeliveries = 0;
@@ -671,7 +692,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         retriedReplications += 1;
       } catch { /* Replication event history records the retry failure. */ }
     }
-    return { backups, webhookDeliveries, communicationDeliveries, expiredBatches, retriedReplications };
+    return { backups, webhookDeliveries, communicationDeliveries, billingReminders, expiredBatches, retriedReplications };
   }
 
   async runScheduledBackupJobs() {

@@ -21,6 +21,7 @@ import { ReplenishmentService } from './replenishment.service';
 import { UpsertReplenishmentPolicyDto, ReplenishmentQueryDto } from './dto/replenishment.dto';
 import { AdvancedInventoryService } from './advanced-inventory.service';
 import { ReceiveBatchDto, RegisterSerialsDto, CreateStocktakeDto } from './dto/advanced-inventory.dto';
+import { TransitionSerialDto } from './dto/transition-serial.dto';
 
 type AuthenticatedRequest = Request & {
   user: {
@@ -79,6 +80,12 @@ export class InventoryController {
   @Get('serials')
   listSerials(@Req() req: AuthenticatedRequest, @Query('productId') productId?: string, @Query('status') status?: string) {
     return this.advancedInventory.listSerials(req.user.tenantId, productId, status);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('serials/:id/transition')
+  transitionSerial(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: TransitionSerialDto) {
+    return this.advancedInventory.transitionSerial(req.user.tenantId, req.user.userId, id, dto);
   }
 
   @Roles('owner', 'admin')

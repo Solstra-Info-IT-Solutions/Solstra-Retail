@@ -162,4 +162,36 @@ describe('PlatformService security boundaries', () => {
     expect(service.sales.createSale).not.toHaveBeenCalled();
   });
 
+  it('lists offline sync history within tenant and restricts staff to their own records', async () => {
+    const service: any = createService();
+    const rows = [{ idempotencyKey: 'offline-key-123', status: 'FAILED', createdBy: userId }];
+    const find = jest.fn(() => ({ select: () => ({ sort: () => ({ skip: () => ({ limit: () => ({ lean: async () => rows }) }) }) }) }));
+    service.syncRecords = { find, countDocuments: jest.fn().mockResolvedValue(1) };
+    const result = await service.listOfflineSyncRecords(tenantId, userId, 'staff', 1, 'FAILED');
+    expect(result.items).toEqual(rows);
+    expect(result.total).toBe(1);
+    expect(find.mock.calls[0][0]).toMatchObject({ tenantId: expect.anything(), createdBy: expect.anything(), status: 'FAILED' });
+  });
+
+  it('emits an overdue subscription reminder at most once per claimed reminder window', async () => {
+    const service: any = createService();
+    const invoice = { _id: '507f1f77bcf86cd799439099', tenantId, invoiceNumber: 'SRS-202611-TEST', dueAt: new Date(Date.now() - 2 * 86400000) };
+    service.subscriptionInvoices = {
+      find: jest.fn()
+        .mockImplementationOnce(() => ({ select: () => ({ lean: async () => [invoice] }) }))
+        .mockImplementationOnce(() => ({ limit: () => ({ lean: async () => [invoice] }) })),
+      findOneAndUpdate: jest.fn().mockReturnValue({ lean: async () => ({ reminderCount: 1 }) }),
+    };
+    service.tenants = { updateOne: jest.fn() };
+    service.runScheduledBackupJobs = jest.fn().mockResolvedValue({ processed: 0 });
+    service.deliveries = { distinct: jest.fn().mockResolvedValue([]) };
+    service.communicationDeliveries = { distinct: jest.fn().mockResolvedValue([]) };
+    service.backupReplicationEvents = { aggregate: jest.fn().mockResolvedValue([]) };
+    const notify = jest.spyOn(service, 'createNotification').mockResolvedValue({} as any);
+    const result = await service.runScheduledPlatformJobs();
+    expect(result.billingReminders).toBe(1);
+    expect(service.subscriptionInvoices.findOneAndUpdate).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith(tenantId, expect.objectContaining({ category: 'BILLING', severity: 'WARNING' }));
+  });
+
 });

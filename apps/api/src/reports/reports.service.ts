@@ -403,6 +403,9 @@ export class ReportsService {
       ).lean();
       if (!updated) throw new BadRequestException('E-invoice status changed during cancellation; verify provider status before retrying');
       return { status: 'CANCELLED', cancellationReference: updated.cancellationReference, cancelledAt: updated.cancelledAt, duplicate: false };
+    } catch (error: any) {
+      if (error instanceof BadRequestException || error instanceof ServiceUnavailableException) throw error;
+      throw new ServiceUnavailableException('GST GSP cancellation request failed; verify IRP status before retrying');
     } finally { clearTimeout(timeout); }
   }
 

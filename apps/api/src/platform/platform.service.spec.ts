@@ -310,4 +310,30 @@ describe('PlatformService security boundaries', () => {
     });
   });
 
+  it('persists current operational alerts and resolves alerts that are no longer active', async () => {
+    const service: any = createService();
+    const collection = {
+      createIndex: jest.fn(),
+      updateOne: jest.fn().mockResolvedValue({ upsertedCount: 1 }),
+      updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+      find: jest.fn(() => ({ sort: () => ({ limit: async () => [{ code: 'BACKUP_STALE', status: 'OPEN' }] }) })),
+    };
+    service.connection = { db: { collection: jest.fn(() => collection) } };
+    service.operationsMetrics = jest.fn().mockResolvedValue({ alerts: [{ code: 'BACKUP_STALE', severity: 'WARNING', message: 'Backup is stale' }] });
+    const result = await service.listOperationalAlerts(tenantId);
+    expect(collection.createIndex).toHaveBeenCalledWith({ tenantId: 1, code: 1 }, { unique: true });
+    expect(collection.updateOne).toHaveBeenCalled();
+    expect(collection.updateMany).toHaveBeenCalled();
+    expect(result.items).toHaveLength(1);
+    expect(result.summary.open).toBe(1);
+  });
+
+  it('validates acknowledgement codes and notes before database access', async () => {
+    const service: any = createService();
+    await expect(service.acknowledgeOperationalAlert(tenantId, userId, 'bad code', 'acknowledged'))
+      .rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.acknowledgeOperationalAlert(tenantId, userId, 'BACKUP_STALE', 'x'.repeat(501)))
+      .rejects.toBeInstanceOf(BadRequestException);
+  });
+
 });

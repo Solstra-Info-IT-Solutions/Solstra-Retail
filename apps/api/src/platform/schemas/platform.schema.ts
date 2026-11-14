@@ -96,6 +96,8 @@ export class OfflineSyncRecord {
   @Prop({ type: Types.ObjectId, ref: 'SalesInvoice', default: null }) invoiceId?: Types.ObjectId | null;
   @Prop({ type: Object, default: null }) result?: Record<string, any> | null;
   @Prop({ type: String, default: '', maxlength: 500 }) errorMessage!: string;
+  @Prop({ type: String, default: '', maxlength: 36, index: true }) deviceId!: string;
+  @Prop({ type: Number, default: null }) batchSequence?: number | null;
 }
 export type OfflineSyncRecordDocument = HydratedDocument<OfflineSyncRecord>;
 export const OfflineSyncRecordSchema = SchemaFactory.createForClass(OfflineSyncRecord);
@@ -149,8 +151,6 @@ export class AutomationExecution {
   @Prop({ type: String, required: true, maxlength: 160 }) eventKey!: string;
   @Prop({ type: String, required: true, enum: ['PROCESSING', 'SUCCEEDED', 'FAILED'] }) status!: string;
   @Prop({ type: String, default: '', maxlength: 500 }) errorMessage!: string;
-  @Prop({ type: String, default: '', maxlength: 36, index: true }) deviceId!: string;
-  @Prop({ type: Number, default: null }) batchSequence?: number | null;
   @Prop({ type: Date, default: Date.now }) executedAt!: Date;
 }
 export type AutomationExecutionDocument = HydratedDocument<AutomationExecution>;

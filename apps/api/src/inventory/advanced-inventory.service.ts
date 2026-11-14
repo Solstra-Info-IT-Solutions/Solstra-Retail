@@ -61,6 +61,16 @@ export class AdvancedInventoryService {
         await product.save({ session });
         const [batch] = await this.batches.create([{ tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouse._id, batchNumber: dto.batchNumber.trim().toUpperCase(), manufacturedAt: dto.manufacturedAt ? new Date(dto.manufacturedAt) : null, expiresAt, quantity: incomingQty, unitCost: dto.unitCost, createdBy: new Types.ObjectId(userId) }], { session });
         await this.movements.create([{ tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouse._id, type: 'IN', quantityDelta: incomingQty, previousQty: oldQty, newQty, reason: 'Batch receipt ' + batch.batchNumber, performedBy: new Types.ObjectId(userId) }], { session });
+        if (incomingValue > 0) await this.accounting.postOperationalJournal({
+          tenantId, userId, postingDate: new Date(),
+          narration: `Batch receipt ${batch.batchNumber} for ${product.name}`,
+          sourceType: 'INVENTORY', sourceId: `BATCH_RECEIPT:${batch._id.toString()}`,
+          lines: [
+            { accountCode: '1200', debit: incomingValue / 100, credit: 0, description: 'Batch inventory receipt' },
+            { accountCode: '5500', debit: 0, credit: incomingValue / 100, description: 'Uninvoiced inventory receipt adjustment' },
+          ],
+          session,
+        });
         result = batch;
       });
       return result;
@@ -147,6 +157,7 @@ export class AdvancedInventoryService {
           if (!product) throw new ConflictException('A stocktake product no longer exists');
           const stock = await this.warehouseStocks.findOne(tenantFilter(tenantId, { warehouseId: take.warehouseId, productId: line.productId })).session(session);
           const currentQty = stock?.quantity || 0;
+          if (currentQty !== line.expectedQty) throw new ConflictException(`Stock for ${product.name} changed after this stocktake draft was created. Recount and create a new draft.`);
           const delta = line.countedQty - currentQty;
           if (delta !== 0) {
             const unitCost = stock?.averageCost ?? product.averageCost ?? 0;
@@ -157,7 +168,26 @@ export class AdvancedInventoryService {
             if (product.stockQty === 0) product.inventoryValue = 0;
             else product.averageCost = product.inventoryValue / product.stockQty;
             await product.save({ session });
-            await this.movements.create([{ tenantId: take.tenantId, productId: line.productId, warehouseId: take.warehouseId, type: 'ADJUSTMENT', quantityDelta: delta, previousQty: currentQty, newQty: line.countedQty, reason: 'Stocktake ' + take.reference, performedBy: new Types.ObjectId(userId) }], { session });
+            const [movement] = await this.movements.create([{ tenantId: take.tenantId, productId: line.productId, warehouseId: take.warehouseId, type: 'ADJUSTMENT', quantityDelta: delta, previousQty: currentQty, newQty: line.countedQty, reason: 'Stocktake ' + take.reference, performedBy: new Types.ObjectId(userId) }], { session });
+            const adjustmentValuePaise = Math.round(Math.abs(delta) * unitCost * 100);
+            if (adjustmentValuePaise > 0) {
+              const increase = delta > 0;
+              await this.accounting.postOperationalJournal({
+                tenantId, userId, postingDate: new Date(),
+                narration: `Stocktake ${take.reference} - ${product.name}`,
+                sourceType: 'INVENTORY', sourceId: `STOCKTAKE:${take._id.toString()}:${product._id.toString()}`,
+                lines: increase
+                  ? [
+                      { accountCode: '1200', debit: adjustmentValuePaise / 100, credit: 0, description: 'Stocktake inventory increase' },
+                      { accountCode: '5500', debit: 0, credit: adjustmentValuePaise / 100, description: 'Stocktake inventory gain' },
+                    ]
+                  : [
+                      { accountCode: '5400', debit: adjustmentValuePaise / 100, credit: 0, description: 'Stocktake inventory shrinkage' },
+                      { accountCode: '1200', debit: 0, credit: adjustmentValuePaise / 100, description: 'Stocktake inventory decrease' },
+                    ],
+                session,
+              });
+            }
           }
         }
         take.status = 'COMPLETED'; take.completedBy = new Types.ObjectId(userId); take.completedAt = new Date();

@@ -91,6 +91,18 @@ export class CreateProductDto {
   @IsOptional()
   @IsBoolean()
   trackStock?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(3650)
+  warrantyDays?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  warrantyTerms?: string;
 }
 
 

@@ -6,6 +6,13 @@ export type PaymentStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'CREDITED';
 export type PaymentMethod = 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'OTHER';
 
 @Schema({ _id: false })
+export class InvoiceBatchAllocation {
+  @Prop({ type: Types.ObjectId, required: true }) batchId!: Types.ObjectId;
+  @Prop({ type: Number, required: true, min: 0.001 }) quantity!: number;
+}
+export const InvoiceBatchAllocationSchema = SchemaFactory.createForClass(InvoiceBatchAllocation);
+
+@Schema({ _id: false })
 export class InvoiceLineItem {
   @Prop({ type: Types.ObjectId, ref: 'Product', required: true })
   productId!: Types.ObjectId;
@@ -66,6 +73,9 @@ export class InvoiceLineItem {
 
   @Prop({ type: [String], default: [] })
   serialNumbers!: string[];
+
+  @Prop({ type: [InvoiceBatchAllocationSchema], default: [] })
+  batchAllocations!: InvoiceBatchAllocation[];
 }
 
 export const InvoiceLineItemSchema =

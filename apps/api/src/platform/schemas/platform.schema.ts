@@ -105,7 +105,7 @@ OfflineSyncRecordSchema.index({ tenantId: 1, idempotencyKey: 1 }, { unique: true
 
 @Schema({ timestamps: true, collection: 'backup_policies', versionKey: false })
 export class BackupPolicy {
-  @Prop(tenantRef) tenantId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'Tenant', required: true }) tenantId!: Types.ObjectId;
   @Prop({ type: Boolean, default: false }) enabled!: boolean;
   @Prop({ type: String, enum: ['DAILY', 'WEEKLY'], default: 'DAILY' }) frequency!: string;
   @Prop({ type: Number, min: 1, max: 90, default: 30 }) retentionDays!: number;
@@ -125,7 +125,7 @@ export class BackupArtifact {
   @Prop({ type: String, required: true, maxlength: 64 }) checksumSha256!: string;
   @Prop({ type: Number, required: true }) documentCount!: number;
   @Prop({ type: Number, required: true }) compressedBytes!: number;
-  @Prop({ type: Date, required: true, index: true }) expiresAt!: Date;
+  @Prop({ type: Date, required: true }) expiresAt!: Date;
 }
 export type BackupArtifactDocument = HydratedDocument<BackupArtifact>;
 export const BackupArtifactSchema = SchemaFactory.createForClass(BackupArtifact);

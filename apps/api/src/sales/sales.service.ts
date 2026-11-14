@@ -1705,7 +1705,7 @@ if (existingPayment) {
           tenantId: new Types.ObjectId(tenantId), warrantyId: warranty._id,
           invoiceId: warranty.invoiceId, claimCode: 'WC' + randomBytes(6).toString('hex').toUpperCase(),
           quantity: dto.quantity, issueDescription: dto.issueDescription.trim(),
-          status: 'OPEN', createdBy: new Types.ObjectId(userId),
+          status: 'OPEN', createdBy: new Types.ObjectId(userId), history: [{ status: 'OPEN', reason: 'Warranty claim submitted', actorId: new Types.ObjectId(userId), occurredAt: new Date() }],
         }], { session });
         result = claim;
       });
@@ -1773,6 +1773,7 @@ if (existingPayment) {
           );
         }
         claim.status = dto.status;
+        claim.history.push({ status: dto.status, reason, actorId: new Types.ObjectId(userId), occurredAt: new Date() } as any);
         claim.reviewReason = reason;
         claim.reviewedBy = new Types.ObjectId(userId);
         claim.reviewedAt = new Date();

@@ -332,12 +332,12 @@ describe('ReportsService validation', () => {
       countDocuments: jest.fn().mockResolvedValue(3),
     };
     service.customers = customers;
-    const result = await service.exportMigrationRecords('507f1f77bcf86cd799439011', 'customers', '', 2);
+    const result = await service.exportMigrationRecords('507f1f77bcf86cd799439011', 'customers', '', 1);
     const { createHash } = require('crypto');
-    expect(result.exportedCount).toBe(2);
+    expect(result.exportedCount).toBe(1);
     expect(result.totalMatching).toBe(3);
     expect(result.hasMore).toBe(true);
-    expect(result.pageSha256).toBe(createHash('sha256').update(JSON.stringify(rows)).digest('hex'));
+    expect(result.pageSha256).toBe(createHash('sha256').update(JSON.stringify([rows[0]])).digest('hex'));
     expect(result.integrityAlgorithm).toBe('SHA-256');
   });
 

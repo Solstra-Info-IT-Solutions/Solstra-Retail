@@ -1517,6 +1517,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     const cutoff = new Date(Date.now() - 30 * 60 * 1000);
     let escalated = 0;
     for (const tenant of tenants as any[]) {
+      await this.listOperationalAlerts(String(tenant._id));
       const rows = await collection.find({
         tenantId: tenant._id, status: 'OPEN', firstSeenAt: { $lte: cutoff }, escalationSentAt: null,
       }).limit(20).toArray();

@@ -102,6 +102,57 @@ describe('TrialGuard', () => {
     ).resolves.toBe(true);
   });
 
+  it('allows an active paid subscription before its paid period ends', async () => {
+    mockTenant({
+      subscriptionStatus: 'active',
+      subscriptionPeriodEnd: new Date(Date.now() + 86400000),
+      trialEndsAt: new Date(Date.now() - 86400000),
+    });
+
+    await expect(
+      guard.canActivate(createContext({ tenantId })),
+    ).resolves.toBe(true);
+  });
+
+  it('rejects an active paid subscription after its paid period ends', async () => {
+    mockTenant({
+      subscriptionStatus: 'active',
+      subscriptionPeriodEnd: new Date(Date.now() - 1000),
+      billingStatus: 'PAST_DUE',
+      trialEndsAt: new Date(Date.now() + 86400000),
+    });
+
+    try {
+      await guard.canActivate(createContext({ tenantId }));
+      fail('Expected paid subscription expired exception');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HttpException);
+      expect((error as HttpException).getStatus()).toBe(402);
+      expect((error as HttpException).getResponse()).toMatchObject({
+        code: 'SUBSCRIPTION_EXPIRED',
+      });
+    }
+  });
+
+  it('does not let an explicitly expired paid subscription fall back to an unexpired trial', async () => {
+    mockTenant({
+      subscriptionStatus: 'expired',
+      subscriptionPeriodEnd: new Date(Date.now() - 1000),
+      trialEndsAt: new Date(Date.now() + 86400000),
+    });
+
+    try {
+      await guard.canActivate(createContext({ tenantId }));
+      fail('Expected subscription expired exception');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HttpException);
+      expect((error as HttpException).getStatus()).toBe(402);
+      expect((error as HttpException).getResponse()).toMatchObject({
+        code: 'SUBSCRIPTION_EXPIRED',
+      });
+    }
+  });
+
   it('allows a tenant with an unexpired trial', async () => {
     mockTenant({
       subscriptionStatus: 'trial',

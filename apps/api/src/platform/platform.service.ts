@@ -669,7 +669,20 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     return { fileName: artifact.fileName, checksumSha256: checksum, archiveBase64: bytes.toString('base64') };
   }
 
+  async expirePaidSubscriptions() {
+    const result = await this.tenants.updateMany(
+      {
+        status: 'active',
+        subscriptionStatus: 'active',
+        subscriptionPeriodEnd: { $lte: new Date(), $ne: null },
+      },
+      { $set: { subscriptionStatus: 'expired', billingStatus: 'PAST_DUE' } },
+    );
+    return result.modifiedCount || 0;
+  }
+
   async runScheduledPlatformJobs() {
+    const expiredSubscriptions = await this.expirePaidSubscriptions();
     let expiredBatches = 0;
     if (this.connection.db) {
       const expiredResult = await this.connection.db.collection('inventory_batches').updateMany(
@@ -741,7 +754,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         retriedReplications += 1;
       } catch { /* Replication event history records the retry failure. */ }
     }
-    return { backups, recurringExpenses, webhookDeliveries, communicationDeliveries, billingReminders, expiredBatches, retriedReplications };
+    return { backups, recurringExpenses, webhookDeliveries, communicationDeliveries, billingReminders, expiredSubscriptions, expiredBatches, retriedReplications };
   }
 
   async runScheduledBackupJobs() {
@@ -842,7 +855,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
 
   async listSaasTenants(userId: string) {
     this.assertPlatformAdmin(userId);
-    return this.tenants.find({}).select('name slug status subscriptionStatus subscriptionPlan maxUsers maxProducts maxBranches trialEndsAt createdAt').sort({ createdAt: -1 }).limit(500).lean();
+    return this.tenants.find({}).select('name slug status subscriptionStatus subscriptionPlan subscriptionPeriodStart subscriptionPeriodEnd billingStatus maxUsers maxProducts maxBranches trialEndsAt createdAt').sort({ createdAt: -1 }).limit(500).lean();
   }
 
   async updateSaasTenant(userId: string, tenantId: string, dto: UpdateSaasTenantDto) {

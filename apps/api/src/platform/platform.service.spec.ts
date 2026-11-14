@@ -245,7 +245,7 @@ describe('PlatformService security boundaries', () => {
         .mockImplementationOnce(() => ({ limit: () => ({ lean: async () => [invoice] }) })),
       findOneAndUpdate: jest.fn().mockReturnValue({ lean: async () => ({ reminderCount: 1 }) }),
     };
-    service.tenants = { updateOne: jest.fn() };
+    service.tenants = { updateOne: jest.fn(), updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }) };
     service.runScheduledBackupJobs = jest.fn().mockResolvedValue({ processed: 0 });
     service.deliveries = { distinct: jest.fn().mockResolvedValue([]) };
     service.communicationDeliveries = { distinct: jest.fn().mockResolvedValue([]) };
@@ -295,6 +295,19 @@ describe('PlatformService security boundaries', () => {
     expect(result.summary).toMatchObject({ products: 4, valuationPending: 1, overAllocated: 1, underAllocated: 1, matched: 1, discrepancyCount: 2 });
     expect(result.discrepancies.map((item: any) => item.status)).toEqual(['OVER_ALLOCATED', 'UNDER_ALLOCATED']);
     expect(result.review[0].status).toBe('MATCHED');
+  });
+
+  it('expires paid workspaces only after their subscription period ends', async () => {
+    const service: any = createService();
+    service.tenants = { updateMany: jest.fn().mockResolvedValue({ modifiedCount: 2 }) };
+    await expect(service.expirePaidSubscriptions()).resolves.toBe(2);
+    expect(service.tenants.updateMany).toHaveBeenCalledWith({
+      status: 'active',
+      subscriptionStatus: 'active',
+      subscriptionPeriodEnd: { $lte: expect.any(Date), $ne: null },
+    }, {
+      $set: { subscriptionStatus: 'expired', billingStatus: 'PAST_DUE' },
+    });
   });
 
 });

@@ -331,7 +331,7 @@ describe('ReportsService validation', () => {
       find: jest.fn(() => ({ select: () => ({ sort: () => ({ limit: () => ({ lean: async () => rows }) }) }) })),
       countDocuments: jest.fn().mockResolvedValue(3),
     };
-    service.customers = customers;
+    (service as any).customers = customers;
     const result = await service.exportMigrationRecords('507f1f77bcf86cd799439011', 'customers', '', 1);
     const { createHash } = require('crypto');
     expect(result.exportedCount).toBe(1);

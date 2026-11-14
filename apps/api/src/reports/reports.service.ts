@@ -981,6 +981,114 @@ export class ReportsService {
     };
   }
 
+  async gstEinvoiceReadiness(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const [tenant, invoices] = await Promise.all([
+      this.tenants.findById(tenantId).select('name gstin stateCode').lean(),
+      this.invoices.find(tenantFilter(tenantId, {
+        status: 'ISSUED', customerGstin: { $type: 'string', $ne: '' },
+        invoiceDate: { $gte: start, $lte: end },
+      })).select('invoiceNumber invoiceDate sellerName sellerGstin sellerStateCode sellerAddress customerName customerGstin placeOfSupplyStateCode items taxableValue totalTax cgstTotal sgstTotal igstTotal grandTotal').sort({ invoiceDate: 1 }).limit(500).lean(),
+    ]);
+    const gstinPattern = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+    const rows = (invoices as any[]).map(invoice => {
+      const issues: string[] = [];
+      const warnings: string[] = [];
+      if (!invoice.sellerGstin || !gstinPattern.test(String(invoice.sellerGstin).toUpperCase())) issues.push('Seller GSTIN is missing or malformed');
+      if (!invoice.customerGstin || !gstinPattern.test(String(invoice.customerGstin).toUpperCase())) issues.push('Recipient GSTIN is missing or malformed');
+      if (!invoice.invoiceNumber || String(invoice.invoiceNumber).length > 16) issues.push('Invoice number must be present and no longer than 16 characters for IRP data preparation');
+      if (!invoice.invoiceDate || Number.isNaN(new Date(invoice.invoiceDate).getTime())) issues.push('Invoice date is missing or invalid');
+      if (!/^\d{2}$/.test(String(invoice.sellerStateCode || ''))) issues.push('Seller state code must contain two digits');
+      if (!/^\d{2}$/.test(String(invoice.placeOfSupplyStateCode || ''))) issues.push('Place-of-supply state code must contain two digits');
+      if (!invoice.customerName?.trim()) issues.push('Recipient legal/trade name is missing');
+      if (!invoice.sellerAddress?.trim()) warnings.push('Seller address is not populated on the invoice snapshot');
+      if (!Array.isArray(invoice.items) || !invoice.items.length) issues.push('Invoice has no line items');
+      for (const [index, item] of (invoice.items || []).entries()) {
+        if (!/^(?:\d{4}|\d{6}|\d{8})$/.test(String(item.hsnCode || ''))) issues.push(`Line ${index + 1}: HSN code must contain 4–8 digits`);
+        if (!String(item.unit || '').trim()) issues.push(`Line ${index + 1}: unit/UQC is missing`);
+        if (!(Number(item.quantity) > 0)) issues.push(`Line ${index + 1}: quantity must be greater than zero`);
+        if (!Number.isFinite(Number(item.taxableValue)) || Number(item.taxableValue) < 0) issues.push(`Line ${index + 1}: taxable value is invalid`);
+        const componentTax = Number(item.cgstAmount || 0) + Number(item.sgstAmount || 0) + Number(item.igstAmount || 0);
+        if (Math.abs(componentTax - Number(item.totalTax || 0)) > 0.02) issues.push(`Line ${index + 1}: GST component totals do not reconcile`);
+      }
+      const invoiceTax = Number(invoice.cgstTotal || 0) + Number(invoice.sgstTotal || 0) + Number(invoice.igstTotal || 0);
+      if (Math.abs(invoiceTax - Number(invoice.totalTax || 0)) > 0.02) issues.push('Invoice GST components do not reconcile to total tax');
+      return { invoiceId: invoice._id, invoiceNumber: invoice.invoiceNumber, invoiceDate: invoice.invoiceDate, recipientGstin: invoice.customerGstin, taxableValue: invoice.taxableValue, totalTax: invoice.totalTax, status: issues.length ? 'NEEDS_CORRECTION' : warnings.length ? 'READY_WITH_WARNINGS' : 'DATA_READY_FOR_GSP_REVIEW', issueCount: issues.length, warningCount: warnings.length, issues, warnings };
+    });
+    return {
+      from: start, to: end, seller: { businessName: tenant?.name ?? null, gstin: tenant?.gstin ?? null, stateCode: tenant?.stateCode ?? null },
+      basis: 'ISSUED_B2B_INVOICE_DATA_QUALITY_CHECKS',
+      summary: { invoicesReviewed: rows.length, dataReady: rows.filter(row => row.status !== 'NEEDS_CORRECTION').length, needsCorrection: rows.filter(row => row.status === 'NEEDS_CORRECTION').length, warningCount: rows.reduce((sum, row) => sum + row.warningCount, 0) },
+      invoices: rows,
+      truncated: rows.length === 500,
+      limitations: ['This is an internal data-quality preflight only. It does not determine statutory e-invoice applicability or turnover thresholds.', 'No IRN, signed QR code, acknowledgement number or e-way bill is generated.', 'A registered GST Suvidha Provider (GSP), credentials, sandbox testing and production approval are required for live IRP submission.'],
+    };
+  }
+
+  async accountingJournalCsvExport(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const journals = await this.journals.find(tenantFilter(tenantId, {
+      status: 'POSTED', postingDate: { $gte: start, $lte: end },
+    })).select('entryNumber postingDate narration sourceType sourceId lines').sort({ postingDate: 1, entryNumber: 1 }).limit(5000).lean();
+    const rows: unknown[][] = [];
+    for (const entry of journals as any[]) {
+      for (const line of entry.lines || []) {
+        rows.push([entry.entryNumber, entry.postingDate, entry.narration, entry.sourceType, entry.sourceId, line.accountCode, line.accountName, line.description, line.debit, line.credit]);
+      }
+    }
+    return {
+      filename: 'solstra-accounting-journal-export.csv',
+      contentType: 'text/csv; charset=utf-8',
+      content: this.csvDocument(['voucher_number', 'voucher_date', 'narration', 'source_type', 'source_reference', 'ledger_code', 'ledger_name', 'line_description', 'debit_inr', 'credit_inr'], rows),
+      voucherCount: journals.length, lineCount: rows.length, truncated: journals.length === 5000,
+      note: 'Generic posted-journal interchange CSV for mapping into Tally or another accounting package. Map ledger codes/names before import and reconcile opening balances; this is not a direct live connector or an official Tally XML import file.',
+    };
+  }
+
+  async answerBusinessQuestion(tenantId: string, question: string) {
+    this.validateTenant(tenantId);
+    const normalized = String(question || '').trim().toLowerCase();
+    if (normalized.length < 3 || normalized.length > 300) throw new BadRequestException('Question must contain 3 to 300 characters');
+    const now = new Date();
+    const localIso = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    let to = localIso(now);
+    let from = localIso(new Date(now.getFullYear(), now.getMonth(), 1));
+    let period = 'THIS_MONTH_TO_DATE';
+    if (/today/.test(normalized)) { from = to; period = 'TODAY'; }
+    else if (/yesterday/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 1); from = localIso(d); to = from; period = 'YESTERDAY'; }
+    else if (/last\s+7\s+days|past\s+week/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 6); from = localIso(d); period = 'LAST_7_DAYS'; }
+    else if (/last\s+30\s+days|past\s+month/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 29); from = localIso(d); period = 'LAST_30_DAYS'; }
+    else if (/last\\s+month/.test(normalized)) { from = localIso(new Date(now.getFullYear(), now.getMonth() - 1, 1)); to = localIso(new Date(now.getFullYear(), now.getMonth(), 0)); period = 'LAST_MONTH'; }
+    const range = { from, to };
+    if (/low\s*stock|reorder|out of stock/.test(normalized)) {
+      const result = await this.inventoryReport(tenantId, range);
+      return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'Inventory items at or below reorder threshold', period, answer: `${result.lowStockCount} products are currently listed at or below their low-stock threshold.`, data: { lowStockCount: result.lowStockCount, products: result.lowStockProducts }, disclaimer: 'Stock levels can change immediately after this query; confirm current warehouse stock before purchasing.' };
+    }
+    if (/gst|input tax|output tax|tax reconciliation/.test(normalized)) {
+      const result = await this.gstReconciliation(tenantId, range);
+      return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'GST source-document to ledger reconciliation', period, answer: `Input GST ${result.inputTax.reconciled ? 'reconciles' : 'has a difference of ₹' + result.inputTax.difference.toFixed(2)}; output GST ${result.outputTax.reconciled ? 'reconciles' : 'has a difference of ₹' + result.outputTax.difference.toFixed(2)}.`, data: result, disclaimer: 'Internal ledger reconciliation only; not a determination of ITC eligibility or statutory filing liability.' };
+    }
+    if (/cash\s*flow|cash movement|bank movement/.test(normalized)) {
+      const result = await this.cashFlowStatement(tenantId, range);
+      return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'Direct cash and bank movement', period, answer: `Net cash and bank movement was ₹${result.netCashMovement.toFixed(2)} and closing cash/bank was ₹${result.closingCashAndBank.toFixed(2)}.`, data: result, disclaimer: 'Based on posted cash/bank journals only.' };
+    }
+    if (/profit|margin|earning/.test(normalized)) {
+      const result = await this.profitAndLoss(tenantId, range);
+      return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'Profit and loss for selected period', period, answer: `Income was ₹${result.totalIncome.toFixed(2)}, expenses were ₹${result.totalExpenses.toFixed(2)} and net profit was ₹${result.netProfit.toFixed(2)}.`, data: result, disclaimer: 'Based on posted accounting journals; not a forecast or tax opinion.' };
+    }
+    if (/top\s+products|best\s+selling|most\s+sold/.test(normalized)) {
+      const result = await this.salesReport(tenantId, range);
+      return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'Top-selling products by sales value', period, answer: result.topProducts.length ? `Top product by revenue is ${result.topProducts[0].name} at ₹${result.topProducts[0].revenueRupees.toFixed(2)}.` : 'No issued product sales were found for this period.', data: result.topProducts, disclaimer: 'Ranked by recorded invoice line revenue, not by units unless the report says so.' };
+    }
+    if (/sales|revenue|turnover/.test(normalized)) {
+      const result = await this.salesReport(tenantId, range);
+      return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'Sales performance', period, answer: `There were ${result.invoiceCount} issued invoices with gross sales of ₹${result.grossSalesRupees.toFixed(2)} and net sales after credit notes of ₹${result.netSalesRupees.toFixed(2)}.`, data: result, disclaimer: 'Based on issued sales invoices and credit notes; payments and receivables are separate measures.' };
+    }
+    return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'Question not matched to a supported report', period, answer: 'I can currently answer questions about sales, profit and margin, top-selling products, low stock, GST reconciliation and cash flow. Try asking with a period such as today, last 7 days or this month.', supportedTopics: ['sales', 'profit and margin', 'top-selling products', 'low stock', 'GST reconciliation', 'cash flow'], disclaimer: 'This assistant uses an explicit allowlist of tenant-scoped reports. It does not execute arbitrary database queries or take business actions.' };
+  }
+
   async advancedAnalytics(tenantId: string, dto: ReportDateRangeDto) {
     this.validateTenant(tenantId);
     const { start, end } = this.resolveRange(dto);

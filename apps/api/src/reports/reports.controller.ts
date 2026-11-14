@@ -1,6 +1,8 @@
 ﻿import {
+  Body,
   Controller,
   Get,
+  Post,
   Param,
   Query,
   Req,
@@ -10,6 +12,7 @@ import { Request, Response } from 'express';
 
 import { ReportsService } from './reports.service';
 import { ReportDateRangeDto } from './dto/report-date-range.dto';
+import { BusinessQuestionDto } from './dto/business-question.dto';
 import { Permissions } from '../common/decorators/permissions.decorator';
 
 type AuthenticatedRequest = Request & {
@@ -80,6 +83,30 @@ export class ReportsController {
   @Get('reports/balance-sheet')
   balanceSheet(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
     return this.reportsService.balanceSheet(req.user.tenantId, query);
+  }
+
+  @Permissions('reports.view')
+  @Get('reports/gst/einvoice-readiness')
+  gstEinvoiceReadiness(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
+    return this.reportsService.gstEinvoiceReadiness(req.user.tenantId, query);
+  }
+
+  @Permissions('reports.view')
+  @Get('reports/accounting/journal-export')
+  async accountingJournalExport(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto, @Res() response: Response) {
+    const file = await this.reportsService.accountingJournalCsvExport(req.user.tenantId, query);
+    return response.status(200).set({
+      'Content-Type': file.contentType,
+      'Content-Disposition': `attachment; filename="${file.filename}"`,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    }).send(file.content);
+  }
+
+  @Permissions('reports.view')
+  @Post('reports/assistant/query')
+  answerBusinessQuestion(@Req() req: AuthenticatedRequest, @Body() dto: BusinessQuestionDto) {
+    return this.reportsService.answerBusinessQuestion(req.user.tenantId, dto.question);
   }
 
   @Permissions('reports.view')

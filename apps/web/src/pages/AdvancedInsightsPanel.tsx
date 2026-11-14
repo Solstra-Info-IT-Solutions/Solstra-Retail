@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
 import { api } from '../api/client';
 import './AdvancedInsightsPanel.css';
 import { BrainCircuit, Boxes, AlertTriangle, TrendingUp } from 'lucide-react';
@@ -18,6 +19,9 @@ export default function AdvancedInsightsPanel({ from, to }: { from: string; to: 
   const [assistant, setAssistant] = useState<Assistant | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [question, setQuestion] = useState('');
+  const [questionLoading, setQuestionLoading] = useState(false);
+  const [questionAnswer, setQuestionAnswer] = useState<{ interpretation: string; answer: string; disclaimer: string; period: string } | null>(null);
   useEffect(() => {
     let active = true;
     setLoading(true); setError('');
@@ -29,6 +33,20 @@ export default function AdvancedInsightsPanel({ from, to }: { from: string; to: 
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [from, to]);
+  async function askBusinessAssistant(event: FormEvent) {
+    event.preventDefault();
+    if (questionLoading || question.trim().length < 3) return;
+    setQuestionLoading(true);
+    setQuestionAnswer(null);
+    setError('');
+    try {
+      const response = await api.post('/reports/assistant/query', { question: question.trim() });
+      setQuestionAnswer(response.data);
+    } catch (requestError: unknown) {
+      const message = (requestError as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      setError(Array.isArray(message) ? message.join(', ') : message || 'The assistant could not answer this question.');
+    } finally { setQuestionLoading(false); }
+  }
   const maxSales = Math.max(1, ...(analytics?.salesTrend || []).map(row => row.grossSales));
   return <section className="reports-advanced">
     <header><div><span>ADVANCED DECISION SUPPORT</span><h2>Business intelligence & assistant</h2><p>Margin, inventory concentration, slow-moving stock and explainable operational signals.</p></div><BrainCircuit size={22}/></header>
@@ -46,6 +64,12 @@ export default function AdvancedInsightsPanel({ from, to }: { from: string; to: 
       <div className="reports-deadstock"><h3><AlertTriangle size={16}/> Slow-moving inventory candidates</h3>{analytics.deadStock.products.length ? analytics.deadStock.products.slice(0,6).map(row=><span key={row.productId}>{row.name} · {money(row.inventoryValue)}</span>) : <p>No stock without a recorded movement in the 90-day screening window.</p>}</div>
     </>}
     <div className="reports-assistant"><h3><BrainCircuit size={17}/> Business assistant recommendations</h3>{loading ? <p className="reports-empty">Preparing recommendations…</p> : assistant?.insights.map((item,index)=><article key={item.title+index} className={'reports-insight '+item.severity.toLowerCase()}><div><b>{item.title}</b><span>{item.severity}</span></div><p>{item.explanation}</p><small>Suggested action: {item.suggestedAction}</small></article>)}
-    {assistant?.disclaimer && <p className="reports-note">{assistant.disclaimer}</p>}</div>
+    {assistant?.disclaimer && <p className="reports-note">{assistant.disclaimer}</p>}
+    <form onSubmit={askBusinessAssistant} style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) auto',gap:10,marginTop:18}}>
+      <input aria-label="Ask about your business" value={question} onChange={event=>setQuestion(event.target.value)} minLength={3} maxLength={300} placeholder="Ask: What were my sales in the last 7 days?" style={{minWidth:0,padding:'11px 13px',border:'1px solid var(--border,#ddd)',borderRadius:9,background:'var(--surface,#fff)',color:'inherit'}}/>
+      <button type="submit" disabled={questionLoading||question.trim().length<3} style={{border:0,borderRadius:9,padding:'10px 16px',background:'#171717',color:'#fff',fontWeight:700,cursor:'pointer'}}>{questionLoading?'Thinking…':'Ask'}</button>
+    </form>
+    {questionAnswer&&<article className="reports-insight info" style={{marginTop:12}}><div><b>{questionAnswer.interpretation}</b><span>{questionAnswer.period.replace(/_/g,' ')}</span></div><p>{questionAnswer.answer}</p><small>{questionAnswer.disclaimer}</small></article>}
+    </div>
   </section>;
 }

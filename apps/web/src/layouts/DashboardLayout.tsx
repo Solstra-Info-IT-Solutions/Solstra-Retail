@@ -2,7 +2,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingCart, Package, Users, Warehouse,
-  Truck, ClipboardList, BarChart3, Settings, ReceiptText,
+  Truck, ClipboardList, BarChart3, Settings, ReceiptText, Building2,
   Menu, X, LogOut, Search, Languages
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
@@ -17,6 +17,7 @@ const navigation = [
   { label: 'Customers', path: '/customers', icon: Users },
   { label: 'Suppliers', path: '/suppliers', icon: Truck },
   { label: 'Purchases', path: '/purchases', icon: ClipboardList },
+  { label: 'Branches & Warehouses', path: '/branches', icon: Building2 },
   { label: 'Reports', path: '/reports', icon: BarChart3 },
   { label: 'Settings', path: '/settings', icon: Settings },
 ];

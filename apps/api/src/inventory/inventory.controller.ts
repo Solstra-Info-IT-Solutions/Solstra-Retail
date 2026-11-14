@@ -19,6 +19,8 @@ import { WarehouseOpeningStockDto } from './dto/warehouse-opening-stock.dto';
 import { CreateWarehouseTransferDto } from './dto/create-warehouse-transfer.dto';
 import { ReplenishmentService } from './replenishment.service';
 import { UpsertReplenishmentPolicyDto, ReplenishmentQueryDto } from './dto/replenishment.dto';
+import { AdvancedInventoryService } from './advanced-inventory.service';
+import { ReceiveBatchDto, RegisterSerialsDto, CreateStocktakeDto } from './dto/advanced-inventory.dto';
 
 type AuthenticatedRequest = Request & {
   user: {
@@ -33,7 +35,7 @@ export class InventoryController {
   constructor(
     private readonly inventoryService: InventoryService,
     private readonly warehouseInventory: WarehouseInventoryService,
-    private readonly replenishment: ReplenishmentService,
+    private readonly replenishment: ReplenishmentService,\n    private readonly advancedInventory: AdvancedInventoryService,
   ) {}
 
   @Roles('owner', 'admin')

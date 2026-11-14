@@ -7,7 +7,7 @@ describe('PlatformService security boundaries', () => {
   const userId = '507f1f77bcf86cd799439012';
   const createService = (allowedUsers = '') => new PlatformService(
     {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
-    {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
     {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
     { get: jest.fn().mockReturnValue(allowedUsers) } as any,
   );
@@ -15,6 +15,14 @@ describe('PlatformService security boundaries', () => {
   it('rejects invalid tenant context before querying automation rules', async () => {
     const service = createService();
     await expect(service.listAutomationRules('not-an-object-id')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects invalid offline device identity before database access', async () => {
+    const service = createService();
+    await expect(service.registerOfflineDevice('bad-tenant', userId, { deviceId: 'bad', label: 'Counter PC' } as any))
+      .rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.revokeOfflineDevice('bad-tenant', 'device-id'))
+      .rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects invalid notification identity before querying notifications', async () => {

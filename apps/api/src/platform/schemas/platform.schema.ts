@@ -57,7 +57,7 @@ export class WebhookDelivery {
   @Prop({ type: String, required: true, maxlength: 80 }) eventType!: string;
   @Prop({ type: String, required: true, maxlength: 160 }) eventKey!: string;
   @Prop({ type: Object, required: true }) payload!: Record<string, any>;
-  @Prop({ type: String, required: true, enum: ['PENDING', 'DELIVERED', 'FAILED', 'DEAD'] , default: 'PENDING', index: true }) status!: string;
+  @Prop({ type: String, required: true, enum: ['PENDING', 'DELIVERING', 'DELIVERED', 'FAILED', 'DEAD'] , default: 'PENDING', index: true }) status!: string;
   @Prop({ type: Number, default: 0 }) attempts!: number;
   @Prop({ type: Date, default: Date.now, index: true }) nextAttemptAt!: Date;
   @Prop({ type: String, default: '', maxlength: 500 }) lastError!: string;

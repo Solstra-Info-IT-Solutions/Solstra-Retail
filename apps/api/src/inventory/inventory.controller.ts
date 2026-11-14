@@ -29,6 +29,7 @@ type AuthenticatedRequest = Request & {
 export class InventoryController {
   constructor(
     private readonly inventoryService: InventoryService,
+    private readonly warehouseInventory: WarehouseInventoryService,
   ) {}
 
   @Roles('owner', 'admin')

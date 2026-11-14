@@ -118,7 +118,7 @@ describe('PlatformService security boundaries', () => {
 
   it('never exposes provider credentials in the readiness response', async () => {
     const service: any = createService();
-    service.config = { get: jest.fn((key: string) => key.endsWith('_CLIENT_ID') || key.endsWith('_CLIENT_SECRET') ? 'configured-secret' : '') };
+    service.config = { get: jest.fn((key: string) => key.startsWith('ZOHO_BOOKS_') ? 'configured-secret' : '') };
     service.communicationProviders = { countDocuments: jest.fn().mockResolvedValue(0) };
     const result = await service.integrationProviderReadiness(tenantId);
     expect(JSON.stringify(result)).not.toContain('configured-secret');

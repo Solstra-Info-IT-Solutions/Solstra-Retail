@@ -98,8 +98,9 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     this.identity(tenantId, userId);
     if (!EVENT_TYPES.includes(dto.eventType)) throw new BadRequestException('Unsupported automation event');
     if (dto.actionType === 'WEBHOOK') {
-      if (!Types.ObjectId.isValid(String(dto.config?.integrationId || ''))) throw new BadRequestException('Select a valid webhook integration for this action');
-      const integration = await this.integrations.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.config.integrationId), enabled: true })).lean();
+      const integrationId = String(dto.config?.integrationId || '');
+      if (!Types.ObjectId.isValid(integrationId)) throw new BadRequestException('Select a valid webhook integration for this action');
+      const integration: any = await this.integrations.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(integrationId), enabled: true })).lean();
       if (!integration || !integration.events.includes(dto.eventType)) throw new BadRequestException('Webhook must be enabled and subscribed to this automation event');
     }
     if (dto.actionType === 'NOTIFY' && !String(dto.config?.title || '').trim()) throw new BadRequestException('Notification title is required');
@@ -299,7 +300,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
 
   private async queueWebhookEvent(tenantId: string, integrationId: string, eventType: string, eventKey: string, payload: Record<string, any>) {
     if (!Types.ObjectId.isValid(integrationId)) throw new BadRequestException('Invalid webhook integration ID');
-    const integration = await this.integrations.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(integrationId), enabled: true })).lean();
+    const integration: any = await this.integrations.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(integrationId), enabled: true })).lean();
     if (!integration) throw new NotFoundException('Enabled webhook integration not found');
     if (!integration.events.includes(eventType)) throw new ConflictException('Webhook is not subscribed to this event');
     try {
@@ -328,7 +329,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       const locked = await this.deliveries.findOneAndUpdate(tenantFilter(tenantId, { _id: delivery._id, status: 'PENDING' }), { $set: { status: 'DELIVERING' } }, { new: true });
       if (!locked) continue;
       try {
-        const integration = await this.integrations.findOne(tenantFilter(tenantId, { _id: delivery.integrationId, enabled: true })).select('+encryptedSecret +secretIv +secretTag').lean();
+        const integration: any = await this.integrations.findOne(tenantFilter(tenantId, { _id: delivery.integrationId, enabled: true })).select('+encryptedSecret +secretIv +secretTag').lean();
         if (!integration) throw new Error('Integration disabled or removed');
         await this.validateWebhookUrl(integration.endpointUrl);
         const secret = this.decryptSecret(integration, key);
@@ -359,7 +360,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     this.identity(tenantId, userId);
     const results: any[] = [];
     for (const operation of dto.operations) {
-      const existing = await this.syncRecords.findOne(tenantFilter(tenantId, { idempotencyKey: operation.idempotencyKey })).lean();
+      const existing: any = await this.syncRecords.findOne(tenantFilter(tenantId, { idempotencyKey: operation.idempotencyKey })).lean();
       if (existing?.status === 'SUCCEEDED') { results.push({ idempotencyKey: operation.idempotencyKey, status: 'SUCCEEDED', result: existing.result, replayed: true }); continue; }
       if (existing?.status === 'PROCESSING' && new Date(existing.updatedAt || existing.createdAt).getTime() > Date.now() - 5 * 60 * 1000) { results.push({ idempotencyKey: operation.idempotencyKey, status: 'PROCESSING', replayed: true }); continue; }
       if (existing?.status === 'PROCESSING') {
@@ -480,7 +481,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
   async downloadBackupArtifact(tenantId: string, id: string) {
     this.identity(tenantId);
     if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid backup ID');
-    const artifact = await this.backupArtifacts.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(id), expiresAt: { $gt: new Date() } })).lean();
+    const artifact: any = await this.backupArtifacts.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(id), expiresAt: { $gt: new Date() } })).lean();
     if (!artifact) throw new NotFoundException('Backup artifact not found or expired');
     const bucket = this.gridFsBucket();
     const chunks: Buffer[] = [];

@@ -98,6 +98,15 @@ describe('ReportsService validation', () => {
     expect(invoices.findOne).toBeUndefined();
   });
 
+  it('rejects malformed and not-yet-closed GST return periods before reading source records', async () => {
+    const { service, invoices } = createService();
+    await expect(service.submitGstCompliance('507f1f77bcf86cd799439011', 'GSTR1', '2026-13'))
+      .rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.submitGstCompliance('507f1f77bcf86cd799439011', 'GSTR3B', '2999-01'))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(invoices.findOne).toBeUndefined();
+  });
+
   it('rejects invalid tenant context in dashboard summary', async () => {
     const { service } = createService();
 

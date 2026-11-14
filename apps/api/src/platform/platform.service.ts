@@ -365,7 +365,12 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     this.identity(tenantId, userId);
     const results: any[] = [];
     for (const operation of dto.operations) {
+      const payloadSha256 = createHash('sha256').update(JSON.stringify(operation.payload)).digest('hex');
       const existing: any = await this.syncRecords.findOne(tenantFilter(tenantId, { idempotencyKey: operation.idempotencyKey })).lean();
+      if (existing?.payloadSha256 && existing.payloadSha256 !== payloadSha256) {
+        results.push({ idempotencyKey: operation.idempotencyKey, status: 'CONFLICT', error: 'This idempotency key is already bound to a different invoice payload. Keep the original payload or create a new invoice key.' });
+        continue;
+      }
       if (existing?.status === 'SUCCEEDED') { results.push({ idempotencyKey: operation.idempotencyKey, status: 'SUCCEEDED', result: existing.result, replayed: true }); continue; }
       if (existing?.status === 'PROCESSING' && new Date(existing.updatedAt || existing.createdAt).getTime() > Date.now() - 5 * 60 * 1000) { results.push({ idempotencyKey: operation.idempotencyKey, status: 'PROCESSING', replayed: true }); continue; }
       if (existing?.status === 'PROCESSING') {
@@ -374,13 +379,13 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       }
       if (!existing) {
         try {
-          await this.syncRecords.create({ tenantId: new Types.ObjectId(tenantId), idempotencyKey: operation.idempotencyKey, status: 'PROCESSING', createdBy: new Types.ObjectId(userId) });
+          await this.syncRecords.create({ tenantId: new Types.ObjectId(tenantId), idempotencyKey: operation.idempotencyKey, payloadSha256, status: 'PROCESSING', createdBy: new Types.ObjectId(userId) });
         } catch (error: any) {
           if (error?.code !== 11000) throw error;
           results.push({ idempotencyKey: operation.idempotencyKey, status: 'PROCESSING', replayed: true }); continue;
         }
       } else {
-        await this.syncRecords.updateOne(tenantFilter(tenantId, { _id: existing._id, status: 'FAILED' }), { $set: { status: 'PROCESSING', errorMessage: '' } });
+        await this.syncRecords.updateOne(tenantFilter(tenantId, { _id: existing._id, status: 'FAILED' }), { $set: { status: 'PROCESSING', payloadSha256, errorMessage: '' } });
       }
       try {
         const payload = plainToInstance(CreateSaleDto, operation.payload);

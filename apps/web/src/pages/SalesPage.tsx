@@ -1,4 +1,5 @@
 ﻿import { useCallback, useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
 import { Search, RefreshCw, Eye, X, Printer, ChevronLeft, ChevronRight, ReceiptText } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
@@ -145,7 +146,7 @@ export default function SalesPage() {
     }
   }
 
-  async function createReturn(event: React.FormEvent<HTMLFormElement>) {
+  async function createReturn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!selected) return;
     const items = selected.items.map((item, lineIndex) => ({ lineIndex, quantity: Number(returnQty[lineIndex] || 0), restock: returnRestock[lineIndex] === true })).filter(item => item.quantity > 0);
     if (!items.length || returnReason.trim().length < 3) { setReturnError('Select at least one returned quantity and enter a reason.'); return; }

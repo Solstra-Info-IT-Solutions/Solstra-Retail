@@ -3,31 +3,39 @@ import { NavLink, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingCart, Package, Users, Warehouse,
   Truck, ClipboardList, BarChart3, Settings, ReceiptText, Building2,
-  Menu, X, LogOut, Search, Languages, ShieldCheck, History
+  Menu, X, LogOut, Search, Languages, ShieldCheck, History, Receipt, type LucideIcon
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import './DashboardLayout.css';
 
-const navigation = [
-  { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-  { label: 'POS Billing', path: '/pos', icon: ShoppingCart },
-  { label: 'Sales Register', path: '/sales', icon: ReceiptText },
-  { label: 'Products', path: '/products', icon: Package },
-  { label: 'Inventory', path: '/inventory', icon: Warehouse },
-  { label: 'Customers', path: '/customers', icon: Users },
-  { label: 'Suppliers', path: '/suppliers', icon: Truck },
-  { label: 'Purchases', path: '/purchases', icon: ClipboardList },
-  { label: 'Branches & Warehouses', path: '/branches', icon: Building2 },
+const navigation: Array<{ label: string; path: string; icon: LucideIcon; permission?: string; permissionsAny?: string[]; adminOnly?: boolean }> = [
+  { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, permission: 'dashboard.view' },
+  { label: 'POS Billing', path: '/pos', icon: ShoppingCart, permission: 'sales.create' },
+  { label: 'Sales Register', path: '/sales', icon: ReceiptText, permission: 'sales.view' },
+  { label: 'Products', path: '/products', icon: Package, permission: 'products.view' },
+  { label: 'Inventory', path: '/inventory', icon: Warehouse, permission: 'inventory.view' },
+  { label: 'Customers', path: '/customers', icon: Users, permission: 'customers.view' },
+  { label: 'Suppliers', path: '/suppliers', icon: Truck, permission: 'suppliers.view' },
+  { label: 'Purchases', path: '/purchases', icon: ClipboardList, permission: 'purchases.view' },
+  { label: 'Expenses', path: '/expenses', icon: Receipt, permissionsAny: ['expenses.view', 'expenses.create'] },
+  { label: 'Reports', path: '/reports', icon: BarChart3, permission: 'reports.view' },
+  { label: 'Branches & Warehouses', path: '/branches', icon: Building2, adminOnly: true },
   { label: 'Staff & Permissions', path: '/staff', icon: ShieldCheck, adminOnly: true },
   { label: 'Audit Trail', path: '/audit', icon: History, adminOnly: true },
-  { label: 'Reports', path: '/reports', icon: BarChart3 },
-  { label: 'Settings', path: '/settings', icon: Settings },
+  { label: 'Settings', path: '/settings', icon: Settings, adminOnly: true },
 ];
 
 export default function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { user, logout } = useAuth();
-  const visibleNavigation = navigation.filter((item) => !('adminOnly' in item && item.adminOnly) || user?.role === 'owner' || user?.role === 'admin');
+  const isAdmin = user?.role === 'owner' || user?.role === 'admin';
+  const visibleNavigation = navigation.filter((item) => {
+    if (item.adminOnly) return isAdmin;
+    if (isAdmin) return true;
+    if (item.permission && !user?.permissions?.includes(item.permission)) return false;
+    if (item.permissionsAny && !item.permissionsAny.some((permission) => user?.permissions?.includes(permission))) return false;
+    return true;
+  });
 
   return (
     <div className="dashboard-shell">

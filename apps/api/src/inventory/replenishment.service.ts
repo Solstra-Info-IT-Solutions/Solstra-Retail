@@ -105,8 +105,8 @@ export class ReplenishmentService {
         { $group: { _id: { productId: '$items.productId', warehouseId: '$warehouseId' }, unitsSold: { $sum: '$items.quantity' } } },
       ]),
     ]);
-    const stockByKey = new Map(stocks.map(s => [String(s.warehouseId) + ':' + String(s.productId), Number(s.quantity) || 0]));
-    const salesByProductWarehouse = new Map(sales.map(s => [String(s._id.warehouseId) + ':' + String(s._id.productId), Number(s.unitsSold) || 0]));
+    const stockByKey = new Map<string, number>(stocks.map(s => [String(s.warehouseId) + ':' + String(s.productId), Number(s.quantity) || 0] as [string, number]));
+    const salesByProductWarehouse = new Map<string, number>(sales.map(s => [String(s._id.warehouseId) + ':' + String(s._id.productId), Number(s.unitsSold) || 0] as [string, number]));
     const items = policies.map(policy => {
       const product = policy.productId as any;
       const warehouse = policy.warehouseId as any;

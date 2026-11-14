@@ -22,7 +22,6 @@ const navigation: Array<{ label: string; path: string; icon: LucideIcon; permiss
   { label: 'Branches & Warehouses', path: '/branches', icon: Building2, adminOnly: true },
   { label: 'Staff & Permissions', path: '/staff', icon: ShieldCheck, adminOnly: true },
   { label: 'Audit Trail', path: '/audit', icon: History, adminOnly: true },
-  { label: 'Settings', path: '/settings', icon: Settings, adminOnly: true },
 ];
 
 export default function DashboardLayout() {

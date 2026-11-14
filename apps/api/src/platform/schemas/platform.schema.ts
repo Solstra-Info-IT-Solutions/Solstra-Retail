@@ -183,6 +183,8 @@ export class SubscriptionInvoice {
   @Prop({ type: String, required: true, enum: ['DUE', 'PAID', 'VOID'], default: 'DUE', index: true }) status!: string;
   @Prop({ type: Date, default: null }) paidAt?: Date | null;
   @Prop({ type: String, default: '', maxlength: 120 }) paymentReference!: string;
+  @Prop({ type: String, default: '', maxlength: 120, index: true }) paymentGateway!: string;
+  @Prop({ type: String, default: '', maxlength: 120, index: true }) gatewayOrderId!: string;
   @Prop({ type: Types.ObjectId, ref: 'User', required: true }) requestedBy!: Types.ObjectId;
   @Prop({ type: Types.ObjectId, ref: 'User', default: null }) recordedBy?: Types.ObjectId | null;
 }

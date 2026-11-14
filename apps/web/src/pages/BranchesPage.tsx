@@ -37,7 +37,11 @@ export default function BranchesPage() {
         api.get<{ items: Transfer[] }>('/inventory/transfers', { params: { page: 1, limit: 20 } }),
         api.get<{ items: Product[] }>('/products', { params: { page: 1, limit: 100 } }),
       ]);
-      setBranches(b.data.items || []); setTransfers(t.data.items || []); setProducts(p.data.items || []);
+      const branchItems = await Promise.all((b.data.items || []).map(async (branch) => {
+        const detail = await api.get<Branch>('/branches/' + branch._id);
+        return detail.data;
+      }));
+      setBranches(branchItems); setTransfers(t.data.items || []); setProducts(p.data.items || []);
       if (!selected && b.data.items?.length) setSelected(b.data.items[0]._id);
     } catch { setError('Branch and warehouse data could not be loaded. Refresh and try again.'); }
     finally { setLoading(false); }

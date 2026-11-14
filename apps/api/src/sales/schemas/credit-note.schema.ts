@@ -47,6 +47,9 @@ export class CreditNoteLine {
 
   @Prop({ required: true, default: false })
   restocked!: boolean;
+
+  @Prop({ type: [String], default: [] })
+  serialNumbers!: string[];
 }
 
 export const CreditNoteLineSchema =

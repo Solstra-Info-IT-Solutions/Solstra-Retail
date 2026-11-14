@@ -27,6 +27,7 @@ type MovementList = {
 type MovementForm = { productId: string; type: 'IN' | 'OUT' | 'ADJUSTMENT'; quantity: string; reason: string };
 const blankForm: MovementForm = { productId: '', type: 'IN', quantity: '1', reason: '' };
 const number = (value: number) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(value);
+const money = (value: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(value) || 0);
 const productName = (value: MovementProduct) => typeof value === 'string' ? 'Product' : value?.name || 'Product';
 const userName = (value: MovementUser) => typeof value === 'string' ? 'User' : value?.name || value?.email || 'User';
 const dateTime = (value: string) => new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));

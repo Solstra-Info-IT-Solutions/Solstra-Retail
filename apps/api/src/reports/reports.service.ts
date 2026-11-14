@@ -295,13 +295,28 @@ export class ReportsService {
       url.hostname.endsWith('.local') || url.hostname.endsWith('.internal')) {
       throw new BadRequestException('GST GSP adapter must be a public HTTPS endpoint on port 443');
     }
+    const payload = {
+      contract: 'SOLSTRA_GST_EINVOICE_V1',
+      invoice: {
+        invoiceNumber: invoice.invoiceNumber, invoiceDate: invoice.invoiceDate,
+        seller: { name: invoice.sellerName, gstin: invoice.sellerGstin, stateCode: invoice.sellerStateCode, address: invoice.sellerAddress },
+        recipient: { name: invoice.customerName, gstin: invoice.customerGstin, stateCode: invoice.placeOfSupplyStateCode },
+        items: invoice.items, taxableValue: invoice.taxableValue, totalTax: invoice.totalTax,
+        cgstTotal: invoice.cgstTotal, sgstTotal: invoice.sgstTotal, igstTotal: invoice.igstTotal, grandTotal: invoice.grandTotal,
+      },
+    };
+    const payloadSha256 = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
     const existing: any = await this.gstSubmissions.findOne(tenantFilter(tenantId, { invoiceId: invoice._id })).lean();
+    if (existing?.payloadSha256 && existing.payloadSha256 !== payloadSha256) {
+      throw new BadRequestException('Invoice data changed after e-invoice submission was initiated. Use the GSP amendment/cancellation workflow; do not resubmit a changed payload.');
+    }
+    if (existing?.status === 'CANCELLED') throw new BadRequestException('This e-invoice has been cancelled by the GSP and cannot be resubmitted with the same invoice identity');
     if (existing?.status === 'SUBMITTED') {
       return { status: 'SUBMITTED', irn: existing.irn, acknowledgementNumber: existing.acknowledgementNumber, submittedAt: existing.submittedAt, duplicate: true };
     }
     const submission: any = await this.gstSubmissions.findOneAndUpdate(
       tenantFilter(tenantId, { invoiceId: invoice._id }),
-      { $set: { invoiceNumber: invoice.invoiceNumber, status: 'PENDING', lastError: '' }, $inc: { attempts: 1 } },
+      { $set: { invoiceNumber: invoice.invoiceNumber, payloadSha256, status: 'PENDING', lastError: '' }, $inc: { attempts: 1 } },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     ).lean();
     const controller = new AbortController();
@@ -310,16 +325,7 @@ export class ReportsService {
       const response = await fetch(endpoint, {
         method: 'POST', redirect: 'error', signal: controller.signal,
         headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', 'idempotency-key': String(submission._id) },
-        body: JSON.stringify({
-          contract: 'SOLSTRA_GST_EINVOICE_V1',
-          invoice: {
-            invoiceNumber: invoice.invoiceNumber, invoiceDate: invoice.invoiceDate,
-            seller: { name: invoice.sellerName, gstin: invoice.sellerGstin, stateCode: invoice.sellerStateCode, address: invoice.sellerAddress },
-            recipient: { name: invoice.customerName, gstin: invoice.customerGstin, stateCode: invoice.placeOfSupplyStateCode },
-            items: invoice.items, taxableValue: invoice.taxableValue, totalTax: invoice.totalTax,
-            cgstTotal: invoice.cgstTotal, sgstTotal: invoice.sgstTotal, igstTotal: invoice.igstTotal, grandTotal: invoice.grandTotal,
-          },
-        }),
+        body: JSON.stringify(payload),
       });
       const result: any = await response.json().catch(() => ({}));
       if (!response.ok || !result.irn || !result.ackNo) {

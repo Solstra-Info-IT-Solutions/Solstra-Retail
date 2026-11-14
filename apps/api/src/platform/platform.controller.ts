@@ -281,6 +281,18 @@ export class PlatformController {
   }
 
   @Roles('owner', 'admin')
+  @Get('operations/alerts')
+  listOperationalAlerts(@Req() req: AuthenticatedRequest) {
+    return this.platform.listOperationalAlerts(req.user.tenantId);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('operations/alerts/:code/acknowledge')
+  acknowledgeOperationalAlert(@Req() req: AuthenticatedRequest, @Param('code') code: string, @Body() body: { note?: string }) {
+    return this.platform.acknowledgeOperationalAlert(req.user.tenantId, req.user.userId, code, body?.note || '');
+  }
+
+  @Roles('owner', 'admin')
   @Post('operations/alerts/dispatch')
   dispatchOperationalAlerts(@Req() req: AuthenticatedRequest) {
     return this.platform.dispatchOperationalAlerts(req.user.tenantId);

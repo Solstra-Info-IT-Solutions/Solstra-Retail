@@ -20,6 +20,9 @@ import { BranchesModule } from './branches/branches.module';
 import { AuditModule } from './audit/audit.module';
 import { AuditService } from './audit/audit.service';
 import { AuditInterceptor } from './audit/audit.interceptor';
+import { PlatformModule } from './platform/platform.module';
+import { PlatformService } from './platform/platform.service';
+import { PlatformEventInterceptor } from './platform/platform-event.interceptor';
 import { TrialGuard } from './common/guards/trial.guard';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -41,7 +44,7 @@ import { HealthController } from './health.controller';
     }),
     AuthModule, TenantsModule, ProductsModule, InventoryModule, SalesModule,
     CustomersModule, CategoriesModule, PurchasesModule, SuppliersModule,
-    ReportsModule, AccountingModule, ExpensesModule, BranchesModule, AuditModule,
+    ReportsModule, AccountingModule, ExpensesModule, BranchesModule, AuditModule, PlatformModule,
   ],
   controllers: [HealthController],
   providers: [
@@ -50,6 +53,7 @@ import { HealthController } from './health.controller';
     { provide: APP_GUARD, useClass: PermissionsGuard },
     { provide: APP_GUARD, useClass: TrialGuard },
     { provide: APP_INTERCEPTOR, useFactory: (audit: AuditService) => new AuditInterceptor(audit), inject: [AuditService] },
+    { provide: APP_INTERCEPTOR, useFactory: (platform: PlatformService) => new PlatformEventInterceptor(platform), inject: [PlatformService] },
   ],
 })
 export class AppModule {}

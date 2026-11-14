@@ -8,13 +8,15 @@ type Rule = { _id: string; name: string; eventType: string; actionType: string; 
 type Notice = { _id: string; title: string; body: string; severity: string; category: string; readAt?: string | null; createdAt: string };
 type Hook = { _id: string; name: string; endpointUrl: string; events: string[]; enabled: boolean; lastDeliveredAt?: string };
 type Policy = { enabled: boolean; frequency: string; retentionDays: number; nextRunAt?: string | null; lastRunAt?: string | null; lastStatus?: string };
+type Backup = { _id:string; fileName:string; checksumSha256:string; documentCount:number; compressedBytes:number; expiresAt:string; createdAt:string };
+type SaaSTenant = { _id:string; name:string; slug:string; status:string; subscriptionStatus:string; subscriptionPlan:string; maxUsers:number; maxProducts:number; maxBranches:number };
 type Valuation = { summary: { products: number; valuationPending: number; overAllocated: number; withinAggregateTotals: number }; pending: Array<{productId:string;name:string;stockQty:number}>; discrepancies: Array<{productId:string;name:string;quantityDelta:number;valueDelta:number}> };
 const events = ['MANUAL','SALE_CREATED','LOW_STOCK','EXPENSE_PENDING_APPROVAL'];
 const eventLabel = (value:string) => value.replace(/_/g,' ').toLowerCase().replace(/^./,v=>v.toUpperCase());
 export default function PlatformOperationsPage() {
   const [rules,setRules]=useState<Rule[]>([]),[notices,setNotices]=useState<Notice[]>([]),[hooks,setHooks]=useState<Hook[]>([]);
   const [policy,setPolicy]=useState<Policy>({enabled:false,frequency:'DAILY',retentionDays:30});
-  const [valuation,setValuation]=useState<Valuation|null>(null),[pendingOffline,setPendingOffline]=useState(0);
+  const [valuation,setValuation]=useState<Valuation|null>(null),[pendingOffline,setPendingOffline]=useState(0),[backups,setBackups]=useState<Backup[]>([]),[saasTenants,setSaasTenants]=useState<SaaSTenant[]>([]),[saasAudit,setSaasAudit]=useState<any[]>([]),[saasUsage,setSaasUsage]=useState<any|null>(null);
   const [loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
   const [ruleForm,setRuleForm]=useState({name:'',eventType:'SALE_CREATED',actionType:'NOTIFY',title:'New sale recorded',body:'A sale was successfully created.'});
   const [hookForm,setHookForm]=useState({name:'',endpointUrl:'',events:['SALE_CREATED']});
@@ -22,19 +24,21 @@ export default function PlatformOperationsPage() {
   const load=useCallback(async()=>{
     setLoading(true);setError('');
     try {
-      const [r,n,h,p,v,q]=await Promise.all([
+      const [r,n,h,p,v,q,bk]=await Promise.all([
         api.get<Rule[]>('/platform/automation/rules'),
         api.get<{items:Notice[]}>('/platform/notifications',{params:{page:1}}),
         api.get<Hook[]>('/platform/integrations/webhooks'),
         api.get<Policy>('/platform/backups/policy'),
         api.get<Valuation>('/platform/inventory/valuation-reconciliation'),
         listQueuedOfflineSales(),
+        api.get<Backup[]>('/platform/backups'),
       ]);
-      setRules(r.data);setNotices(n.data.items||[]);setHooks(h.data);setPolicy(p.data);setValuation(v.data);setPendingOffline(q.length);
+      setRules(r.data);setNotices(n.data.items||[]);setHooks(h.data);setPolicy(p.data);setValuation(v.data);setPendingOffline(q.length);setBackups(bk.data||[]);
     } catch {setError('Some platform operations could not be loaded. Verify your permissions and refresh.');}
     finally {setLoading(false);}
   },[]);
   useEffect(()=>{void load();},[load]);
+  useEffect(()=>{let active=true;Promise.all([api.get<SaaSTenant[]>('/platform/saas/tenants'),api.get('/platform/saas/audit'),api.get('/platform/saas/usage')]).then(([t,a,u])=>{if(active){setSaasTenants(t.data);setSaasAudit(a.data);setSaasUsage(u.data);}}).catch(()=>undefined);return()=>{active=false};},[]);
   async function createRule(e:React.FormEvent){e.preventDefault();setBusy(true);setError('');setMessage('');try{
     await api.post('/platform/automation/rules',{name:ruleForm.name,eventType:ruleForm.eventType,actionType:'NOTIFY',config:{title:ruleForm.title,body:ruleForm.body,severity:'INFO'}});
     setRuleForm(v=>({...v,name:''}));setMessage('Automation rule created.');await load();
@@ -54,6 +58,10 @@ export default function PlatformOperationsPage() {
     const r=await api.post<{archiveBase64:string;fileName:string;checksumSha256:string}>('/platform/backups/export');
     const bytes=Uint8Array.from(atob(r.data.archiveBase64),c=>c.charCodeAt(0));const url=URL.createObjectURL(new Blob([bytes],{type:'application/gzip'}));const a=document.createElement('a');a.href=url;a.download=r.data.fileName;a.click();URL.revokeObjectURL(url);setMessage('Backup exported. SHA-256: '+r.data.checksumSha256);
   }catch{setError('Backup export failed.')}finally{setBusy(false)}}
+
+  async function downloadStoredBackup(id:string){setBusy(true);try{const r=await api.get<{archiveBase64:string;fileName:string}>('/platform/backups/'+id+'/download');const bytes=Uint8Array.from(atob(r.data.archiveBase64),c=>c.charCodeAt(0));const url=URL.createObjectURL(new Blob([bytes],{type:'application/gzip'}));const a=document.createElement('a');a.href=url;a.download=r.data.fileName;a.click();URL.revokeObjectURL(url);}catch{setError('Stored backup could not be downloaded or its checksum failed.')}finally{setBusy(false)}}
+  async function verifyBackupFile(file:File){setBusy(true);try{const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,i+0x8000));const r=await api.post('/platform/backups/verify',{archiveBase64:btoa(binary)});setMessage(r.data.note||'Backup archive verified.');}catch{setError('Backup archive verification failed.')}finally{setBusy(false)}}
+  async function updateSaasTenant(tenant:SaaSTenant){const reason=window.prompt('Mandatory reason for changing subscription or workspace controls:');if(!reason?.trim())return;setBusy(true);try{await api.patch('/platform/saas/tenants/'+tenant._id,{subscriptionPlan:'business',reason});const r=await api.get<SaaSTenant[]>('/platform/saas/tenants');setSaasTenants(r.data);const a=await api.get('/platform/saas/audit');setSaasAudit(a.data);setMessage('Subscription updated and audit event recorded.')}catch{setError('SaaS tenant update failed.')}finally{setBusy(false)}}
   async function markRead(id:string){try{await api.patch('/platform/notifications/'+id+'/read',{});await load()}catch{setError('Notification could not be marked as read.')}}
   return <div className="platform-page">
     <header><div><span>OPERATIONS, AUTOMATION & PLATFORM CONTROL</span><h1>Platform Operations</h1><p>Manage business rules, notifications, integrations, offline billing and recovery controls.</p></div><button onClick={()=>void load()} disabled={loading}><RefreshCw size={15}/> Refresh</button></header>
@@ -84,11 +92,11 @@ export default function PlatformOperationsPage() {
         <label>Frequency<select value={policy.frequency} onChange={e=>setPolicy(v=>({...v,frequency:e.target.value}))}><option value="DAILY">Daily</option><option value="WEEKLY">Weekly</option></select></label>
         <label>Retention policy (days)<input type="number" min="1" max="90" value={policy.retentionDays} onChange={e=>setPolicy(v=>({...v,retentionDays:Number(e.target.value)}))}/></label>
         <button onClick={()=>void savePolicy()} disabled={busy}>Save schedule</button><button className="platform-secondary" onClick={()=>void exportBackup()} disabled={busy}>Export tenant backup (.json.gz)</button>
-        <small>Includes tenant-scoped collections and sanitized user profiles. Password hashes are excluded. Keep copies outside this MongoDB cluster. Scheduled execution and off-site retention require your external scheduler and storage destination.</small>
+        <small>Scheduled exports run every minute when due and are stored in GridFS on this MongoDB cluster. Password hashes are excluded. For disaster recovery, replicate/download these archives to a separate cloud account or offline vault.</small><label>Verify an exported archive<input type="file" accept=".gz,.json.gz,application/gzip" onChange={e=>{const file=e.target.files?.[0];if(file)void verifyBackupFile(file);e.currentTarget.value='';}}/></label><div className="platform-list">{backups.map(b=><article key={b._id}><div><b>{b.fileName}</b><small>{b.documentCount} documents · {(b.compressedBytes/1024/1024).toFixed(2)} MB · expires {new Date(b.expiresAt).toLocaleDateString('en-IN')}</small></div><button onClick={()=>void downloadStoredBackup(b._id)} disabled={busy}>Download</button></article>)}</div>
       </div></section>
       <section className="platform-card"><h2><ShieldCheck size={18}/> Inventory valuation reconciliation</h2>{valuation?<><div className="platform-recon-stats"><span>Tracked products <b>{valuation.summary.products}</b></span><span>Valuation pending <b>{valuation.summary.valuationPending}</b></span><span>Over-allocated <b>{valuation.summary.overAllocated}</b></span></div><p className="platform-muted">Unallocated stock is allowed. This read-only check flags warehouse allocations exceeding aggregate stock or value.</p>{valuation.discrepancies.slice(0,8).map(row=><article className="platform-discrepancy" key={row.productId}><b>{row.name}</b><small>Qty variance {row.quantityDelta} · Value variance ₹{row.valueDelta.toFixed(2)}</small></article>)}</>:<p className="platform-muted">Loading reconciliation…</p>}</section>
       <section className="platform-card"><h2><Activity size={18}/> Offline POS sync</h2><p>Invoices saved in this browser are stored in IndexedDB and automatically submitted when connectivity returns. The server applies the normal sales validation, stock checks, accounting transaction and idempotency rules.</p><p><b>{pendingOffline}</b> pending invoice(s) in this browser's queue.</p><p className="platform-muted">Do not clear browser site data until the queue has synchronized. A separate device has its own queue.</p></section>
-      <section className="platform-card"><h2><Bot size={18}/> SaaS operator controls</h2><p>Tenant plan, suspension and capacity administration is restricted to user IDs listed in the server-side <code>PLATFORM_ADMIN_USER_IDS</code> environment setting.</p><p className="platform-muted">This workspace does not expose platform-wide tenant data to ordinary tenant owners.</p></section>
+      <section className="platform-card"><h2><Bot size={18}/> SaaS operator controls</h2>{saasUsage?<p>{saasUsage.totalUsers} users · {saasUsage.totalProducts} products across {saasTenants.length} workspaces</p>:<p>Tenant plan, suspension and capacity administration is restricted to user IDs listed in server-side <code>PLATFORM_ADMIN_USER_IDS</code>.</p>}{saasTenants.map(t=><article className="platform-discrepancy" key={t._id}><b>{t.name} · {t.subscriptionPlan||'starter'}</b><small>{t.status} / {t.subscriptionStatus} · users {t.maxUsers} · products {t.maxProducts} · branches {t.maxBranches}</small><button onClick={()=>void updateSaasTenant(t)} disabled={busy}>Upgrade to Business</button></article>)}{saasAudit.slice(0,5).map((a:any)=><p className="platform-muted" key={a._id}>{a.tenantId?.name||'Workspace'} · {a.reason} · {new Date(a.createdAt).toLocaleString('en-IN')}</p>)}</section>
     </div>
     {loading&&<p className="platform-muted">Refreshing platform operations…</p>}
   </div>;

@@ -57,3 +57,32 @@ The Advanced Inventory workspace exposes batch receipts and expiry lists, serial
 - IndexedDB v3 uses composite tenant/user scope keys for offline invoice queue entries and product cache entries. Existing v2 queue and product cache records are migrated during the version upgrade.
 - Failed offline invoice syncs retain the original payload and idempotency key, record attempt metadata and use exponential retry backoff capped at 60 minutes. Server-side invoice creation remains authoritative and validates current stock, prices, permissions and GST.
 - Offline invoice queue entries are not finalized invoices until server sync returns `SUCCEEDED`. The product catalogue and stock values shown offline are last-synced snapshots; refresh online before high-risk sales.
+
+
+## Subscription payment gateway
+
+- Subscription invoices can be checked out through Razorpay using `POST /api/v1/platform/billing/invoices/:id/checkout`.
+- Configure `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` and `RAZORPAY_WEBHOOK_SECRET` in the deployment secret manager. Never commit these values.
+- Configure the Razorpay webhook URL as `POST /api/v1/platform/billing/webhook/razorpay` and subscribe to `payment.captured`. The API verifies the HMAC-SHA256 signature against the exact raw request body, checks order, amount and currency, and activates the subscription in a MongoDB transaction.
+- Webhook delivery is idempotent by invoice/order/payment reference. The manual platform-operator reconciliation endpoint remains available as an operational fallback.
+- Checkout is disabled when credentials are absent. Test with Razorpay test keys and webhook secret before production; automatic recurring mandate collection is not included.
+
+## GST GSP submission adapter
+
+- Owner/admin can submit a preflight-approved issued B2B invoice using `POST /api/v1/reports/gst/einvoice/:invoiceId/submit`.
+- Configure `GST_GSP_ADAPTER_URL` and `GST_GSP_ADAPTER_TOKEN`. The endpoint must be a public HTTPS endpoint on port 443. Requests use a stable submission idempotency key and a 30-second timeout.
+- The adapter contract is `SOLSTRA_GST_EINVOICE_V1`; it receives the invoice snapshot and must translate it to the currently applicable IRP/GSP request format. A successful response must contain `irn` and `ackNo`, with optional `ackDt` and `referenceId`.
+- Submission attempts, status, IRN and acknowledgement metadata are stored tenant-scoped. Repeated submissions of a successful invoice return the existing IRN rather than creating another submission.
+- This connector does not make Solstra a GSP or guarantee statutory compliance. Use an approved GSP, verify current government schema/version and applicability, test in sandbox, and reconcile the returned IRN/QR/acknowledgement with the provider before production. Signed QR payload is not stored in this release.
+
+## Historical migration preflight
+
+- Owner/admin can call `GET /api/v1/reports/migration/readiness` for a read-only assessment of opening inventory valuation, posted journal balance, supplier invoice dates and chart-of-accounts availability.
+- The endpoint flags positive-stock products without verified opening valuation, posted journals whose debit/credit totals differ by more than ₹0.01, and purchases missing supplier invoice dates.
+- Journal imbalance details are capped at 50 in the response. This is a preflight only; it does not import or rewrite historical stock, ledger or GST records. Resolve every flagged item and approve source-ledger reconciliation before posting controlled opening balances.
+
+## Production health probes
+
+- `GET /api/v1/health` remains a liveness probe.
+- `GET /api/v1/health/ready` is a readiness probe and returns HTTP 503 until the MongoDB connection is ready and the required database configuration is present.
+- Use readiness for load-balancer/orchestrator traffic gating. It intentionally does not expose connection strings, secrets, or tenant data.

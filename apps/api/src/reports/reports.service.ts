@@ -1308,6 +1308,39 @@ export class ReportsService {
     };
   }
 
+  async tallyXmlExport(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const journals = await this.journals.find(tenantFilter(tenantId, {
+      status: 'POSTED', postingDate: { $gte: start, $lte: end },
+    })).select('entryNumber postingDate narration lines').sort({ postingDate: 1, entryNumber: 1 }).limit(2000).lean();
+    const xml = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+    const vouchers = (journals as any[]).map(entry => {
+      const date = new Date(entry.postingDate);
+      const dateKey = String(date.getFullYear()) + String(date.getMonth() + 1).padStart(2, '0') + String(date.getDate()).padStart(2, '0');
+      const lines = (entry.lines || []).map((line: any) => {
+        const debit = Number(line.debit || 0), credit = Number(line.credit || 0);
+        if (!Number.isFinite(debit) || !Number.isFinite(credit) || debit < 0 || credit < 0 || (debit > 0 && credit > 0)) {
+          throw new BadRequestException('Journal contains an invalid ledger line; resolve it before Tally export');
+        }
+        const amount = debit > 0 ? -debit : credit;
+        return `<ALLLEDGERENTRIES.LIST><LEDGERNAME>${xml(line.accountName || line.accountCode || 'Unmapped Ledger')}</LEDGERNAME><ISDEEMEDPOSITIVE>${debit > 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE><AMOUNT>${amount.toFixed(2)}</AMOUNT><LEDGERENTRIES.LIST><LEDGERNAME>${xml(line.accountName || line.accountCode || 'Unmapped Ledger')}</LEDGERNAME><ISDEEMEDPOSITIVE>${debit > 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE><AMOUNT>${amount.toFixed(2)}</AMOUNT></LEDGERENTRIES.LIST></ALLLEDGERENTRIES.LIST>`;
+      }).join('');
+      const totalDebit = (entry.lines || []).reduce((sum: number, line: any) => sum + Number(line.debit || 0), 0);
+      const totalCredit = (entry.lines || []).reduce((sum: number, line: any) => sum + Number(line.credit || 0), 0);
+      if (Math.abs(totalDebit - totalCredit) > 0.01) throw new BadRequestException('Unbalanced posted journal found; correct accounting before export');
+      return `<VOUCHER VCHTYPE="Journal" ACTION="Create"><DATE>${dateKey}</DATE><VOUCHERTYPENAME>Journal</VOUCHERTYPENAME><VOUCHERNUMBER>${xml(entry.entryNumber)}</VOUCHERNUMBER><NARRATION>${xml(entry.narration || '')}</NARRATION>${vouchers}</VOUCHER>`;
+    }).join('');
+    return {
+      filename: 'solstra-tally-journal-export.xml',
+      contentType: 'application/xml; charset=utf-8',
+      content: `<?xml version="1.0" encoding="UTF-8"?><ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>REPLACE_WITH_TALLY_COMPANY</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC><REQUESTDATA>${vouchers}</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>`,
+      voucherCount: journals.length,
+      truncated: journals.length === 2000,
+      note: 'Tally XML voucher draft only. Map company and ledger names, validate voucher types/sign conventions against the target Tally release, and import into a test company before production. This is an export file, not live synchronization.',
+    };
+  }
+
   async answerBusinessQuestion(tenantId: string, question: string) {
     this.validateTenant(tenantId);
     const normalized = String(question || '').trim().toLowerCase();

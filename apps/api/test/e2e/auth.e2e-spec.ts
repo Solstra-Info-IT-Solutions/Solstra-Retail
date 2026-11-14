@@ -15,6 +15,9 @@ import { InventoryMovement } from '../../src/inventory/schemas/inventory-movemen
 import { SalesInvoice } from '../../src/sales/schemas/sales-invoice.schema';
 import { InvoiceCounter } from '../../src/sales/schemas/invoice-counter.schema';
 import { Customer } from '../../src/customers/schemas/customer.schema';
+import { Supplier } from '../../src/suppliers/schemas/supplier.schema';
+import { Purchase } from '../../src/purchases/schemas/purchase.schema';
+import { JournalEntry } from '../../src/accounting/schemas/journal-entry.schema';
 
 describe('Authentication HTTP E2E', () => {
   let app: INestApplication;
@@ -25,6 +28,9 @@ describe('Authentication HTTP E2E', () => {
   let invoices: Model<SalesInvoice>;
   let invoiceCounters: Model<InvoiceCounter>;
   let customers: Model<Customer>;
+  let suppliers: Model<Supplier>;
+  let purchases: Model<Purchase>;
+  let journalEntries: Model<JournalEntry>;
 
   const createdUserIds: string[] = [];
   const createdTenantIds: string[] = [];
@@ -103,6 +109,9 @@ describe('Authentication HTTP E2E', () => {
     customers = app.get<Model<Customer>>(
       getModelToken(Customer.name),
     );
+    suppliers = app.get<Model<Supplier>>(getModelToken(Supplier.name));
+    purchases = app.get<Model<Purchase>>(getModelToken(Purchase.name));
+    journalEntries = app.get<Model<JournalEntry>>(getModelToken(JournalEntry.name));
 
     await Promise.all([
       users.createIndexes(),
@@ -112,6 +121,9 @@ describe('Authentication HTTP E2E', () => {
       invoices.createIndexes(),
       invoiceCounters.createIndexes(),
       customers.createIndexes(),
+      suppliers.createIndexes(),
+      purchases.createIndexes(),
+      journalEntries.createIndexes(),
     ]);
   });
 
@@ -126,6 +138,9 @@ describe('Authentication HTTP E2E', () => {
           invoices.deleteMany({ tenantId: { $in: tenantIds } }),
           invoiceCounters.deleteMany({ tenantId: { $in: tenantIds } }),
           customers.deleteMany({ tenantId: { $in: tenantIds } }),
+          suppliers.deleteMany({ tenantId: { $in: tenantIds } }),
+          purchases.deleteMany({ tenantId: { $in: tenantIds } }),
+          journalEntries.deleteMany({ tenantId: { $in: tenantIds } }),
         ]);
       }
 
@@ -706,6 +721,179 @@ describe('Authentication HTTP E2E', () => {
     expect(storedInvoice?.paidAmount).toBe(50);
     expect(storedInvoice?.dueAmount).toBe(150);
     expect(storedInvoice?.payments).toHaveLength(1);
+  });
+
+  it('completes supplier purchase receiving, idempotent retries, payment and accounting reconciliation', async () => {
+    const registration = await registerAccount();
+    expect(registration.status).toBe(201);
+
+    const headers = {
+      Authorization: `Bearer ${registration.body.accessToken}`,
+    };
+
+    await tenants.updateOne(
+      { _id: registration.body.tenant.id },
+      { $set: { stateCode: '09' } },
+    );
+
+    const product = await request(app.getHttpServer())
+      .post('/api/v1/products')
+      .set(headers)
+      .send({
+        name: 'E2E Procurement Lifecycle Product',
+        purchasePrice: 100,
+        sellingPrice: 160,
+        mrp: 160,
+        gstRate: 18,
+        stockQty: 0,
+      });
+
+    expect(product.status).toBe(201);
+
+    const supplier = await request(app.getHttpServer())
+      .post('/api/v1/suppliers')
+      .set(headers)
+      .send({
+        name: 'E2E Procurement Supplier',
+        state: 'Uttar Pradesh',
+        stateCode: '09',
+        phone: `96${Date.now().toString().slice(-8)}`,
+      });
+
+    expect(supplier.status).toBe(201);
+
+    const purchase = await request(app.getHttpServer())
+      .post('/api/v1/purchases')
+      .set(headers)
+      .send({
+        supplierId: supplier.body._id,
+        supplierInvoiceNumber: `SUP-${randomUUID().slice(0, 8)}`,
+        supplierInvoiceDate: '2026-11-14',
+        placeOfSupplyStateCode: '09',
+        items: [{
+          productId: product.body._id,
+          quantity: 2,
+          unitCost: 100,
+          gstRate: 18,
+        }],
+      });
+
+    expect(purchase.status).toBe(201);
+    expect(purchase.body.grandTotal).toBe(236);
+    expect(purchase.body.status).toBe('DRAFT');
+    expect(purchase.body.dueAmount).toBe(236);
+
+    const receiptPayload = {
+      idempotencyKey: randomUUID(),
+      items: [{ productId: product.body._id, quantity: 2 }],
+    };
+
+    const receipt = await request(app.getHttpServer())
+      .post(`/api/v1/purchases/${purchase.body._id}/receive`)
+      .set(headers)
+      .send(receiptPayload);
+
+    expect(receipt.status).toBe(201);
+    expect(receipt.body.status).toBe('RECEIVED');
+    expect(receipt.body.items[0].receivedQty).toBe(2);
+
+    const receiptRetry = await request(app.getHttpServer())
+      .post(`/api/v1/purchases/${purchase.body._id}/receive`)
+      .set(headers)
+      .send(receiptPayload);
+
+    expect(receiptRetry.status).toBe(201);
+    expect(receiptRetry.body.receipts).toHaveLength(1);
+
+    const updatedProduct = await products.findById(product.body._id).lean();
+    expect(updatedProduct?.stockQty).toBe(2);
+    expect(updatedProduct?.inventoryValue).toBe(200);
+    expect(updatedProduct?.averageCost).toBe(100);
+
+    const purchasePaymentPayload = {
+      idempotencyKey: randomUUID(),
+      method: 'CASH',
+      amount: 100,
+      reference: 'E2E supplier payment',
+    };
+
+    const payment = await request(app.getHttpServer())
+      .post(`/api/v1/purchases/${purchase.body._id}/payments`)
+      .set(headers)
+      .send(purchasePaymentPayload);
+
+    expect(payment.status).toBe(201);
+    expect(payment.body.paidAmount).toBe(100);
+    expect(payment.body.dueAmount).toBe(136);
+    expect(payment.body.payments).toHaveLength(1);
+
+    const paymentRetry = await request(app.getHttpServer())
+      .post(`/api/v1/purchases/${purchase.body._id}/payments`)
+      .set(headers)
+      .send(purchasePaymentPayload);
+
+    expect(paymentRetry.status).toBe(201);
+    expect(paymentRetry.body.paidAmount).toBe(100);
+    expect(paymentRetry.body.payments).toHaveLength(1);
+
+    const overpayment = await request(app.getHttpServer())
+      .post(`/api/v1/purchases/${purchase.body._id}/payments`)
+      .set(headers)
+      .send({
+        idempotencyKey: randomUUID(),
+        method: 'UPI',
+        amount: 137,
+      });
+
+    expect(overpayment.status).toBe(400);
+
+    const supplierLedger = await request(app.getHttpServer())
+      .get(`/api/v1/purchases/supplier/${supplier.body._id}/ledger`)
+      .set(headers);
+
+    expect(supplierLedger.status).toBe(200);
+    expect(supplierLedger.body.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          _id: purchase.body._id,
+          grandTotal: 236,
+          paidAmount: 100,
+          dueAmount: 136,
+        }),
+      ]),
+    );
+
+    const journalList = await request(app.getHttpServer())
+      .get('/api/v1/accounting/journals')
+      .set(headers);
+
+    expect(journalList.status).toBe(200);
+    expect(journalList.body.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceType: 'PURCHASE',
+          sourceId: purchase.body._id,
+          totalDebit: 236,
+          totalCredit: 236,
+        }),
+      ]),
+    );
+
+    const trialBalance = await request(app.getHttpServer())
+      .get('/api/v1/reports/trial-balance')
+      .set(headers);
+
+    expect(trialBalance.status).toBe(200);
+
+    const persistedPurchase = await purchases.findById(purchase.body._id).lean();
+    expect(persistedPurchase?.paidAmount).toBe(100);
+    expect(persistedPurchase?.dueAmount).toBe(136);
+    expect(persistedPurchase?.receipts).toHaveLength(1);
+
+    expect(await journalEntries.countDocuments({
+      tenantId: new Types.ObjectId(registration.body.tenant.id),
+      sourceType: 'PURCHASE',
+    })).toBeGreaterThanOrEqual(2);
   });
 
   it('creates, lists, updates and soft-deletes customers with tenant isolation', async () => {

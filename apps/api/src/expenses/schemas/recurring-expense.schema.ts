@@ -17,10 +17,10 @@ export class RecurringExpenseSchedule {
   @Prop({ type: String, required: true, enum: ['MONTHLY', 'QUARTERLY', 'YEARLY'] }) frequency!: RecurringExpenseFrequency;
   @Prop({ required: true }) nextRunAt!: Date;
   @Prop({ required: true }) anchorDay!: number;
-  @Prop({ default: null }) endDate!: Date | null;
+  @Prop({ type: Date, default: null }) endDate!: Date | null;
   @Prop({ type: String, required: true, enum: ['ACTIVE', 'PAUSED', 'COMPLETED'], default: 'ACTIVE', index: true }) status!: RecurringExpenseStatus;
-  @Prop({ default: null }) lastGeneratedAt!: Date | null;
-  @Prop({ default: null, trim: true }) lastGeneratedPeriod!: string | null;
+  @Prop({ type: Date, default: null }) lastGeneratedAt!: Date | null;
+  @Prop({ type: String, default: null, trim: true }) lastGeneratedPeriod!: string | null;
 }
 export type RecurringExpenseScheduleDocument = HydratedDocument<RecurringExpenseSchedule>;
 export const RecurringExpenseScheduleSchema = SchemaFactory.createForClass(RecurringExpenseSchedule);

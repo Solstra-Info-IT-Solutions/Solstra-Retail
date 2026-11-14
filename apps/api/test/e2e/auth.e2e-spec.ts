@@ -36,6 +36,7 @@ describe('Authentication HTTP E2E', () => {
 
     const response = await request(app.getHttpServer())
       .post('/api/v1/auth/register')
+      .set('X-Forwarded-For', `198.51.100.${Math.floor(Math.random() * 254) + 1}`)
       .send({
         name: 'E2E Test Owner',
         email: `e2e-${unique}@example.test`,
@@ -63,6 +64,9 @@ describe('Authentication HTTP E2E', () => {
 
     app = moduleRef.createNestApplication();
 
+    // Each E2E registration uses a unique synthetic client IP so the production
+    // authentication rate limit is not exhausted by unrelated test scenarios.
+    app.getHttpAdapter().getInstance().set('trust proxy', true);
     app.setGlobalPrefix('api/v1');
     app.use(helmet());
 

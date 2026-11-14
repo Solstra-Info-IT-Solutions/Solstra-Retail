@@ -565,7 +565,6 @@ export class ReportsService {
     }
     const { normalized, errors } = this.normalizeHistoricalTransactionRows(dto);
     if (errors.length) throw new BadRequestException({ message: 'Historical import payload is no longer valid', errors });
-    let importedCount = 0;
     const failures: Array<{ row: number; message: string }> = [];
     for (let index = 0; index < normalized.length; index += 1) {
       const row = normalized[index];
@@ -575,7 +574,6 @@ export class ReportsService {
           { $setOnInsert: { ...row, tenantId: new Types.ObjectId(tenantId), importRunId: run._id, sourceSystem: dto.sourceSystem.trim(), entity: dto.entity } },
           { upsert: true, setDefaultsOnInsert: true },
         );
-        importedCount += 1;
       } catch (error: any) {
         failures.push({ row: index + 1, message: error?.code === 11000 ? 'Source record was concurrently imported by another run' : String(error?.message || 'Import row failed').slice(0, 250) });
       }

@@ -13,6 +13,7 @@ import { InventoryService } from './inventory.service';
 import { CreateInventoryMovementDto } from './dto/create-inventory-movement.dto';
 import { ListInventoryMovementsDto } from './dto/list-inventory-movements.dto';
 import { Roles } from '../common/decorators/roles.decorator';
+import { Permissions } from '../common/decorators/permissions.decorator';
 import { WarehouseInventoryService } from './warehouse-inventory.service';
 import { WarehouseOpeningStockDto } from './dto/warehouse-opening-stock.dto';
 import { CreateWarehouseTransferDto } from './dto/create-warehouse-transfer.dto';
@@ -53,6 +54,7 @@ export class InventoryController {
     return this.warehouseInventory.initializeOpeningStock(req.user.tenantId, req.user.userId, warehouseId, dto);
   }
 
+  @Permissions('inventory.view')
   @Get('warehouses/:warehouseId/stock')
   listWarehouseStock(@Req() req: AuthenticatedRequest, @Param('warehouseId') warehouseId: string) {
     return this.warehouseInventory.listWarehouseStock(req.user.tenantId, warehouseId);
@@ -64,11 +66,13 @@ export class InventoryController {
     return this.warehouseInventory.createTransfer(req.user.tenantId, req.user.userId, dto);
   }
 
+  @Permissions('inventory.view')
   @Get('transfers')
   listWarehouseTransfers(@Req() req: AuthenticatedRequest, @Query('page') page = '1', @Query('limit') limit = '20') {
     return this.warehouseInventory.listTransfers(req.user.tenantId, Math.max(1, Number(page) || 1), Math.min(100, Math.max(1, Number(limit) || 20)));
   }
 
+  @Permissions('inventory.view')
   @Get('movements')
   findAll(
     @Req() req: AuthenticatedRequest,

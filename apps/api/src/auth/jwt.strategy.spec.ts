@@ -98,6 +98,7 @@ describe('JwtStrategy', () => {
       _id: userId,
       tenantId,
       role: 'staff',
+      permissions: ['sales.view'],
       name: 'Test Staff',
       email: 'staff@example.com',
     };
@@ -112,6 +113,7 @@ describe('JwtStrategy', () => {
       userId: userId.toString(),
       tenantId: tenantId.toString(),
       role: 'staff',
+      permissions: ['sales.view'],
       name: 'Test Staff',
       email: 'staff@example.com',
     });

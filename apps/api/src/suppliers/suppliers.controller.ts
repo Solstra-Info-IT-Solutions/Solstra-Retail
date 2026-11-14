@@ -12,6 +12,7 @@
 import { Request } from 'express';
 
 import { Roles } from '../common/decorators/roles.decorator';
+import { Permissions } from '../common/decorators/permissions.decorator';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { ListSuppliersDto } from './dto/list-suppliers.dto';
 import { UpdateSupplierDto } from './dto/update-supplier.dto';
@@ -31,11 +32,13 @@ export class SuppliersController {
     return this.suppliersService.create(req.user.tenantId, dto);
   }
 
+  @Permissions('suppliers.view')
   @Get()
   findAll(@Req() req: AuthenticatedRequest, @Query() query: ListSuppliersDto) {
     return this.suppliersService.findAll(req.user.tenantId, query);
   }
 
+  @Permissions('suppliers.view')
   @Get(':id')
   findOne(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.suppliersService.findOne(req.user.tenantId, id);

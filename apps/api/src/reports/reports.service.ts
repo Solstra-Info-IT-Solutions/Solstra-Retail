@@ -1329,7 +1329,7 @@ export class ReportsService {
       const totalDebit = (entry.lines || []).reduce((sum: number, line: any) => sum + Number(line.debit || 0), 0);
       const totalCredit = (entry.lines || []).reduce((sum: number, line: any) => sum + Number(line.credit || 0), 0);
       if (Math.abs(totalDebit - totalCredit) > 0.01) throw new BadRequestException('Unbalanced posted journal found; correct accounting before export');
-      return `<VOUCHER VCHTYPE="Journal" ACTION="Create"><DATE>${dateKey}</DATE><VOUCHERTYPENAME>Journal</VOUCHERTYPENAME><VOUCHERNUMBER>${xml(entry.entryNumber)}</VOUCHERNUMBER><NARRATION>${xml(entry.narration || '')}</NARRATION>${vouchers}</VOUCHER>`;
+      return `<VOUCHER VCHTYPE="Journal" ACTION="Create"><DATE>${dateKey}</DATE><VOUCHERTYPENAME>Journal</VOUCHERTYPENAME><VOUCHERNUMBER>${xml(entry.entryNumber)}</VOUCHERNUMBER><NARRATION>${xml(entry.narration || '')}</NARRATION>${lines}</VOUCHER>`;
     }).join('');
     return {
       filename: 'solstra-tally-journal-export.xml',

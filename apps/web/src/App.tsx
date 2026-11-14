@@ -9,6 +9,7 @@ import SalesPage from './pages/SalesPage';
 import CustomersPage from './pages/CustomersPage';
 import ProductsPage from './pages/ProductsPage';
 import InventoryPage from './pages/InventoryPage';
+import AdvancedInventoryPage from './pages/AdvancedInventoryPage';
 import SuppliersPage from './pages/SuppliersPage';
 import PurchasesPage from './pages/PurchasesPage';
 import BranchesPage from './pages/BranchesPage';
@@ -38,6 +39,7 @@ function AppRoutes() {
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/inventory" element={<InventoryPage />} />
+          <Route path="/inventory/advanced" element={<AdvancedInventoryPage />} />
           <Route path="/suppliers" element={<SuppliersPage />} />
           <Route path="/purchases" element={<PurchasesPage />} />
           <Route path="/branches" element={<BranchesPage />} />

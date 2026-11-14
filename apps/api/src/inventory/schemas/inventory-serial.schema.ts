@@ -10,6 +10,7 @@ export class InventorySerial {
   @Prop({ type: String, enum: ['IN_STOCK', 'SOLD', 'RETURNED', 'DAMAGED'], default: 'IN_STOCK', index: true }) status!: 'IN_STOCK' | 'SOLD' | 'RETURNED' | 'DAMAGED';
   @Prop({ type: Types.ObjectId, ref: 'SalesInvoice', default: null }) saleInvoiceId?: Types.ObjectId | null;
   @Prop({ type: Date, default: null }) soldAt?: Date | null;
+  @Prop({ type: [Object], default: [] }) lifecycleHistory!: Array<{ from: string; to: string; reason: string; actorId: Types.ObjectId; saleInvoiceId?: Types.ObjectId; changedAt: Date }>;
   @Prop({ type: Types.ObjectId, ref: 'User', required: true }) createdBy!: Types.ObjectId;
 }
 export const InventorySerialSchema = SchemaFactory.createForClass(InventorySerial);

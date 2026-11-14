@@ -14,6 +14,7 @@ describe('SalesService createSale idempotency', () => {
     customerName: 'Test Customer',
     customerPhone: '9876543210',
     placeOfSupplyStateCode: '09',
+    rewardVoucherCode: undefined as string | undefined,
     payments: [{ method: 'CASH' as const, amount: 50, reference: 'cash' }],
   });
 
@@ -29,6 +30,7 @@ describe('SalesService createSale idempotency', () => {
       customerPhone: dto.customerPhone ?? '',
       customerGstin: null,
       placeOfSupplyStateCode: dto.placeOfSupplyStateCode,
+      ...(dto.rewardVoucherCode ? { rewardVoucherCode: dto.rewardVoucherCode.trim().toUpperCase() } : {}),
       payments: (dto.payments ?? []).map((payment) => ({
         method: payment.method,
         amountPaise: Math.round((payment.amount + Number.EPSILON) * 100),
@@ -84,6 +86,20 @@ describe('SalesService createSale idempotency', () => {
 
     expect(result).toBe(existingInvoice);
     expect(invoices.findOne).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects reuse of an idempotency key with a different reward voucher', async () => {
+    const originalDto = createDto();
+    originalDto.rewardVoucherCode = 'SRABCDEF123456';
+    const existingInvoice = {
+      _id: new Types.ObjectId(),
+      invoiceNumber: 'SR/2026-27/000001',
+      requestFingerprint: fingerprint(originalDto),
+    };
+    const changedDto = createDto();
+    changedDto.rewardVoucherCode = 'SR123456ABCDEF';
+    const { service } = createService(existingInvoice);
+    await expect(service.createSale(tenantId, userId, changedDto)).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('rejects reuse of the same key with a changed payload', async () => {

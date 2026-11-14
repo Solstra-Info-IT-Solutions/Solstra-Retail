@@ -11,7 +11,7 @@ import './CustomersPage.css';
 type Customer = {
   _id: string; name: string; phone?: string; email?: string; gstin?: string;
   addressLine1?: string; addressLine2?: string; city?: string; state?: string;
-  pincode?: string; notes?: string; createdAt?: string;
+  pincode?: string; notes?: string; createdAt?: string; loyaltyPoints?: number; lifetimeLoyaltyPoints?: number; loyaltyTier?: string;
 };
 type CustomerListResponse = {
   items: Customer[];
@@ -26,6 +26,8 @@ type HistoryResponse = {
   summary: { invoiceCount: number; totalBilled: number; totalPaid: number; totalDue: number };
   pagination: { total: number; page: number; limit: number; totalPages: number };
 };
+type LoyaltyEntry = { _id: string; eventType: string; pointsDelta: number; balanceAfter: number; reason: string; createdAt: string };
+type LoyaltyResponse = { customer: { pointsBalance: number; lifetimePoints: number; tier: string; nextTier: { tier: string; pointsRequired: number } | null }; items: LoyaltyEntry[]; earningRule: string };
 type CustomerForm = {
   name: string; phone: string; email: string; gstin: string; addressLine1: string;
   addressLine2: string; city: string; state: string; pincode: string; notes: string;
@@ -59,6 +61,12 @@ export default function CustomersPage() {
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [historyPage, setHistoryPage] = useState(1);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [loyalty, setLoyalty] = useState<LoyaltyResponse | null>(null);
+  const [loyaltyAdjustOpen, setLoyaltyAdjustOpen] = useState(false);
+  const [loyaltyDelta, setLoyaltyDelta] = useState('');
+  const [loyaltyReason, setLoyaltyReason] = useState('');
+  const [loyaltySaving, setLoyaltySaving] = useState(false);
+  const [loyaltyError, setLoyaltyError] = useState('');
 
   const loadCustomers = useCallback(async () => {
     setLoading(true);
@@ -114,17 +122,32 @@ export default function CustomersPage() {
   }
 
   async function openDetails(customer: Customer, nextPage = 1) {
-    setSelected(customer); setHistory(null); setHistoryPage(nextPage); setDetailLoading(true);
+    setSelected(customer); setHistory(null); setLoyalty(null); setHistoryPage(nextPage); setDetailLoading(true);
     try {
-      const [customerResponse, historyResponse] = await Promise.all([
+      const [customerResponse, historyResponse, loyaltyResponse] = await Promise.all([
         api.get<Customer>('/customers/' + customer._id),
         api.get<HistoryResponse>('/customers/' + customer._id + '/sales', {
           params: { page: nextPage, limit: 8 },
         }),
+        api.get<LoyaltyResponse>('/customers/' + customer._id + '/loyalty', { params: { page: 1, limit: 8 } }),
       ]);
-      setSelected(customerResponse.data); setHistory(historyResponse.data);
+      setSelected(customerResponse.data); setHistory(historyResponse.data); setLoyalty(loyaltyResponse.data);
     } catch { setHistory(null); }
     finally { setDetailLoading(false); }
+  }
+
+  async function adjustLoyalty(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setLoyaltySaving(true); setLoyaltyError('');
+    try {
+      await api.post('/customers/' + selected._id + '/loyalty/adjust', { pointsDelta: Number(loyaltyDelta), reason: loyaltyReason.trim() });
+      const response = await api.get<LoyaltyResponse>('/customers/' + selected._id + '/loyalty', { params: { page: 1, limit: 8 } });
+      setLoyalty(response.data); setLoyaltyAdjustOpen(false); setLoyaltyDelta(''); setLoyaltyReason('');
+    } catch (requestError: unknown) {
+      const message = (requestError as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      setLoyaltyError(Array.isArray(message) ? message.join(', ') : message || 'Points adjustment could not be saved.');
+    } finally { setLoyaltySaving(false); }
   }
 
   const customers = data?.items ?? [];

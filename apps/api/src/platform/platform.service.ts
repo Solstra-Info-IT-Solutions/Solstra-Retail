@@ -6,7 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { GridFSBucket } from 'mongodb';
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { gzipSync, gunzipSync } from 'zlib';
 import { lookup } from 'dns/promises';
 import { isIP } from 'net';
@@ -804,6 +804,111 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
   async listPlatformSubscriptionInvoices(userId: string) {
     this.assertPlatformAdmin(userId);
     return this.subscriptionInvoices.find({}).populate('tenantId', 'name slug subscriptionPlan').sort({ createdAt: -1 }).limit(200).lean();
+  }
+
+  async createSubscriptionCheckout(tenantId: string, userId: string, invoiceId: string) {
+    this.identity(tenantId, userId);
+    if (!Types.ObjectId.isValid(invoiceId)) throw new BadRequestException('Invalid subscription invoice ID');
+    const invoice: any = await this.subscriptionInvoices.findOne(tenantFilter(tenantId, {
+      _id: new Types.ObjectId(invoiceId), status: 'DUE',
+    })).lean();
+    if (!invoice) throw new NotFoundException('Due subscription invoice not found');
+    const keyId = this.config.get<string>('RAZORPAY_KEY_ID') || '';
+    const keySecret = this.config.get<string>('RAZORPAY_KEY_SECRET') || '';
+    if (!keyId || !keySecret) throw new ServiceUnavailableException('Razorpay checkout is not configured');
+    if (invoice.gatewayOrderId && invoice.paymentGateway === 'RAZORPAY') {
+      return { provider: 'RAZORPAY', keyId, orderId: invoice.gatewayOrderId, amount: invoice.amountPaise, currency: invoice.currency, invoiceId: String(invoice._id) };
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch('https://api.razorpay.com/v1/orders', {
+        method: 'POST', redirect: 'error', signal: controller.signal,
+        headers: {
+          authorization: 'Basic ' + Buffer.from(keyId + ':' + keySecret).toString('base64'),
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: invoice.amountPaise, currency: invoice.currency, receipt: invoice.invoiceNumber,
+          notes: { invoiceId: String(invoice._id), tenantId },
+        }),
+      });
+      const payload: any = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.id) throw new ServiceUnavailableException('Payment gateway could not create a checkout order');
+      const saved = await this.subscriptionInvoices.findOneAndUpdate(
+        tenantFilter(tenantId, { _id: invoice._id, status: 'DUE', gatewayOrderId: { $in: ['', null] } }),
+        { $set: { paymentGateway: 'RAZORPAY', gatewayOrderId: String(payload.id) } },
+        { new: true },
+      ).lean();
+      if (!saved) {
+        const current: any = await this.subscriptionInvoices.findOne(tenantFilter(tenantId, { _id: invoice._id })).lean();
+        if (current?.gatewayOrderId !== payload.id) throw new ConflictException('Subscription checkout was initialized concurrently; reload the invoice');
+      }
+      return { provider: 'RAZORPAY', keyId, orderId: String(payload.id), amount: invoice.amountPaise, currency: invoice.currency, invoiceId: String(invoice._id) };
+    } finally { clearTimeout(timeout); }
+  }
+
+  async handleRazorpayWebhook(rawBody: Buffer | undefined, signature: string | undefined) {
+    const webhookSecret = this.config.get<string>('RAZORPAY_WEBHOOK_SECRET') || '';
+    if (!webhookSecret || !rawBody?.length || !signature || !/^[a-f0-9]{64}$/i.test(signature)) {
+      throw new ForbiddenException('Invalid payment gateway webhook signature');
+    }
+    const expected = createHmac('sha256', webhookSecret).update(rawBody).digest();
+    const received = Buffer.from(signature, 'hex');
+    if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
+      throw new ForbiddenException('Invalid payment gateway webhook signature');
+    }
+    let event: any;
+    try { event = JSON.parse(rawBody.toString('utf8')); } catch { throw new BadRequestException('Invalid payment gateway webhook payload'); }
+    if (event?.event !== 'payment.captured') return { received: true, processed: false, reason: 'EVENT_IGNORED' };
+    const payment = event?.payload?.payment?.entity;
+    const orderId = String(payment?.order_id || '');
+    const paymentId = String(payment?.id || '');
+    if (!orderId || !paymentId || !Number.isSafeInteger(Number(payment?.amount)) || !String(payment?.currency || '')) {
+      throw new BadRequestException('Payment capture payload is incomplete');
+    }
+    const session = await this.connection.startSession();
+    try {
+      let result: any = null;
+      await session.withTransaction(async () => {
+        const invoice: any = await this.subscriptionInvoices.findOne({ gatewayOrderId: orderId, paymentGateway: 'RAZORPAY' }).session(session).lean();
+        if (!invoice) throw new NotFoundException('Subscription invoice for payment order was not found');
+        if (Number(payment.amount) !== Number(invoice.amountPaise) || payment.currency !== invoice.currency) {
+          throw new ConflictException('Captured payment amount or currency does not match the subscription invoice');
+        }
+        if (invoice.status === 'PAID') {
+          if (invoice.paymentReference !== paymentId) throw new ConflictException('Subscription invoice was settled by a different payment');
+          result = { received: true, processed: false, reason: 'DUPLICATE_PAYMENT_EVENT', invoiceId: String(invoice._id) };
+          return;
+        }
+        if (invoice.status !== 'DUE') throw new ConflictException('Subscription invoice is not payable');
+        const updated = await this.subscriptionInvoices.findOneAndUpdate(
+          { _id: invoice._id, status: 'DUE', gatewayOrderId: orderId },
+          { $set: { status: 'PAID', paidAt: new Date(), paymentReference: paymentId } },
+          { new: true, session },
+        ).lean();
+        if (!updated) throw new ConflictException('Subscription invoice payment was concurrently processed');
+        const planLimits: Record<string, { maxUsers: number; maxProducts: number; maxBranches: number }> = {
+          starter: { maxUsers: 3, maxProducts: 1000, maxBranches: 1 },
+          growth: { maxUsers: 10, maxProducts: 5000, maxBranches: 3 },
+          business: { maxUsers: 25, maxProducts: 25000, maxBranches: 10 },
+          enterprise: { maxUsers: 1000, maxProducts: 1000000, maxBranches: 1000 },
+        };
+        await this.tenants.updateOne(
+          { _id: invoice.tenantId },
+          { $set: { subscriptionPlan: invoice.plan, ...planLimits[invoice.plan], subscriptionStatus: 'active', billingStatus: 'CURRENT', subscriptionPeriodStart: invoice.periodStart, subscriptionPeriodEnd: invoice.periodEnd } },
+          { session },
+        );
+        await this.saasAudit.create([{
+          tenantId: invoice.tenantId, actorId: invoice.requestedBy,
+          previousValues: { billingStatus: 'PAST_DUE' },
+          newValues: { billingStatus: 'CURRENT', subscriptionPlan: invoice.plan, subscriptionPeriodEnd: invoice.periodEnd },
+          reason: 'Razorpay payment captured: ' + paymentId,
+        }], { session });
+        result = { received: true, processed: true, invoiceId: String(invoice._id), paymentId };
+      });
+      return result;
+    } finally { await session.endSession(); }
   }
 
   async recordSubscriptionPayment(userId: string, invoiceId: string, dto: RecordSubscriptionPaymentDto) {

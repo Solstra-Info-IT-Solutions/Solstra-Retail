@@ -18,6 +18,8 @@ describe('ReportsService validation', () => {
       journals as any,
       purchases as any,
       {} as any,
+      { countDocuments: jest.fn() } as any,
+      { countDocuments: jest.fn() } as any,
       gstSubmissions as any,
       {} as any,
     );
@@ -43,6 +45,13 @@ describe('ReportsService validation', () => {
     expect(result.content).toContain('Cash &amp; Bank');
     expect(result.content).toContain('<AMOUNT>-100.00</AMOUNT>');
     expect(result.content).toContain('<AMOUNT>100.00</AMOUNT>');
+  });
+
+  it('rejects invalid migration export entity, cursor and tenant context', async () => {
+    const { service } = createService();
+    await expect(service.exportMigrationRecords('invalid-tenant', 'customers')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.exportMigrationRecords('507f1f77bcf86cd799439011', 'unknown')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.exportMigrationRecords('507f1f77bcf86cd799439011', 'customers', 'bad-cursor')).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects invalid tenant context for Tally XML and migration preflight', async () => {

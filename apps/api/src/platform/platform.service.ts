@@ -20,13 +20,13 @@ import { User } from '../auth/schemas/user.schema';
 import { Product } from '../products/schemas/product.schema';
 import { WarehouseStock } from '../inventory/schemas/warehouse-stock.schema';
 import {
-  AutomationExecution, AutomationRule, BackupArtifact, BackupPolicy, BackupRestoreDrill, OfflineSyncRecord, PlatformNotification, SaasAdminAudit,
+  AutomationExecution, AutomationRule, BackupArtifact, BackupPolicy, BackupRestoreDrill, OfflineDevice, OfflineSyncRecord, PlatformNotification, SaasAdminAudit,
   WebhookDelivery, WebhookIntegration, CommunicationProvider, CommunicationDelivery, SubscriptionInvoice, BackupReplicationEvent,
 } from './schemas/platform.schema';
 import {
   BackupPolicyDto, CreateAutomationRuleDto, CreateWebhookDto, OfflineSyncBatchDto,
   TriggerAutomationDto, UpdateAutomationRuleDto, UpdateSaasTenantDto,
-  UpdateWebhookDto, VerifyBackupDto, CreateCommunicationProviderDto, SendCommunicationDto, RecordSubscriptionPaymentDto,
+  UpdateWebhookDto, VerifyBackupDto, RegisterOfflineDeviceDto, CreateCommunicationProviderDto, SendCommunicationDto, RecordSubscriptionPaymentDto,
 } from './dto/platform.dto';
 
 const EVENT_TYPES = ['MANUAL', 'SALE_CREATED', 'LOW_STOCK', 'EXPENSE_PENDING_APPROVAL'];
@@ -56,6 +56,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     @InjectModel(WebhookIntegration.name) private readonly integrations: Model<any>,
     @InjectModel(WebhookDelivery.name) private readonly deliveries: Model<any>,
     @InjectModel(OfflineSyncRecord.name) private readonly syncRecords: Model<any>,
+    @InjectModel(OfflineDevice.name) private readonly offlineDevices: Model<any>,
     @InjectModel(BackupPolicy.name) private readonly backupPolicies: Model<any>,
     @InjectModel(BackupArtifact.name) private readonly backupArtifacts: Model<any>,
     @InjectModel(SaasAdminAudit.name) private readonly saasAudit: Model<any>,

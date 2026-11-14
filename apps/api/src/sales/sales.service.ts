@@ -362,6 +362,12 @@ export class SalesService {
 
         let selectedWarehouse: any = null;
         const warehouseStockMap = new Map<string, any>();
+        if (!dto.warehouseId) {
+          const allocatedCount = await this.warehouseStocks.countDocuments(tenantFilter(tenantId, {
+            productId: { $in: Array.from(productMap.values()).map((product: any) => product._id) },
+          })).session(session);
+          if (allocatedCount > 0) throw new BadRequestException('Select a warehouse for this sale because this product has warehouse-level stock allocations.');
+        }
         if (dto.warehouseId) {
           if (!Types.ObjectId.isValid(dto.warehouseId)) throw new BadRequestException('Invalid warehouse ID');
           selectedWarehouse = await this.warehouses.findOne(tenantFilter(tenantId, {

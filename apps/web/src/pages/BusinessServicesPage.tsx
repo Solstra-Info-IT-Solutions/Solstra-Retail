@@ -1,7 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client';
-import { useAuth } from '../auth/AuthContext';
-import { Cloud, CreditCard, Mail, MessageSquare, RefreshCw, Send, ShieldCheck } from 'lucide-react';
+import { Cloud, CreditCard, MessageSquare, RefreshCw, Send, ShieldCheck } from 'lucide-react';
 
 type Provider={_id:string;name:string;channel:string;endpointUrl:string;enabled:boolean};
 type Delivery={_id:string;channel:string;recipient:string;status:string;createdAt:string;lastError?:string;providerId:any};
@@ -13,7 +12,7 @@ const field:React.CSSProperties={width:'100%',padding:'10px 12px',border:'1px so
 const button:React.CSSProperties={border:0,borderRadius:9,padding:'10px 14px',background:'#171717',color:'#fff',fontWeight:700,cursor:'pointer'};
 const money=(p:number)=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(p/100);
 export default function BusinessServicesPage(){
- const {user}=useAuth();const [providers,setProviders]=useState<Provider[]>([]),[deliveries,setDeliveries]=useState<Delivery[]>([]),[invoices,setInvoices]=useState<Invoice[]>([]),[plans,setPlans]=useState<any[]>([]),[backups,setBackups]=useState<Backup[]>([]),[replication,setReplication]=useState<Replication[]>([]),[platformInvoices,setPlatformInvoices]=useState<Invoice[]>([]);
+ const [providers,setProviders]=useState<Provider[]>([]),[deliveries,setDeliveries]=useState<Delivery[]>([]),[invoices,setInvoices]=useState<Invoice[]>([]),[plans,setPlans]=useState<any[]>([]),[backups,setBackups]=useState<Backup[]>([]),[replication,setReplication]=useState<Replication[]>([]),[platformInvoices,setPlatformInvoices]=useState<Invoice[]>([]);
  const [provider,setProvider]=useState({name:'',channel:'EMAIL',endpointUrl:'',apiToken:''});
  const [message,setMessage]=useState({channel:'EMAIL',recipient:'',subject:'',message:''});
  const [paymentRefs,setPaymentRefs]=useState<Record<string,string>>({});

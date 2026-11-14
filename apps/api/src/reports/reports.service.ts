@@ -28,6 +28,7 @@ import { JournalEntry, JournalEntryDocument } from '../accounting/schemas/journa
 import { Purchase, PurchaseDocument } from '../purchases/schemas/purchase.schema';
 import { Tenant } from '../tenants/schemas/tenant.schema';
 import { GstEInvoiceSubmission } from './schemas/gst-einvoice-submission.schema';
+import { GstComplianceSubmission } from './schemas/gst-compliance-submission.schema';
 
 type DateRange = {
   start: Date;
@@ -63,6 +64,9 @@ export class ReportsService {
 
     @InjectModel(GstEInvoiceSubmission.name)
     private readonly gstSubmissions: Model<any>,
+
+    @InjectModel(GstComplianceSubmission.name)
+    private readonly gstComplianceSubmissions: Model<any>,
   ) {}
 
   private resolveRange(dto: ReportDateRangeDto): DateRange {
@@ -150,6 +154,98 @@ export class ReportsService {
     ]);
 
     return result[0]?.total ?? 0;
+  }
+
+  async submitGstCompliance(tenantId: string, submissionType: string, reference: string) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant context');
+    if (!['GSTR1', 'GSTR3B', 'EWAY_BILL'].includes(submissionType)) throw new BadRequestException('Unsupported GST submission type');
+    let periodKey = '';
+    let sourceReference = '';
+    let payload: any;
+    if (submissionType === 'EWAY_BILL') {
+      if (!Types.ObjectId.isValid(reference)) throw new BadRequestException('Invalid invoice ID');
+      const invoice: any = await this.invoices.findOne(tenantFilter(tenantId, {
+        _id: new Types.ObjectId(reference), status: 'ISSUED',
+      })).lean();
+      if (!invoice) throw new BadRequestException('Issued invoice not found in this workspace');
+      if (!invoice.customerName || !invoice.items?.length || !invoice.grandTotal) throw new BadRequestException('Invoice is missing required e-way bill source data');
+      periodKey = new Date(invoice.invoiceDate).toISOString().slice(0, 10);
+      sourceReference = String(invoice._id);
+      payload = {
+        contract: 'SOLSTRA_GST_EWAY_BILL_V1',
+        invoice: {
+          invoiceNumber: invoice.invoiceNumber, invoiceDate: invoice.invoiceDate,
+          seller: { name: invoice.sellerName, gstin: invoice.sellerGstin, stateCode: invoice.sellerStateCode, address: invoice.sellerAddress },
+          recipient: { name: invoice.customerName, gstin: invoice.customerGstin, stateCode: invoice.placeOfSupplyStateCode },
+          items: invoice.items, taxableValue: invoice.taxableValue, totalTax: invoice.totalTax, grandTotal: invoice.grandTotal,
+        },
+        transport: { vehicleNumber: invoice.transportVehicleNumber || null, transporterId: invoice.transporterId || null, distanceKm: invoice.transportDistanceKm || null },
+      };
+    } else {
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(reference)) throw new BadRequestException('GST return period must use YYYY-MM format');
+      const [year, month] = reference.split('-').map(Number);
+      const start = new Date(year, month - 1, 1);
+      const end = new Date(year, month, 0);
+      if (end.getTime() >= Date.now()) throw new BadRequestException('GST return period can only be submitted after the period has ended');
+      const range = { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
+      payload = submissionType === 'GSTR1'
+        ? { contract: 'SOLSTRA_GST_RETURN_V1', returnType: 'GSTR1', data: await this.gstr1(tenantId, range) }
+        : { contract: 'SOLSTRA_GST_RETURN_V1', returnType: 'GSTR3B', data: await this.gstr3b(tenantId, range) };
+      periodKey = reference;
+      sourceReference = reference;
+      if (submissionType === 'GSTR3B' && payload.data.inwardSupplies?.unclassifiedPurchaseCount > 0) {
+        throw new BadRequestException('GSTR-3B submission blocked: resolve unclassified inward GST purchase records before sending');
+      }
+    }
+    const endpoint = process.env.GST_GSP_ADAPTER_URL || '';
+    const token = process.env.GST_GSP_ADAPTER_TOKEN || '';
+    if (!endpoint || !token) throw new ServiceUnavailableException('GST GSP adapter is not configured');
+    let url: URL;
+    try { url = new URL(endpoint); } catch { throw new BadRequestException('GST GSP adapter URL is invalid'); }
+    if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443') ||
+      ['localhost', '127.0.0.1', '::1'].includes(url.hostname.toLowerCase()) ||
+      url.hostname.endsWith('.local') || url.hostname.endsWith('.internal')) {
+      throw new BadRequestException('GST GSP adapter must be a public HTTPS endpoint on port 443');
+    }
+    const payloadJson = JSON.stringify(payload);
+    const payloadSha256 = createHash('sha256').update(payloadJson).digest('hex');
+    const filter = tenantFilter(tenantId, { submissionType, periodKey, sourceReference });
+    const existing: any = await this.gstComplianceSubmissions.findOne(filter).lean();
+    if (existing?.status === 'SUBMITTED') {
+      if (existing.payloadSha256 !== payloadSha256) throw new BadRequestException('A different payload is already filed for this GST period/source; use the GSP amendment workflow');
+      return { status: 'SUBMITTED', acknowledgementNumber: existing.acknowledgementNumber, providerReference: existing.providerReference, duplicate: true };
+    }
+    const submission: any = await this.gstComplianceSubmissions.findOneAndUpdate(
+      filter,
+      { $set: { payloadSha256, status: 'PENDING', lastError: '' }, $inc: { attempts: 1 } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    ).lean();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST', redirect: 'error', signal: controller.signal,
+        headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', 'idempotency-key': String(submission._id), 'x-solstra-gst-submission-type': submissionType },
+        body: payloadJson,
+      });
+      const result: any = await response.json().catch(() => ({}));
+      if (!response.ok || !(result.ackNo || result.acknowledgementNumber) || !(result.referenceId || result.requestId)) {
+        const message = String(result.message || result.error || 'GSP adapter did not return acknowledgement details').slice(0, 500);
+        await this.gstComplianceSubmissions.updateOne(tenantFilter(tenantId, { _id: submission._id }), { $set: { status: 'FAILED', lastError: message } });
+        throw new BadRequestException(message);
+      }
+      const ackDate = result.ackDt ? new Date(result.ackDt) : new Date();
+      await this.gstComplianceSubmissions.updateOne(tenantFilter(tenantId, { _id: submission._id }), {
+        $set: { status: 'SUBMITTED', providerReference: String(result.referenceId || result.requestId).slice(0, 120), acknowledgementNumber: String(result.ackNo || result.acknowledgementNumber).slice(0, 120), acknowledgementDate: Number.isNaN(ackDate.getTime()) ? new Date() : ackDate, submittedAt: new Date(), lastError: '' },
+      });
+      return { status: 'SUBMITTED', submissionType, periodKey, acknowledgementNumber: result.ackNo || result.acknowledgementNumber, providerReference: result.referenceId || result.requestId, duplicate: false };
+    } catch (error: any) {
+      if (!(error instanceof BadRequestException)) {
+        await this.gstComplianceSubmissions.updateOne(tenantFilter(tenantId, { _id: submission._id }), { $set: { status: 'FAILED', lastError: String(error?.message || 'GSP request failed').slice(0, 500) } });
+        throw new ServiceUnavailableException('GST GSP submission failed; confirm provider status before retrying');
+      }
+      throw error;
+    } finally { clearTimeout(timeout); }
   }
 
   async submitGstEInvoice(tenantId: string, invoiceId: string) {

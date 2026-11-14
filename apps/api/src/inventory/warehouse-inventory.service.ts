@@ -111,9 +111,10 @@ export class WarehouseInventoryService {
 
   async listWarehouseStock(tenantId: string, warehouseId: string) {
     if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(warehouseId)) throw new BadRequestException('Invalid tenant or warehouse ID');
-    const warehouse = await this.warehouses.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(warehouseId), isDeleted: false })).lean();
+    const warehouseObjectId = new Types.ObjectId(warehouseId);
+    const warehouse = await this.warehouses.findOne(tenantFilter(tenantId, { _id: warehouseObjectId, isDeleted: false })).lean();
     if (!warehouse) throw new NotFoundException('Warehouse not found');
-    const items = await this.stocks.find(tenantFilter(tenantId, { warehouseId: warehouse._id })).populate('productId', 'name sku barcode unit').sort({ updatedAt: -1 }).lean();
+    const items = await this.stocks.find(tenantFilter(tenantId, { warehouseId: warehouseObjectId })).populate('productId', 'name sku barcode unit').sort({ updatedAt: -1 }).lean();
     return { items, total: items.length };
   }
 

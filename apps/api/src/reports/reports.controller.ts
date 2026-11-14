@@ -135,6 +135,16 @@ export class ReportsController {
   }
 
   @Permissions('reports.view')
+  @Get('reports/analytics/demand-forecast')
+  demandForecast(@Req() req: AuthenticatedRequest, @Query('horizonDays') horizonDays = '30') {
+    const parsed = Number(horizonDays);
+    if (!Number.isInteger(parsed) || parsed < 7 || parsed > 90) {
+      throw new BadRequestException('Forecast horizon must be between 7 and 90 days');
+    }
+    return this.reportsService.demandForecast(req.user.tenantId, parsed);
+  }
+
+  @Permissions('reports.view')
   @Get('reports/analytics/overview')
   advancedAnalytics(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
     return this.reportsService.advancedAnalytics(req.user.tenantId, query);

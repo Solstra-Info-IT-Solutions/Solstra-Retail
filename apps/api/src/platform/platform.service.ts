@@ -147,8 +147,11 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
           results.push({ ruleId: String(rule._id), status: 'SKIPPED_IN_PROGRESS' });
           continue;
         }
-        if (execution?.status === 'FAILED' || execution?.status === 'PROCESSING') {
-          await this.executions.updateOne(tenantFilter(tenantId, { _id: execution._id, status: execution.status }), { $set: { status: 'PROCESSING', errorMessage: '', executedAt: new Date() } });
+        if (execution?.status === 'FAILED') {
+          await this.executions.updateOne(tenantFilter(tenantId, { _id: execution._id, status: 'FAILED' }), { $set: { status: 'PROCESSING', errorMessage: '', executedAt: new Date() } });
+        } else if (execution?.status === 'PROCESSING') {
+          const recovered = await this.executions.updateOne(tenantFilter(tenantId, { _id: execution._id, status: 'PROCESSING', executedAt: execution.executedAt }), { $set: { status: 'PROCESSING', errorMessage: '', executedAt: new Date() } });
+          if (!recovered.matchedCount) { results.push({ ruleId: String(rule._id), status: 'SKIPPED_IN_PROGRESS' }); continue; }
         } else {
           try {
             [execution] = await this.executions.create([{
@@ -508,12 +511,24 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
 
   async runScheduledBackupJobs() {
     if (!this.connection.db) return { processed: 0 };
-    const due = await this.backupPolicies.find({ enabled: true, nextRunAt: { $lte: new Date() } }).limit(10).lean();
+    const now = new Date();
+    const staleRunCutoff = new Date(now.getTime() - 30 * 60 * 1000);
+    const due = await this.backupPolicies.find({
+      enabled: true,
+      $or: [{ nextRunAt: { $lte: now } }, { lastStatus: 'RUNNING', updatedAt: { $lte: staleRunCutoff } }],
+    }).limit(10).lean();
     let processed = 0;
     for (const policy of due) {
       const nextRunAt = this.nextBackupDate(policy.frequency);
+      const claimFilter: any = { _id: policy._id, tenantId: policy.tenantId, enabled: true };
+      if (policy.lastStatus === 'RUNNING' && new Date(policy.updatedAt).getTime() <= staleRunCutoff.getTime()) {
+        claimFilter.lastStatus = 'RUNNING';
+        claimFilter.updatedAt = policy.updatedAt;
+      } else {
+        claimFilter.nextRunAt = { $lte: new Date() };
+      }
       const claimed = await this.backupPolicies.findOneAndUpdate(
-        { _id: policy._id, tenantId: policy.tenantId, enabled: true, nextRunAt: { $lte: new Date() } },
+        claimFilter,
         { $set: { nextRunAt, lastStatus: 'RUNNING' } },
         { new: true },
       ).lean();

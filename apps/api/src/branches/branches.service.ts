@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { tenantFilter } from '../common/tenant-scoped.service';
 import { Branch, BranchDocument } from './schemas/branch.schema';
 import { Warehouse, WarehouseDocument } from './schemas/warehouse.schema';
+import { WarehouseStock } from '../inventory/schemas/warehouse-stock.schema';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
 import { CreateWarehouseDto } from './dto/create-warehouse.dto';
@@ -14,6 +15,7 @@ export class BranchesService {
   constructor(
     @InjectModel(Branch.name) private readonly branches: Model<BranchDocument>,
     @InjectModel(Warehouse.name) private readonly warehouses: Model<WarehouseDocument>,
+    @InjectModel(WarehouseStock.name) private readonly warehouseStocks: Model<any>,
   ) {}
 
   async createBranch(tenantId: string, dto: CreateBranchDto) {
@@ -51,6 +53,10 @@ export class BranchesService {
     const branch = await this.findBranch(tenantId, id);
     const activeWarehouses = await this.warehouses.countDocuments(tenantFilter(tenantId, { branchId: branch._id, isDeleted: false, isActive: true }));
     if (activeWarehouses) throw new ConflictException('Deactivate or remove all active warehouses before deleting this branch');
+    const branchWarehouses = await this.warehouses.find(tenantFilter(tenantId, { branchId: branch._id })).select('_id').lean();
+    const warehouseIds = branchWarehouses.map((warehouse) => warehouse._id);
+    const stockOnHand = warehouseIds.length ? await this.warehouseStocks.countDocuments(tenantFilter(tenantId, { warehouseId: { $in: warehouseIds }, quantity: { $gt: 0 } })) : 0;
+    if (stockOnHand) throw new ConflictException('Branch cannot be archived while any of its warehouses contain stock');
     await this.branches.updateOne(tenantFilter(tenantId, { _id: branch._id }), { $set: { isDeleted: true, isActive: false, isPrimary: false, deletedAt: new Date() } });
     return { message: 'Branch archived', branchId: String(branch._id) };
   }
@@ -85,6 +91,8 @@ export class BranchesService {
   async removeWarehouse(tenantId: string, branchId: string, id: string) {
     const branch = await this.findBranch(tenantId, branchId);
     const warehouse = await this.findWarehouse(tenantId, branch._id, id);
+    const stockOnHand = await this.warehouseStocks.countDocuments(tenantFilter(tenantId, { warehouseId: warehouse._id, quantity: { $gt: 0 } }));
+    if (stockOnHand) throw new ConflictException('Warehouse cannot be archived while it contains stock; transfer or adjust the stock first');
     await this.warehouses.updateOne(tenantFilter(tenantId, { _id: warehouse._id, branchId: branch._id }), { $set: { isDeleted: true, isActive: false, isDefault: false, deletedAt: new Date() } });
     return { message: 'Warehouse archived', warehouseId: String(warehouse._id) };
   }

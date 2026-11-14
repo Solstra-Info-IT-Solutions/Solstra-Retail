@@ -22,6 +22,22 @@ describe('PlatformService security boundaries', () => {
     await expect(service.listNotifications('bad-tenant', userId)).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('blocks reuse of an offline idempotency key with a different payload', async () => {
+    const service: any = createService();
+    service.syncRecords = {
+      findOne: jest.fn(() => ({ lean: async () => ({
+        _id: '507f1f77bcf86cd799439099', status: 'FAILED',
+        payloadSha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      }) })),
+    };
+    const result = await service.syncOfflineSales(tenantId, userId, {
+      operations: [{ type: 'SALE', idempotencyKey: 'offline-key-123', payload: { idempotencyKey: 'offline-key-123', items: [] } }],
+    });
+    expect(result.results[0].status).toBe('CONFLICT');
+    expect(result.results[0].error).toContain('different invoice payload');
+    expect(service.syncRecords.findOne).toHaveBeenCalled();
+  });
+
   it('rejects corrupt backup archives', async () => {
     const service = createService();
     await expect(service.verifyBackup(tenantId, { archiveBase64: Buffer.from('not-gzip').toString('base64') }))

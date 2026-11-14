@@ -246,16 +246,16 @@ export class ReportsService {
         body: payloadJson,
       });
       const result: any = await response.json().catch(() => ({}));
-      if (!response.ok || !(result.ackNo || result.acknowledgementNumber) || !(result.referenceId || result.requestId)) {
+      if (!response.ok || !(result.ackNo || result.acknowledgementNumber || result.ewbNo) || !(result.referenceId || result.requestId)) {
         const message = String(result.message || result.error || 'GSP adapter did not return acknowledgement details').slice(0, 500);
         await this.gstComplianceSubmissions.updateOne(tenantFilter(tenantId, { _id: submission._id }), { $set: { status: 'FAILED', lastError: message } });
         throw new BadRequestException(message);
       }
       const ackDate = result.ackDt ? new Date(result.ackDt) : new Date();
       await this.gstComplianceSubmissions.updateOne(tenantFilter(tenantId, { _id: submission._id }), {
-        $set: { status: 'SUBMITTED', providerReference: String(result.referenceId || result.requestId).slice(0, 120), acknowledgementNumber: String(result.ackNo || result.acknowledgementNumber).slice(0, 120), acknowledgementDate: Number.isNaN(ackDate.getTime()) ? new Date() : ackDate, submittedAt: new Date(), lastError: '' },
+        $set: { status: 'SUBMITTED', providerReference: String(result.referenceId || result.requestId).slice(0, 120), acknowledgementNumber: String(result.ackNo || result.acknowledgementNumber || result.ewbNo).slice(0, 120), acknowledgementDate: Number.isNaN(ackDate.getTime()) ? new Date() : ackDate, submittedAt: new Date(), lastError: '' },
       });
-      return { status: 'SUBMITTED', submissionType, periodKey, acknowledgementNumber: result.ackNo || result.acknowledgementNumber, providerReference: result.referenceId || result.requestId, duplicate: false };
+      return { status: 'SUBMITTED', submissionType, periodKey, acknowledgementNumber: result.ackNo || result.acknowledgementNumber || result.ewbNo, providerReference: result.referenceId || result.requestId, duplicate: false };
     } catch (error: any) {
       if (!(error instanceof BadRequestException)) {
         await this.gstComplianceSubmissions.updateOne(tenantFilter(tenantId, { _id: submission._id }), { $set: { status: 'FAILED', lastError: String(error?.message || 'GSP request failed').slice(0, 500) } });

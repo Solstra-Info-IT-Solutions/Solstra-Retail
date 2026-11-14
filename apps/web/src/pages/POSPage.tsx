@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
+import { listQueuedOfflineSales, queueOfflineSale, syncQueuedOfflineSales } from '../api/offlineSales';
 import {
   Search, Plus, Minus, Trash2, ShoppingCart, ScanBarcode,
   UserRound, CreditCard, Receipt, RefreshCw, CheckCircle2
@@ -101,6 +102,24 @@ export default function POSPage() {
   const [submitting, setSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [offlinePending, setOfflinePending] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    const refreshQueue = async () => {
+      try {
+        if (navigator.onLine) await syncQueuedOfflineSales();
+      } catch { /* Keep queued invoices locally when the network or server is unavailable. */ }
+      try {
+        const rows = await listQueuedOfflineSales();
+        if (active) setOfflinePending(rows.length);
+      } catch { if (active) setOfflinePending(0); }
+    };
+    const onOnline = () => { void refreshQueue(); };
+    void refreshQueue();
+    window.addEventListener('online', onOnline);
+    return () => { active = false; window.removeEventListener('online', onOnline); };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -293,6 +312,7 @@ export default function POSPage() {
     }
 
     setSubmitting(true);
+    let offlinePayload: Record<string, unknown> | null = null;
 
     try {
       const payload = {
@@ -314,6 +334,7 @@ export default function POSPage() {
           reference: paymentReference.trim() || undefined
         }] : []
       };
+      offlinePayload = payload;
       const response = await api.post<Record<string, unknown>>('/sales', payload);
       const invoiceNumber = response.data.invoiceNumber;
 
@@ -328,6 +349,22 @@ export default function POSPage() {
       setPaymentAmount('');
       setPaymentReference('');
     } catch (error: unknown) {
+      const networkError = error as { response?: unknown; request?: unknown };
+      if (offlinePayload && (!networkError.response || navigator.onLine === false)) {
+        try {
+          await queueOfflineSale(offlinePayload);
+          const queued = await listQueuedOfflineSales();
+          setOfflinePending(queued.length);
+          setCart([]);
+          setSuccessMessage('Invoice saved securely on this device. It will sync automatically when internet returns.');
+          setCustomerName(''); setCustomerPhone(''); setCustomerGstin('');
+          setPromotionCode(''); setPaymentAmount(''); setPaymentReference('');
+          return;
+        } catch {
+          setCheckoutError('Network unavailable and this invoice could not be saved locally. Keep this screen open and retry when storage or connectivity is restored.');
+          return;
+        }
+      }
       const message =
         (error as { response?: { data?: { message?: string | string[] } } })
           ?.response?.data?.message;
@@ -348,6 +385,7 @@ export default function POSPage() {
           <span className="pos-eyebrow">SALES WORKSPACE</span>
           <h1>Point of Sale</h1>
           <p>Fast billing, accurate invoices and effortless checkout.</p>
+          {offlinePending > 0 && <small className="pos-offline-queue">{offlinePending} invoice{offlinePending === 1 ? '' : 's'} waiting to sync</small>}
         </div>
         <div className="pos-heading-status">
           <span className="pos-live-dot" /> Live product catalogue

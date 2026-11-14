@@ -1,7 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 
-@Schema({ timestamps: true, collection: 'migration_import_runs', versionKey: false })
+@Schema({ timestamps: true, collection: 'migration_import_runs', versionKey: false, suppressReservedKeysWarning: true })
 export class MigrationImportRun {
   @Prop({ type: Types.ObjectId, ref: 'Tenant', required: true, index: true }) tenantId!: Types.ObjectId;
   @Prop({ type: String, required: true, maxlength: 80 }) runKey!: string;

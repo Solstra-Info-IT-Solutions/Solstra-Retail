@@ -16,6 +16,7 @@ import { SuppliersModule } from './suppliers/suppliers.module';
 import { ReportsModule } from './reports/reports.module';
 import { AccountingModule } from './accounting/accounting.module';
 import { ExpensesModule } from './expenses/expenses.module';
+import { BranchesModule } from './branches/branches.module';
 import { TrialGuard } from './common/guards/trial.guard';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -36,7 +37,7 @@ import { HealthController } from './health.controller';
     }),
     AuthModule, TenantsModule, ProductsModule, InventoryModule, SalesModule,
     CustomersModule, CategoriesModule, PurchasesModule, SuppliersModule,
-    ReportsModule, AccountingModule, ExpensesModule,
+    ReportsModule, AccountingModule, ExpensesModule, BranchesModule,
   ],
   controllers: [HealthController],
   providers: [

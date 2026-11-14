@@ -222,3 +222,25 @@ The Advanced Inventory workspace exposes batch receipts and expiry lists, serial
 - The API applies a process-local fixed-window rate limit before authentication: 10 requests per 15 minutes per client IP for login/register/refresh routes, and 300 requests per minute per client IP for other HTTP methods. Health checks are excluded.
 - Responses expose `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` and `Retry-After` headers.
 - This in-memory limiter protects a single API process. Multi-instance deployments must add a shared Redis/API-gateway limiter and configure trusted proxy handling at the ingress; this guard is not a distributed quota or DDoS mitigation service.
+
+
+## Controlled historical master-data import
+
+- Owner/admin endpoints: `POST /api/v1/reports/migration/import/preview`, `POST /api/v1/reports/migration/import/commit`, and `GET /api/v1/reports/migration/import/runs?page=1`.
+- The import API accepts 1–200 customer or supplier rows per request, rejects unknown fields, normalizes email/GSTIN values, validates phone/email/GSTIN/state code formats, and detects duplicates in the batch and current tenant data.
+- Commit requires a stable caller-generated run key. The tenant/run key is unique and bound to a SHA-256 payload fingerprint. Exact retries of completed/partial runs replay the saved outcome; reusing a key with changed content is rejected.
+- Imports create master records only. They do not create historical invoices, payments, inventory movements, GST submissions, accounting journals, customer balances or opening stock. Reconcile these through separate controlled workflows.
+- The Reports workspace accepts JSON arrays or exported JSON files containing an `items` array, previews the rows, and requires an explicit commit confirmation.
+
+## Subscription billing dunning
+
+- The platform worker marks tenants with overdue due invoices as `PAST_DUE` and emits tenant-wide in-app reminders no more than once per 24-hour window, up to seven reminders per invoice.
+- Reminder claims are atomic on the invoice record. Reminder notifications are audit-visible in the tenant notification centre. The worker does not suspend a workspace automatically or send external email/SMS/WhatsApp unless a configured provider and delivery workflow are explicitly used.
+- Razorpay checkout remains optional and requires `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET`. Payment status is authoritative only after a valid signed gateway webhook confirms capture and amount/currency match.
+
+## Offline POS reconciliation
+
+- Owner/admin can inspect tenant-wide sync records at `GET /api/v1/platform/offline/sync-records?page=1&status=FAILED`; other users see only their own sync records.
+- Each record exposes status, invoice reference/result, failure message, device identity and batch sequence without storing the full offline invoice payload in the server-side history.
+- Resolve a failed invoice from the original browser queue. Never manufacture a new idempotency key until the original payload and invoice status have been reconciled.
+

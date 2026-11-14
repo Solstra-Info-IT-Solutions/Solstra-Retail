@@ -436,6 +436,7 @@ export class SalesService {
         }
 
         const productMap = new Map<string, any>();
+        const batchAllocationsByProduct = new Map<string, Array<{ batchId: Types.ObjectId; quantity: number }>>();
         const requestedQuantities = new Map<string, number>();
 
         for (const item of dto.items) {
@@ -796,6 +797,55 @@ export class SalesService {
             ],
             { session },
           );
+
+          const batchCollection = this.connection.db?.collection('inventory_batches');
+          if (!batchCollection) throw new ConflictException('Inventory batch registry is unavailable');
+          const batchScope: any = { tenantId: new Types.ObjectId(tenantId), productId: product._id };
+          if (dto.warehouseId) batchScope.warehouseId = new Types.ObjectId(dto.warehouseId);
+          const batchCount = await batchCollection.countDocuments(batchScope, { session });
+          if (batchCount > 0) {
+            if (!dto.warehouseId) throw new BadRequestException(`Select a warehouse to consume batches for ${product.name}.`);
+            const availableBatches = await batchCollection.find({
+              ...batchScope, status: 'ACTIVE', expiresAt: { $gt: now }, quantity: { $gt: 0 },
+            }).sort({ expiresAt: 1, createdAt: 1 }).session(session).toArray();
+            const availableBatchQty = availableBatches.reduce((sum: number, row: any) => sum + Number(row.quantity || 0), 0);
+            if (availableBatchQty < quantity) throw new ConflictException(`Insufficient unexpired batch quantity for ${product.name}. Available batch units: ${availableBatchQty}.`);
+            let remaining = quantity;
+            const allocations: Array<{ batchId: Types.ObjectId; quantity: number }> = [];
+            for (const batchRow of availableBatches) {
+              if (remaining <= 0) break;
+              const take = Math.min(remaining, Number(batchRow.quantity));
+              const nextQuantity = Number(batchRow.quantity) - take;
+              const consumed = await batchCollection.updateOne(
+                { _id: batchRow._id, tenantId: new Types.ObjectId(tenantId), quantity: batchRow.quantity, status: 'ACTIVE' },
+                { $set: { quantity: nextQuantity, status: nextQuantity === 0 ? 'DEPLETED' : 'ACTIVE' } },
+                { session },
+              );
+              if (consumed.modifiedCount !== 1) throw new ConflictException('Batch stock changed during checkout; please retry');
+              allocations.push({ batchId: batchRow._id, quantity: take });
+              remaining -= take;
+            }
+            batchAllocationsByProduct.set(String(product._id), allocations);
+          }
+        }
+
+        for (const [productId, allocations] of batchAllocationsByProduct) {
+          const remainingAllocations = allocations.map(item => ({ ...item }));
+          for (const [index, item] of dto.items.entries()) {
+            if (item.productId !== productId) continue;
+            let needed = item.quantity;
+            const lineAllocations: Array<{ batchId: Types.ObjectId; quantity: number }> = [];
+            for (const allocation of remainingAllocations) {
+              if (needed <= 0) break;
+              if (allocation.quantity <= 0) continue;
+              const take = Math.min(needed, allocation.quantity);
+              lineAllocations.push({ batchId: allocation.batchId, quantity: take });
+              allocation.quantity -= take;
+              needed -= take;
+            }
+            if (needed !== 0) throw new ConflictException('Batch allocation did not cover all invoice line quantities');
+            invoiceItems[index].batchAllocations = lineAllocations;
+          }
         }
 
         const grandTotal = this.fromPaise(grandTotalPaise);

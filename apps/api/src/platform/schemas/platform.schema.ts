@@ -93,3 +93,18 @@ export class BackupPolicy {
 export type BackupPolicyDocument = HydratedDocument<BackupPolicy>;
 export const BackupPolicySchema = SchemaFactory.createForClass(BackupPolicy);
 BackupPolicySchema.index({ tenantId: 1 }, { unique: true });
+
+@Schema({ timestamps: true, collection: 'backup_artifacts', versionKey: false })
+export class BackupArtifact {
+  @Prop(tenantRef) tenantId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, required: true }) gridFsId!: Types.ObjectId;
+  @Prop({ type: String, required: true, maxlength: 180 }) fileName!: string;
+  @Prop({ type: String, required: true, maxlength: 64 }) checksumSha256!: string;
+  @Prop({ type: Number, required: true }) documentCount!: number;
+  @Prop({ type: Number, required: true }) compressedBytes!: number;
+  @Prop({ type: Date, required: true, index: true }) expiresAt!: Date;
+}
+export type BackupArtifactDocument = HydratedDocument<BackupArtifact>;
+export const BackupArtifactSchema = SchemaFactory.createForClass(BackupArtifact);
+BackupArtifactSchema.index({ tenantId: 1, createdAt: -1 });
+BackupArtifactSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

@@ -529,7 +529,21 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         communicationDeliveries += result.processed;
       } catch { /* Failed communication attempts retain retry state. */ }
     }
-    return { backups, webhookDeliveries, communicationDeliveries, expiredBatches };
+    const replicationRetryCutoff = new Date(Date.now() - 15 * 60 * 1000);
+    const replicationRetries = await this.backupReplicationEvents.aggregate([
+      { $sort: { createdAt: -1 } },
+      { $group: { _id: { tenantId: '$tenantId', artifactId: '$artifactId' }, status: { $first: '$status' }, createdAt: { $first: '$createdAt' } } },
+      { $match: { status: 'FAILED', createdAt: { $lte: replicationRetryCutoff } } },
+      { $limit: 10 },
+    ]);
+    let retriedReplications = 0;
+    for (const retry of replicationRetries) {
+      try {
+        await this.replicateBackupArtifact(String(retry._id.tenantId), String(retry._id.artifactId));
+        retriedReplications += 1;
+      } catch { /* Replication event history records the retry failure. */ }
+    }
+    return { backups, webhookDeliveries, communicationDeliveries, expiredBatches, retriedReplications };
   }
 
   async runScheduledBackupJobs() {

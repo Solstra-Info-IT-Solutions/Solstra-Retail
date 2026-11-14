@@ -80,7 +80,7 @@ export class ApiRateLimitGuard implements CanActivate, OnModuleInit {
       const windowStart = Math.floor(now / duration) * duration;
       const resetAt = windowStart + duration;
       const id = createHash('sha256').update(key).digest('hex') + ':' + windowStart;
-      const collection = this.connection.db.collection('api_rate_limit_buckets');
+      const collection: any = this.connection.db.collection('api_rate_limit_buckets');
       const result: any = await collection.findOneAndUpdate(
         { _id: id },
         { $inc: { count: 1 }, $setOnInsert: { expiresAt: new Date(resetAt + 60_000), resetAt: new Date(resetAt) } },

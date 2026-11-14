@@ -120,4 +120,46 @@ describe('PlatformService security boundaries', () => {
     const service = createService('507f1f77bcf86cd799439099');
     await expect(service.platformUsageSummary(userId)).rejects.toBeInstanceOf(ForbiddenException);
   });
+  it('rejects invalid communication provider IDs before credential encryption', async () => {
+    const service = createService();
+    await expect(service.rotateCommunicationProviderSecret(tenantId, 'invalid-id', 'a-valid-provider-token'))
+      .rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects a stale offline batch sequence before processing any invoice', async () => {
+    const service: any = createService();
+    service.offlineDevices = {
+      findOneAndUpdate: jest.fn(() => ({ lean: async () => ({
+        _id: '507f1f77bcf86cd799439088', lastSyncSequence: 12,
+        lastSyncPayloadSha256: 'different-payload', lastSyncStatus: 'SUCCEEDED',
+      }) })),
+    };
+    await expect(service.syncOfflineSales(tenantId, userId, {
+      deviceId: 'b5f6a4c2-1d4e-4b2a-9f0c-123456789abc',
+      batchSequence: 12,
+      operations: [{ type: 'SALE', idempotencyKey: 'offline-key-123', payload: { idempotencyKey: 'offline-key-123' } }],
+    } as any)).rejects.toThrow('Offline sync sequence is stale');
+  });
+
+  it('replays a previously acknowledged offline batch without recreating invoices', async () => {
+    const service: any = createService();
+    const { createHash } = require('crypto');
+    const operations = [{ type: 'SALE', idempotencyKey: 'offline-key-123', payload: { idempotencyKey: 'offline-key-123' } }];
+    const hash = createHash('sha256').update(JSON.stringify(operations)).digest('hex');
+    service.offlineDevices = {
+      findOneAndUpdate: jest.fn(() => ({ lean: async () => ({
+        _id: '507f1f77bcf86cd799439088', lastSyncSequence: 13,
+        lastSyncPayloadSha256: hash, lastSyncStatus: 'SUCCEEDED',
+        lastSyncResult: { accepted: 1, results: [{ idempotencyKey: 'offline-key-123', status: 'SUCCEEDED' }] },
+      }) })),
+    };
+    service.sales = { createSale: jest.fn() };
+    const result = await service.syncOfflineSales(tenantId, userId, {
+      deviceId: 'b5f6a4c2-1d4e-4b2a-9f0c-123456789abc', batchSequence: 13, operations,
+    } as any);
+    expect(result.replayed).toBe(true);
+    expect(result.results[0].status).toBe('SUCCEEDED');
+    expect(service.sales.createSale).not.toHaveBeenCalled();
+  });
+
 });

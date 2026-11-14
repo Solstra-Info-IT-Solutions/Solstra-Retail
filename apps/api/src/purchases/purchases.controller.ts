@@ -2,6 +2,7 @@
   Body, Controller, Get, Param, Post, Query, Req,
 } from '@nestjs/common';
 import { Roles } from '../common/decorators/roles.decorator';
+import { Permissions } from '../common/decorators/permissions.decorator';
 import { PurchasesService } from './purchases.service';
 import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { ReceivePurchaseDto } from './dto/receive-purchase.dto';
@@ -19,11 +20,13 @@ export class PurchasesController {
     return this.purchasesService.create(req.user.tenantId, req.user.userId, dto);
   }
 
+  @Permissions('purchases.view')
   @Get()
   findAll(@Req() req: any, @Query() query: ListPurchasesDto) {
     return this.purchasesService.findAll(req.user.tenantId, query);
   }
 
+  @Permissions('purchases.view')
   @Get('itc-review-summary')
   itcReviewSummary(@Req() req: any) {
     return this.purchasesService.itcReviewSummary(req.user.tenantId);
@@ -35,6 +38,7 @@ export class PurchasesController {
     return this.purchasesService.reviewItc(req.user.tenantId, req.user.userId, id, dto);
   }
 
+  @Permissions('purchases.view')
   @Get(':id')
   findOne(@Req() req: any, @Param('id') id: string) {
     return this.purchasesService.findOne(req.user.tenantId, id);
@@ -52,6 +56,7 @@ export class PurchasesController {
     return this.purchasesService.addPayment(req.user.tenantId, req.user.userId, id, dto);
   }
 
+  @Permissions('purchases.view')
   @Get('supplier/:supplierId/ledger')
   supplierLedger(@Req() req: any, @Param('supplierId') supplierId: string, @Query() query: ListPurchasesDto) {
     return this.purchasesService.supplierLedger(req.user.tenantId, supplierId, query);

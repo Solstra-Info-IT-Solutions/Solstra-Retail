@@ -362,7 +362,7 @@ export class PurchasesService {
     })).sort((a, b) => a.productId.localeCompare(b.productId));
 
     const requestFingerprint = createHash('sha256')
-      .update(JSON.stringify({ items: normalizedItems, warehouseId: dto.warehouseId ?? null }))
+      .update(JSON.stringify(dto.warehouseId ? { items: normalizedItems, warehouseId: dto.warehouseId } : normalizedItems))
       .digest('hex');
     const session = await this.purchases.db.startSession();
     let result: PurchaseDocument | null = null;

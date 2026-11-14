@@ -68,8 +68,10 @@ export class WarehouseInventoryService {
         const source = await this.stocks.findOne(tenantFilter(tenantId, { warehouseId: warehouseIds[0], productId: product._id })).session(session);
         if (!source) throw new ConflictException('Source warehouse stock is not initialized for this product');
         if (source.quantity < dto.quantity) throw new BadRequestException('Insufficient stock in the source warehouse');
-        const valuePaise = Math.round(((source.averageCost || 0) + Number.EPSILON) * 100) * dto.quantity;
         const sourceValuePaise = Math.round(((source.inventoryValue || 0) + Number.EPSILON) * 100);
+        const valuePaise = dto.quantity === source.quantity
+          ? sourceValuePaise
+          : Math.round(sourceValuePaise * dto.quantity / source.quantity);
         const destination = await this.stocks.findOne(tenantFilter(tenantId, { warehouseId: warehouseIds[1], productId: product._id })).session(session);
         const sourceNewQty = source.quantity - dto.quantity;
         const sourceNewValuePaise = sourceValuePaise - valuePaise;

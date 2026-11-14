@@ -1277,18 +1277,24 @@ describe('Authentication HTTP E2E', () => {
     const ownerHeaders = { Authorization: `Bearer ${owner.body.accessToken}` };
     const tenantId = new Types.ObjectId(owner.body.tenant.id);
 
-    const staffRegistration = await registerAccount();
-    expect(staffRegistration.status).toBe(201);
+    const staffEmail = `e2e-staff-${randomUUID()}@example.test`;
+    const staffCreation = await request(app.getHttpServer())
+      .post('/api/v1/auth/users')
+      .set(ownerHeaders)
+      .send({ name: 'E2E Expense Staff', email: staffEmail, password });
+    expect(staffCreation.status).toBe(201);
+    createdUserIds.push(staffCreation.body.id);
     const staffUpdate = await users.updateOne(
-      { _id: staffRegistration.body.user.id },
-      { $set: { role: 'staff', permissions: ['expenses.create', 'expenses.view'], tenantId: owner.body.tenant.id } },
+      { _id: staffCreation.body.id, tenantId: owner.body.tenant.id },
+      { $set: { permissions: ['expenses.create', 'expenses.view'] } },
     );
     expect(staffUpdate.matchedCount).toBe(1);
     const staffLogin = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
-      .send({ email: staffRegistration.body.user.email, password });
+      .send({ email: staffEmail, password });
     expect(staffLogin.status).toBe(201);
     expect(staffLogin.body.user.role).toBe('staff');
+    expect(staffLogin.body.user.tenantId).toBe(owner.body.tenant.id);
     const staffHeaders = { Authorization: `Bearer ${staffLogin.body.accessToken}` };
 
     const pendingApproval = await request(app.getHttpServer())

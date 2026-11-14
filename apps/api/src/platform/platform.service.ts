@@ -670,6 +670,15 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
   }
 
   async runScheduledPlatformJobs() {
+    const expiredSubscriptionsResult = await this.tenants.updateMany(
+      {
+        status: 'active',
+        subscriptionStatus: 'active',
+        subscriptionPeriodEnd: { $lte: new Date(), $ne: null },
+      },
+      { $set: { subscriptionStatus: 'expired', billingStatus: 'PAST_DUE' } },
+    );
+    const expiredSubscriptions = expiredSubscriptionsResult.modifiedCount || 0;
     let expiredBatches = 0;
     if (this.connection.db) {
       const expiredResult = await this.connection.db.collection('inventory_batches').updateMany(
@@ -741,7 +750,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         retriedReplications += 1;
       } catch { /* Replication event history records the retry failure. */ }
     }
-    return { backups, recurringExpenses, webhookDeliveries, communicationDeliveries, billingReminders, expiredBatches, retriedReplications };
+    return { backups, recurringExpenses, webhookDeliveries, communicationDeliveries, billingReminders, expiredSubscriptions, expiredBatches, retriedReplications };
   }
 
   async runScheduledBackupJobs() {

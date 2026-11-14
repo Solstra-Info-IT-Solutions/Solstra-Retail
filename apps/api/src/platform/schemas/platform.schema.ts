@@ -75,6 +75,11 @@ export class OfflineDevice {
   @Prop({ type: String, required: true, trim: true, maxlength: 100 }) label!: string;
   @Prop({ type: Date, default: Date.now }) lastSeenAt!: Date;
   @Prop({ type: Date, default: null, index: true }) revokedAt?: Date | null;
+  @Prop({ type: Number, default: 0 }) lastSyncSequence!: number;
+  @Prop({ type: String, default: '', maxlength: 64 }) lastSyncPayloadSha256!: string;
+  @Prop({ type: String, default: 'NONE', enum: ['NONE', 'PROCESSING', 'SUCCEEDED'] }) lastSyncStatus!: string;
+  @Prop({ type: Object, default: null }) lastSyncResult?: Record<string, any> | null;
+  @Prop({ type: Date, default: null }) lastSyncAcknowledgedAt?: Date | null;
 }
 export type OfflineDeviceDocument = HydratedDocument<OfflineDevice>;
 export const OfflineDeviceSchema = SchemaFactory.createForClass(OfflineDevice);

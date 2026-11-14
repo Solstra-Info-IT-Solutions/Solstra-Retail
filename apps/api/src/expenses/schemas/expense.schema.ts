@@ -43,6 +43,8 @@ export class Expense {
   @Prop({ required: true, min: 0 }) dueAmount!: number;
   @Prop({ type: [ExpensePaymentSchema], default: [] }) payments!: ExpensePayment[];
   @Prop({ type: Types.ObjectId, ref: 'User', required: true }) createdBy!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'RecurringExpenseSchedule', default: undefined }) recurringScheduleId?: Types.ObjectId;
+  @Prop({ type: String, default: undefined }) recurringPeriod?: string;
 }
 export type ExpenseDocument = HydratedDocument<Expense>;
 export const ExpenseSchema = SchemaFactory.createForClass(Expense);
@@ -50,3 +52,5 @@ ExpenseSchema.index({ tenantId: 1, expenseDate: -1, createdAt: -1 });
 ExpenseSchema.index({ tenantId: 1, status: 1, expenseDate: -1 });
 ExpenseSchema.index({ tenantId: 1, category: 1, expenseDate: -1 });
 ExpenseSchema.index({ tenantId: 1, approvalStatus: 1, expenseDate: -1 });
+
+ExpenseSchema.index({ tenantId: 1, recurringScheduleId: 1, recurringPeriod: 1 }, { unique: true, partialFilterExpression: { recurringScheduleId: { $exists: true }, recurringPeriod: { $exists: true } } });

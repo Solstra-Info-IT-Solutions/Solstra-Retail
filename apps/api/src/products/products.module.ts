@@ -11,6 +11,7 @@ import { ProductsController } from './products.controller';
 import { ProductsService } from './products.service';
 import { Category, CategorySchema } from '../categories/schemas/category.schema';
 import { AccountingModule } from '../accounting/accounting.module';
+import { Tenant, TenantSchema } from '../tenants/schemas/tenant.schema';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { AccountingModule } from '../accounting/accounting.module';
     MongooseModule.forFeature([
       { name: Product.name, schema: ProductSchema },
       { name: Category.name, schema: CategorySchema },
+      { name: Tenant.name, schema: TenantSchema },
       {
         name: InventoryMovement.name,
         schema: InventoryMovementSchema,

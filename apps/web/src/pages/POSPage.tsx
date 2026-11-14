@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
+import { useAuth } from '../auth/AuthContext';
+import { cacheOfflineProducts, getOfflineProducts, listQueuedOfflineSales, queueOfflineSale, syncQueuedOfflineSales } from '../api/offlineSales';
 import {
   Search, Plus, Minus, Trash2, ShoppingCart, ScanBarcode,
   UserRound, CreditCard, Receipt, RefreshCw, CheckCircle2
@@ -81,6 +83,8 @@ function createIdempotencyKey(): string {
 }
 
 export default function POSPage() {
+  const { user } = useAuth();
+  const offlineScope = user?.tenantId && user?.id ? user.tenantId + ':' + user.id : '';
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [warehouseId, setWarehouseId] = useState('');
@@ -101,6 +105,24 @@ export default function POSPage() {
   const [submitting, setSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [offlinePending, setOfflinePending] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    const refreshQueue = async () => {
+      try {
+        if (navigator.onLine && offlineScope) await syncQueuedOfflineSales(offlineScope);
+      } catch { /* Keep queued invoices locally when the network or server is unavailable. */ }
+      try {
+        const rows = offlineScope ? await listQueuedOfflineSales(offlineScope) : [];
+        if (active) setOfflinePending(rows.length);
+      } catch { if (active) setOfflinePending(0); }
+    };
+    const onOnline = () => { void refreshQueue(); };
+    void refreshQueue();
+    window.addEventListener('online', onOnline);
+    return () => { active = false; window.removeEventListener('online', onOnline); };
+  }, [offlineScope]);
 
   useEffect(() => {
     let active = true;
@@ -113,8 +135,14 @@ export default function POSPage() {
           params: { search: search.trim(), page: 1, limit: 50 }
         });
         if (active) setProducts(response.data.items || []);
+        if (offlineScope) await cacheOfflineProducts((response.data.items || []) as unknown as Array<Record<string, unknown>>, offlineScope).catch(() => undefined);
       } catch {
-        if (active) setProductError('Products could not be loaded. Please retry.');
+        try {
+          const cached = offlineScope ? await getOfflineProducts<Product>(offlineScope) : [];
+          const query = search.trim().toLowerCase();
+          const filtered = query ? cached.filter(product => [product.name, product.sku, product.barcode].some(value => String(value || '').toLowerCase().includes(query))) : cached;
+          if (active) { setProducts(filtered.slice(0, 50)); setProductError(cached.length ? 'Offline catalogue: prices and stock are last-synced values. Server revalidates every invoice when synced.' : 'Products could not be loaded. Please retry.'); }
+        } catch { if (active) setProductError('Products could not be loaded and no offline catalogue is available.'); }
       } finally {
         if (active) setLoading(false);
       }
@@ -124,7 +152,7 @@ export default function POSPage() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [search]);
+  }, [search, offlineScope]);
 
   useEffect(() => {
     let active = true;
@@ -293,6 +321,7 @@ export default function POSPage() {
     }
 
     setSubmitting(true);
+    let offlinePayload: Record<string, unknown> | null = null;
 
     try {
       const payload = {
@@ -314,6 +343,7 @@ export default function POSPage() {
           reference: paymentReference.trim() || undefined
         }] : []
       };
+      offlinePayload = payload;
       const response = await api.post<Record<string, unknown>>('/sales', payload);
       const invoiceNumber = response.data.invoiceNumber;
 
@@ -328,6 +358,22 @@ export default function POSPage() {
       setPaymentAmount('');
       setPaymentReference('');
     } catch (error: unknown) {
+      const networkError = error as { response?: unknown; request?: unknown };
+      if (offlinePayload && (!networkError.response || navigator.onLine === false)) {
+        try {
+          await queueOfflineSale(offlinePayload, offlineScope);
+          const queued = await listQueuedOfflineSales(offlineScope);
+          setOfflinePending(queued.length);
+          setCart([]);
+          setSuccessMessage('Invoice saved securely on this device. It will sync automatically when internet returns.');
+          setCustomerName(''); setCustomerPhone(''); setCustomerGstin('');
+          setPromotionCode(''); setPaymentAmount(''); setPaymentReference('');
+          return;
+        } catch {
+          setCheckoutError('Network unavailable and this invoice could not be saved locally. Keep this screen open and retry when storage or connectivity is restored.');
+          return;
+        }
+      }
       const message =
         (error as { response?: { data?: { message?: string | string[] } } })
           ?.response?.data?.message;
@@ -348,6 +394,7 @@ export default function POSPage() {
           <span className="pos-eyebrow">SALES WORKSPACE</span>
           <h1>Point of Sale</h1>
           <p>Fast billing, accurate invoices and effortless checkout.</p>
+          {offlinePending > 0 && <small className="pos-offline-queue">{offlinePending} invoice{offlinePending === 1 ? '' : 's'} waiting to sync</small>}
         </div>
         <div className="pos-heading-status">
           <span className="pos-live-dot" /> Live product catalogue

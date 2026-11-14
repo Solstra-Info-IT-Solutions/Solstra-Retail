@@ -6,11 +6,12 @@ describe('BranchesService', () => {
   const branches = { findOne: jest.fn(), create: jest.fn(), updateMany: jest.fn(), find: jest.fn(), findOneAndUpdate: jest.fn(), updateOne: jest.fn() };
   const warehouses = { findOne: jest.fn(), create: jest.fn(), countDocuments: jest.fn(), find: jest.fn(), updateMany: jest.fn(), findOneAndUpdate: jest.fn(), updateOne: jest.fn() };
   const warehouseStocks = { countDocuments: jest.fn() };
+  const tenants = { findById: jest.fn() };
   let service: BranchesService;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new BranchesService(branches as any, warehouses as any, warehouseStocks as any);
+    service = new BranchesService(branches as any, warehouses as any, warehouseStocks as any, tenants as any);
   });
 
   it('rejects invalid tenant context before accessing branch data', async () => {

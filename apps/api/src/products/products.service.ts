@@ -8,6 +8,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 
 import { Product, ProductDocument } from './schemas/product.schema';
+import { Tenant } from '../tenants/schemas/tenant.schema';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ListProductsDto } from './dto/list-products.dto';
@@ -30,6 +31,7 @@ export class ProductsService {
     @InjectModel(Category.name)
     private readonly categories: Model<CategoryDocument>,
     private readonly accounting: AccountingService,
+    @InjectModel(Tenant.name) private readonly tenants: Model<any>,
   ) {}
 
   async create(
@@ -44,6 +46,11 @@ export class ProductsService {
   if (!Types.ObjectId.isValid(userId)) {
     throw new BadRequestException('Invalid user');
   }
+
+  const tenant: any = await this.tenants.findById(tenantId).select('maxProducts').lean();
+  if (!tenant) throw new NotFoundException('Workspace not found');
+  const productCount = await this.products.countDocuments(tenantFilter(tenantId, { isDeleted: false }));
+  if (productCount >= Number(tenant.maxProducts || 1000)) throw new ConflictException('Workspace product limit reached for the current subscription plan');
 
   const categoryData = await this.resolveCategory(tenantId, dto.categoryId);
 

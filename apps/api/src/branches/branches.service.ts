@@ -5,6 +5,7 @@ import { tenantFilter } from '../common/tenant-scoped.service';
 import { Branch, BranchDocument } from './schemas/branch.schema';
 import { Warehouse, WarehouseDocument } from './schemas/warehouse.schema';
 import { WarehouseStock } from '../inventory/schemas/warehouse-stock.schema';
+import { Tenant } from '../tenants/schemas/tenant.schema';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
 import { CreateWarehouseDto } from './dto/create-warehouse.dto';
@@ -16,10 +17,15 @@ export class BranchesService {
     @InjectModel(Branch.name) private readonly branches: Model<BranchDocument>,
     @InjectModel(Warehouse.name) private readonly warehouses: Model<WarehouseDocument>,
     @InjectModel(WarehouseStock.name) private readonly warehouseStocks: Model<any>,
+    @InjectModel(Tenant.name) private readonly tenants: Model<any>,
   ) {}
 
   async createBranch(tenantId: string, dto: CreateBranchDto) {
     this.validateTenant(tenantId);
+    const tenant: any = await this.tenants.findById(tenantId).select('maxBranches').lean();
+    if (!tenant) throw new NotFoundException('Workspace not found');
+    const branchCount = await this.branches.countDocuments(tenantFilter(tenantId, { isDeleted: false }));
+    if (branchCount >= Number(tenant.maxBranches || 1)) throw new ConflictException('Workspace branch limit reached for the current subscription plan');
     const data = { ...dto, code: dto.code.trim().toUpperCase(), tenantId: new Types.ObjectId(tenantId) };
     try {
       if (data.isPrimary) await this.branches.updateMany(tenantFilter(tenantId, { isDeleted: false }), { $set: { isPrimary: false } });

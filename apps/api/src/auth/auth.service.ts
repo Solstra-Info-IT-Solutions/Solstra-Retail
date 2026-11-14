@@ -142,7 +142,7 @@ export class AuthService {
         },
       },
       { new: true, runValidators: true },
-    ).select('_id name email role permissions permissionHistory isActive').lean();
+    ).select('_id name email role permissions isActive').lean();
     if (!user) throw new ConflictException('Staff permissions changed concurrently; reload and retry');
     return user;
   }

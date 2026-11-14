@@ -316,7 +316,7 @@ describe('PlatformService security boundaries', () => {
       createIndex: jest.fn(),
       updateOne: jest.fn().mockResolvedValue({ upsertedCount: 1 }),
       updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
-      find: jest.fn(() => ({ sort: () => ({ limit: async () => [{ code: 'BACKUP_STALE', status: 'OPEN' }] }) })),
+      find: jest.fn(() => ({ sort: () => ({ limit: () => ({ toArray: async () => [{ code: 'BACKUP_STALE', status: 'OPEN' }] }) }) })),
     };
     service.connection = { db: { collection: jest.fn(() => collection) } };
     service.operationsMetrics = jest.fn().mockResolvedValue({ alerts: [{ code: 'BACKUP_STALE', severity: 'WARNING', message: 'Backup is stale' }] });

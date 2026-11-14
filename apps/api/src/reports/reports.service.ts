@@ -1355,6 +1355,7 @@ export class ReportsService {
     else if (/last\s+7\s+days|past\s+week/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 6); from = localIso(d); period = 'LAST_7_DAYS'; }
     else if (/last\s+30\s+days|past\s+month/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 29); from = localIso(d); period = 'LAST_30_DAYS'; }
     else if (/last\s+month/.test(normalized)) { from = localIso(new Date(now.getFullYear(), now.getMonth() - 1, 1)); to = localIso(new Date(now.getFullYear(), now.getMonth(), 0)); period = 'LAST_MONTH'; }
+    if (/compare|versus|vs/.test(normalized) && /this month/.test(normalized)) { from = localIso(new Date(now.getFullYear(), now.getMonth(), 1)); to = localIso(now); period = 'THIS_MONTH_TO_DATE'; }
     const range = { from, to };
     if (/compare|versus|vs/.test(normalized) && /sales|revenue|turnover/.test(normalized)) {
       const current = await this.salesReport(tenantId, range);

@@ -6,6 +6,7 @@ import { Product, ProductDocument } from '../products/schemas/product.schema';
 import { Warehouse, WarehouseDocument } from '../branches/schemas/warehouse.schema';
 import { WarehouseStock, WarehouseStockDocument } from './schemas/warehouse-stock.schema';
 import { SalesInvoice, SalesInvoiceDocument } from '../sales/schemas/sales-invoice.schema';
+import { Supplier, SupplierDocument } from '../suppliers/schemas/supplier.schema';
 import { ReplenishmentPolicy, ReplenishmentPolicyDocument } from './schemas/replenishment-policy.schema';
 import { UpsertReplenishmentPolicyDto, ReplenishmentQueryDto } from './dto/replenishment.dto';
 
@@ -17,6 +18,7 @@ export class ReplenishmentService {
     @InjectModel(Warehouse.name) private readonly warehouses: Model<WarehouseDocument>,
     @InjectModel(WarehouseStock.name) private readonly stocks: Model<WarehouseStockDocument>,
     @InjectModel(SalesInvoice.name) private readonly sales: Model<SalesInvoiceDocument>,
+    @InjectModel(Supplier.name) private readonly suppliers: Model<SupplierDocument>,
   ) {}
 
   async upsertPolicy(tenantId: string, userId: string, dto: UpsertReplenishmentPolicyDto) {
@@ -38,11 +40,10 @@ export class ReplenishmentService {
     if (!warehouse) throw new NotFoundException('Active warehouse not found');
     if (dto.preferredSupplierId) {
       if (!Types.ObjectId.isValid(dto.preferredSupplierId)) throw new BadRequestException('Invalid preferred supplier ID');
-      const supplier = await this.products.db.collection('suppliers').findOne({
+      const supplier = await this.suppliers.findOne(tenantFilter(tenantId, {
         _id: new Types.ObjectId(dto.preferredSupplierId),
-        tenantId: tenant,
-        isActive: { $ne: false },
-      });
+        isDeleted: false,
+      })).lean();
       if (!supplier) throw new NotFoundException('Preferred supplier not found');
     }
     const update = {

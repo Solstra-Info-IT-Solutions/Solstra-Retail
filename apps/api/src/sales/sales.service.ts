@@ -2121,6 +2121,18 @@ if (existingPayment) {
 
     return result;
   }
+  async listAvailableSerials(tenantId: string, warehouseId: string, productId?: string) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(warehouseId) || (productId && !Types.ObjectId.isValid(productId))) {
+      throw new BadRequestException('Invalid workspace, warehouse or product ID');
+    }
+    const filter: any = { tenantId: new Types.ObjectId(tenantId), warehouseId: new Types.ObjectId(warehouseId), status: 'IN_STOCK' };
+    if (productId) filter.productId = new Types.ObjectId(productId);
+    if (!this.connection.db) throw new ConflictException('Serial registry is unavailable');
+    return this.connection.db.collection('inventory_serials').find(filter, {
+      projection: { serialNumber: 1, productId: 1, warehouseId: 1 },
+    }).sort({ serialNumber: 1 }).limit(500).toArray();
+  }
+
   async findAll(tenantId: string, dto: ListSalesDto) {
     const page = dto.page || 1;
     const limit = dto.limit || 20;

@@ -244,3 +244,19 @@ The Advanced Inventory workspace exposes batch receipts and expiry lists, serial
 - Each record exposes status, invoice reference/result, failure message, device identity and batch sequence without storing the full offline invoice payload in the server-side history.
 - Resolve a failed invoice from the original browser queue. Never manufacture a new idempotency key until the original payload and invoice status have been reconciled.
 
+
+
+## Shared API rate limiting
+
+- API request counters are stored atomically in the shared MongoDB database collection `api_rate_limit_buckets`, so multiple API instances use the same fixed-window counters.
+- Authentication endpoints are limited to 10 requests per client IP per 15-minute window; other API requests are limited to 300 per client IP per one-minute window. Health probes are excluded.
+- Expired counter documents are removed by a MongoDB TTL index. The API fails closed with HTTP 503 if the shared counter operation fails while MongoDB is connected; it does not silently bypass the distributed limit.
+- When MongoDB has not connected during process startup, the guard temporarily uses a bounded process-local fallback. Configure trusted proxy handling correctly so `request.ip` reflects the real client IP; never trust arbitrary forwarded headers from untrusted clients.
+
+## Offline batch recovery and acknowledgement semantics
+
+- A device batch sequence is bound to the SHA-256 digest of its complete operation list. Reusing a sequence with a different payload is rejected.
+- The latest batch stores its terminal `SUCCEEDED`, `PARTIAL` or `FAILED` outcome and exact response for safe replay. Replaying the same terminal batch returns the saved result and never creates invoices again.
+- A batch left in `PROCESSING` for more than five minutes can be reclaimed using the same sequence and identical payload. Individual invoice idempotency keys remain the authoritative duplicate protection.
+- A batch is not marked successful when one or more invoices fail. Mixed results are `PARTIAL`; all failed/conflicted results are `FAILED`; any still-processing operation keeps the batch in `PROCESSING`.
+- The server still validates stock, prices, permissions and tax at sync time. These controls do not implement automatic cross-device stock conflict resolution; rejected invoices require user review.

@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
+  ArrayUnique,
   IsArray,
   IsIn,
   IsInt,
@@ -34,6 +35,8 @@ export class CreateSaleItemDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   discountAmount?: number;
+
+  @IsOptional() @IsArray() @ArrayUnique() @ArrayMaxSize(100) @IsString({ each: true }) @MaxLength(100, { each: true }) serialNumbers?: string[];
 }
 
 export class CreateSalePaymentDto {

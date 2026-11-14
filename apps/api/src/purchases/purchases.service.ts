@@ -30,6 +30,9 @@ export class PurchasesService {
     @InjectModel(InventoryMovement.name) private readonly movements: Model<InventoryMovementDocument>,
     private readonly accounting: AccountingService,
     private readonly taxPeriods: TaxPeriodsService,
+    @InjectModel(Warehouse.name) private readonly warehouses: Model<Warehouse>,
+    @InjectModel(Branch.name) private readonly branches: Model<Branch>,
+    @InjectModel(WarehouseStock.name) private readonly warehouseStocks: Model<WarehouseStockDocument>,
   ) {}
 
 
@@ -359,7 +362,7 @@ export class PurchasesService {
     })).sort((a, b) => a.productId.localeCompare(b.productId));
 
     const requestFingerprint = createHash('sha256')
-      .update(JSON.stringify(normalizedItems))
+      .update(JSON.stringify({ items: normalizedItems, warehouseId: dto.warehouseId ?? null }))
       .digest('hex');
     const session = await this.purchases.db.startSession();
     let result: PurchaseDocument | null = null;
@@ -385,6 +388,19 @@ export class PurchasesService {
 
         if (purchase.status === 'CANCELLED' || purchase.status === 'RECEIVED') {
           throw new ConflictException('This purchase cannot receive more stock');
+        }
+
+        let selectedWarehouse: any = null;
+        if (dto.warehouseId) {
+          if (!Types.ObjectId.isValid(dto.warehouseId)) throw new BadRequestException('Invalid warehouse ID');
+          selectedWarehouse = await this.warehouses.findOne(tenantFilter(tenantId, {
+            _id: new Types.ObjectId(dto.warehouseId), isDeleted: false, isActive: true,
+          })).session(session).lean();
+          if (!selectedWarehouse) throw new NotFoundException('Active warehouse not found in this business');
+          const branch = await this.branches.findOne(tenantFilter(tenantId, {
+            _id: selectedWarehouse.branchId, isDeleted: false, isActive: true,
+          })).session(session).lean();
+          if (!branch) throw new ConflictException('The selected warehouse branch is inactive');
         }
 
         let inventoryTransferPaise = 0;
@@ -445,9 +461,40 @@ export class PurchasesService {
 
             if (!updated) throw new ConflictException(`Stock changed while receiving ${line.name}`);
 
+            if (selectedWarehouse) {
+              const warehouseStock = await this.warehouseStocks.findOne(tenantFilter(tenantId, {
+                warehouseId: selectedWarehouse._id, productId: product._id,
+              })).session(session);
+              const warehousePreviousQty = warehouseStock?.quantity || 0;
+              const warehousePreviousValuePaise = this.toPaise(warehouseStock?.inventoryValue || 0);
+              const warehouseReceivedValuePaise = receivedValuePaise;
+              const warehouseNextQty = warehousePreviousQty + quantity;
+              const warehouseNextValuePaise = warehousePreviousValuePaise + warehouseReceivedValuePaise;
+              if (warehouseStock) {
+                const warehouseUpdated = await this.warehouseStocks.findOneAndUpdate(
+                  tenantFilter(tenantId, { _id: warehouseStock._id, quantity: warehousePreviousQty }),
+                  { $set: {
+                    quantity: warehouseNextQty,
+                    inventoryValue: this.fromPaise(warehouseNextValuePaise),
+                    averageCost: this.fromPaise(Math.round(warehouseNextValuePaise / warehouseNextQty)),
+                  } },
+                  { new: true, session, runValidators: true },
+                );
+                if (!warehouseUpdated) throw new ConflictException(`Warehouse stock changed while receiving ${line.name}`);
+              } else {
+                await this.warehouseStocks.create([{
+                  tenantId: new Types.ObjectId(tenantId), warehouseId: selectedWarehouse._id,
+                  productId: product._id, quantity: warehouseNextQty,
+                  inventoryValue: this.fromPaise(warehouseNextValuePaise),
+                  averageCost: this.fromPaise(Math.round(warehouseNextValuePaise / warehouseNextQty)),
+                }], { session });
+              }
+            }
+
             await this.movements.create([{
               tenantId: new Types.ObjectId(tenantId),
               productId: product._id,
+              ...(selectedWarehouse ? { warehouseId: selectedWarehouse._id } : {}),
               type: 'IN',
               quantityDelta: quantity,
               previousQty,
@@ -473,6 +520,7 @@ export class PurchasesService {
             quantity,
           })),
           receivedBy: new Types.ObjectId(userId),
+          warehouseId: selectedWarehouse?._id ?? null,
           receivedAt: new Date(),
         } as any);
 

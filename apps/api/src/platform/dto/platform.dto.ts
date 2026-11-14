@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, IsUrl, Length, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, IsUrl, IsUUID, Length, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 
 export class CreateAutomationRuleDto {
   @IsString() @Length(3, 100) name!: string;
@@ -25,8 +25,14 @@ export class OfflineSaleOperationDto {
   @IsObject() payload!: Record<string, any>;
 }
 export class OfflineSyncBatchDto {
+  @IsOptional() @IsUUID() deviceId?: string;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => OfflineSaleOperationDto) operations!: OfflineSaleOperationDto[];
 }
+export class RegisterOfflineDeviceDto {
+  @IsUUID() deviceId!: string;
+  @IsString() @Length(2, 100) label!: string;
+}
+
 export class BackupPolicyDto {
   @IsBoolean() enabled!: boolean;
   @IsIn(['DAILY', 'WEEKLY']) frequency!: string;

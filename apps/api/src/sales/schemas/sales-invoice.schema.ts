@@ -138,6 +138,12 @@ export class SalesInvoice {
   @Prop({ type: Types.ObjectId, ref: 'Warehouse', default: null, index: true })
   warehouseId?: Types.ObjectId | null;
 
+  @Prop({ type: String, default: null, trim: true, uppercase: true })
+  loyaltyVoucherCode?: string | null;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  loyaltyVoucherDiscount!: number;
+
   @Prop({ default: '' })
   customerName!: string;
 

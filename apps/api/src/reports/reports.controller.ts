@@ -83,6 +83,18 @@ export class ReportsController {
   }
 
   @Permissions('reports.view')
+  @Get('reports/analytics/overview')
+  advancedAnalytics(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
+    return this.reportsService.advancedAnalytics(req.user.tenantId, query);
+  }
+
+  @Permissions('reports.view')
+  @Get('reports/assistant/insights')
+  businessAssistantInsights(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
+    return this.reportsService.businessAssistantInsights(req.user.tenantId, query);
+  }
+
+  @Permissions('reports.view')
   @Get('reports/inventory')
   inventoryReport(
     @Req() req: AuthenticatedRequest,

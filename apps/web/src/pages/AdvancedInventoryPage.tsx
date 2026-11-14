@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
-import { Boxes, RefreshCw, PackagePlus, Barcode, ClipboardCheck, BadgePercent } from 'lucide-react';
+import { RefreshCw, PackagePlus, Barcode, ClipboardCheck, BadgePercent } from 'lucide-react';
 
 type Product={_id:string;name:string;sku?:string;category?:string;stockQty:number;unit?:string};
 type Warehouse={_id:string;name:string;branchName?:string};

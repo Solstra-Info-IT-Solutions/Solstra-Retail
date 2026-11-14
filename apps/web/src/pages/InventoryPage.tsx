@@ -7,9 +7,12 @@ import './InventoryPage.css';
 
 type Product = {
   _id: string; name: string; sku?: string; unit?: string;
-  stockQty: number; lowStockThreshold: number; trackStock: boolean;
+  stockQty: number; lowStockThreshold: number; trackStock: boolean; valuationInitialized?: boolean;
 };
 type ProductList = { items: Product[]; pagination?: { total: number } };
+type WarehouseOption = { _id: string; name: string; branchName: string };
+type WarehouseStockRow = { _id: string; productId: Product | string; quantity: number; averageCost: number; inventoryValue: number };
+type WarehouseReconciliation = { summary: { products: number; fullyAllocated: number; partiallyOrNotAllocated: number; discrepancies: number; totalStock: number; allocatedStock: number; unallocatedStock: number }; discrepancies: Array<{ productId: string; name: string; sku: string; issues: string[]; totalStock: number; allocatedStock: number }> };
 type MovementProduct = { _id: string; name: string; sku?: string } | string;
 type MovementUser = { _id: string; name?: string; email?: string } | string;
 type Movement = {
@@ -25,6 +28,7 @@ type MovementList = {
 type MovementForm = { productId: string; type: 'IN' | 'OUT' | 'ADJUSTMENT'; quantity: string; reason: string };
 const blankForm: MovementForm = { productId: '', type: 'IN', quantity: '1', reason: '' };
 const number = (value: number) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(value);
+const money = (value: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(value) || 0);
 const productName = (value: MovementProduct) => typeof value === 'string' ? 'Product' : value?.name || 'Product';
 const userName = (value: MovementUser) => typeof value === 'string' ? 'User' : value?.name || value?.email || 'User';
 const dateTime = (value: string) => new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
@@ -43,6 +47,13 @@ export default function InventoryPage() {
   const [form, setForm] = useState<MovementForm>(blankForm);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const [warehouseOptions, setWarehouseOptions] = useState<WarehouseOption[]>([]);
+  const [selectedWarehouse, setSelectedWarehouse] = useState('');
+  const [warehouseStock, setWarehouseStock] = useState<WarehouseStockRow[]>([]);
+  const [warehouseLoading, setWarehouseLoading] = useState(false);
+  const [warehouseReconciliation, setWarehouseReconciliation] = useState<WarehouseReconciliation | null>(null);
+  const [allocationOpen, setAllocationOpen] = useState(false);
+  const [allocationForm, setAllocationForm] = useState({ productId: '', quantity: '1', reason: '' });
 
   const loadInventory = useCallback(async () => {
     setLoading(true);
@@ -66,6 +77,74 @@ export default function InventoryPage() {
   }, [page, productFilter]);
 
   useEffect(() => { void loadInventory(); }, [loadInventory]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadWarehouses() {
+      try {
+        const response = await api.get<{ items: Array<{ _id: string; name: string }> }>('/branches');
+        const options: WarehouseOption[] = [];
+        for (const branch of response.data.items || []) {
+          const detail = await api.get<{ warehouses?: Array<{ _id: string; name: string; isActive: boolean }> }>('/branches/' + branch._id);
+          for (const warehouse of detail.data.warehouses || []) if (warehouse.isActive) {
+            options.push({ _id: warehouse._id, name: warehouse.name, branchName: branch.name });
+          }
+        }
+        if (active) {
+          setWarehouseOptions(options);
+          if (options.length) setSelectedWarehouse(current => current || options[0]._id);
+        }
+      } catch { if (active) setWarehouseOptions([]); }
+    }
+    void loadWarehouses();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (canManage) {
+      api.get<WarehouseReconciliation>('/inventory/warehouse-reconciliation')
+        .then(response => { if (active) setWarehouseReconciliation(response.data); })
+        .catch(() => { if (active) setWarehouseReconciliation(null); });
+    }
+    return () => { active = false; };
+  }, [canManage]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedWarehouse) { setWarehouseStock([]); return; }
+    setWarehouseLoading(true);
+    api.get<{ items: WarehouseStockRow[] }>('/inventory/warehouses/' + selectedWarehouse + '/stock')
+      .then(response => { if (active) setWarehouseStock(response.data.items || []); })
+      .catch(() => { if (active) setError('Warehouse stock could not be loaded.'); })
+      .finally(() => { if (active) setWarehouseLoading(false); });
+    return () => { active = false; };
+  }, [selectedWarehouse]);
+
+  async function saveOpeningAllocation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedWarehouse) return;
+    const quantity = Number(allocationForm.quantity);
+    if (!Number.isInteger(quantity) || quantity < 0 || !allocationForm.reason.trim()) {
+      setFormError('Enter a whole-number quantity and a reason.');
+      return;
+    }
+    setSaving(true); setFormError('');
+    try {
+      await api.post('/inventory/warehouses/' + selectedWarehouse + '/stock/opening', {
+        productId: allocationForm.productId, quantity, reason: allocationForm.reason.trim(),
+      });
+      setAllocationOpen(false); setAllocationForm({ productId: '', quantity: '1', reason: '' });
+      const response = await api.get<{ items: WarehouseStockRow[] }>('/inventory/warehouses/' + selectedWarehouse + '/stock');
+      setWarehouseStock(response.data.items || []);
+      await loadInventory();
+    } catch (requestError: unknown) {
+      const message = (requestError as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      setFormError(Array.isArray(message) ? message.join(', ') : message || 'Opening allocation could not be saved.');
+    } finally { setSaving(false); }
+  }
+
+
 
   const trackedProducts = useMemo(() => products.filter((item) => item.trackStock), [products]);
   const totalUnits = trackedProducts.reduce((sum, item) => sum + (Number(item.stockQty) || 0), 0);
@@ -169,6 +248,22 @@ export default function InventoryPage() {
         </div>
       </section>
 
+      {canManage && warehouseReconciliation && <section className="inventory-panel inventory-reconciliation-panel">
+        <div className="inventory-panel-heading"><div><h2>Warehouse allocation reconciliation</h2><p>Compares warehouse allocations with business-wide stock and inventory valuation.</p></div><span className={warehouseReconciliation.summary.discrepancies?'inventory-recon-alert':'inventory-recon-ok'}>{warehouseReconciliation.summary.discrepancies} discrepancies</span></div>
+        <div className="inventory-recon-stats"><span>Total stock <b>{number(warehouseReconciliation.summary.totalStock)}</b></span><span>Allocated <b>{number(warehouseReconciliation.summary.allocatedStock)}</b></span><span>Unallocated pool <b>{number(warehouseReconciliation.summary.unallocatedStock)}</b></span><span>Fully allocated products <b>{number(warehouseReconciliation.summary.fullyAllocated)}</b></span></div>
+        {warehouseReconciliation.discrepancies.length>0?<div className="inventory-recon-list">{warehouseReconciliation.discrepancies.slice(0,10).map(item=><div key={item.productId}><strong>{item.name}</strong><small>{item.sku||'No SKU'} · {item.issues.join(', ')}</small><b>{number(item.allocatedStock)} / {number(item.totalStock)}</b></div>)}</div>:<p className="inventory-recon-clear">No over-allocation discrepancies detected. Unallocated stock remains available for future warehouse assignment.</p>}
+      </section>}
+
+      {warehouseOptions.length > 0 && <section className="inventory-panel inventory-warehouse-panel">
+        <div className="inventory-panel-heading"><div><h2>Warehouse stock & allocation</h2><p>View physical stock by warehouse. Opening allocations move existing aggregate stock into a location without changing total stock.</p></div>
+          <label className="inventory-filter"><span>Warehouse</span><select value={selectedWarehouse} onChange={e=>setSelectedWarehouse(e.target.value)}>{warehouseOptions.map(w=><option key={w._id} value={w._id}>{w.branchName} · {w.name}</option>)}</select></label>
+          {canManage && <button className="inventory-primary" onClick={()=>{setFormError('');setAllocationForm({productId:trackedProducts.find(p=>p.valuationInitialized)?._id||'',quantity:'1',reason:''});setAllocationOpen(true);}}><Boxes size={15}/> Allocate opening stock</button>}
+        </div>
+        <div className="inventory-table-wrap"><table className="inventory-table"><thead><tr><th>PRODUCT</th><th>WAREHOUSE QTY</th><th>AVERAGE COST</th><th>INVENTORY VALUE</th></tr></thead><tbody>
+          {warehouseLoading?<tr><td colSpan={4} className="inventory-empty">Loading warehouse stock...</td></tr>:warehouseStock.length?warehouseStock.map(row=>{const p=typeof row.productId==='string'?null:row.productId;return <tr key={row._id}><td><strong>{p?.name||'Product'}</strong>{p?.sku&&<small>{p.sku}</small>}</td><td>{number(row.quantity)}</td><td>{money(row.averageCost)}</td><td>{money(row.inventoryValue)}</td></tr>;}):<tr><td colSpan={4} className="inventory-empty">No stock allocations in this warehouse yet.</td></tr>}
+        </tbody></table></div>
+      </section>}
+
       <section className="inventory-panel inventory-low-panel">
         <div className="inventory-panel-heading"><div><h2>Low stock watchlist</h2>
           <p>Products at or below their configured reorder threshold.</p></div><span className="inventory-watch-count">{lowStock.length} items</span></div>
@@ -181,6 +276,13 @@ export default function InventoryPage() {
         ))}</div> : <div className="inventory-all-clear">No low-stock products detected in the current watchlist.</div>}
       </section>
 
+      {allocationOpen && <div className="inventory-backdrop" onClick={()=>!saving&&setAllocationOpen(false)}><form className="inventory-modal" onSubmit={saveOpeningAllocation} onClick={e=>e.stopPropagation()}>
+        <div className="inventory-modal-heading"><div><span className="inventory-eyebrow">WAREHOUSE OPENING ALLOCATION</span><h2>Allocate existing stock</h2><p>Does not increase business-wide stock. Use only after confirming location count.</p></div><button type="button" className="inventory-close" onClick={()=>setAllocationOpen(false)}><X size={18}/></button></div>
+        <label className="inventory-field">Product *<select required value={allocationForm.productId} onChange={e=>setAllocationForm({...allocationForm,productId:e.target.value})}><option value="">Select verified product</option>{trackedProducts.filter(p=>p.valuationInitialized).map(p=><option key={p._id} value={p._id}>{p.name} · total {number(p.stockQty)}</option>)}</select></label>
+        <label className="inventory-field">Quantity to allocate *<input required type="number" min="0" step="1" value={allocationForm.quantity} onChange={e=>setAllocationForm({...allocationForm,quantity:e.target.value})}/></label>
+        <label className="inventory-field">Reason / physical count reference *<textarea required minLength={3} maxLength={250} rows={3} value={allocationForm.reason} onChange={e=>setAllocationForm({...allocationForm,reason:e.target.value})}/></label>
+        {formError&&<div className="inventory-error">{formError}</div>}<div className="inventory-modal-actions"><button type="button" className="inventory-secondary" onClick={()=>setAllocationOpen(false)}>Cancel</button><button className="inventory-primary" disabled={saving||!allocationForm.productId}>{saving?'Allocating...':'Confirm allocation'}</button></div>
+      </form></div>}
       {modalOpen && <div className="inventory-backdrop" onClick={() => !saving && setModalOpen(false)}>
         <section className="inventory-modal" onClick={(event) => event.stopPropagation()}>
           <div className="inventory-modal-heading"><div><span className="inventory-eyebrow">AUDITED STOCK CHANGE</span>

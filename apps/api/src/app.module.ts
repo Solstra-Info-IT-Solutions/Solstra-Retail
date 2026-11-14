@@ -2,7 +2,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 
 import { AuthModule } from './auth/auth.module';
 import { TenantsModule } from './tenants/tenants.module';
@@ -17,6 +17,9 @@ import { ReportsModule } from './reports/reports.module';
 import { AccountingModule } from './accounting/accounting.module';
 import { ExpensesModule } from './expenses/expenses.module';
 import { BranchesModule } from './branches/branches.module';
+import { AuditModule } from './audit/audit.module';
+import { AuditService } from './audit/audit.service';
+import { AuditInterceptor } from './audit/audit.interceptor';
 import { TrialGuard } from './common/guards/trial.guard';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -38,7 +41,7 @@ import { HealthController } from './health.controller';
     }),
     AuthModule, TenantsModule, ProductsModule, InventoryModule, SalesModule,
     CustomersModule, CategoriesModule, PurchasesModule, SuppliersModule,
-    ReportsModule, AccountingModule, ExpensesModule, BranchesModule,
+    ReportsModule, AccountingModule, ExpensesModule, BranchesModule, AuditModule,
   ],
   controllers: [HealthController],
   providers: [
@@ -46,6 +49,7 @@ import { HealthController } from './health.controller';
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
     { provide: APP_GUARD, useClass: TrialGuard },
+    { provide: APP_INTERCEPTOR, useFactory: (audit: AuditService) => new AuditInterceptor(audit), inject: [AuditService] },
   ],
 })
 export class AppModule {}

@@ -1,0 +1,34 @@
+import { useCallback, useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
+import { UserPlus, RefreshCw, Save } from 'lucide-react';
+import { api } from '../api/client';
+import './StaffPage.css';
+
+type StaffUser = { _id: string; name: string; email: string; role: string; permissions: string[]; isActive: boolean; createdAt: string };
+type Permission = { key: string };
+const descriptions: Record<string,string> = {
+  'dashboard.view':'View business dashboard','products.view':'View products and stock catalogue','categories.view':'View product categories',
+  'customers.view':'View customers and customer history','sales.view':'View invoices and sales register','sales.create':'Create POS invoices',
+  'sales.payments.create':'Record customer payments','inventory.view':'View stock movements and warehouse stock',
+  'suppliers.view':'View supplier records','purchases.view':'View purchase orders and supplier ledger',
+  'reports.view':'View financial and GST reports','expenses.view':'View business expenses','expenses.create':'Submit expenses for approval',
+};
+export default function StaffPage(){
+ const [users,setUsers]=useState<StaffUser[]>([]),[catalog,setCatalog]=useState<Permission[]>([]),[selected,setSelected]=useState<StaffUser|null>(null),[grants,setGrants]=useState<string[]>([]);
+ const [loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[error,setError]=useState(''),[success,setSuccess]=useState('');
+ const [createOpen,setCreateOpen]=useState(false),[form,setForm]=useState({name:'',email:'',password:''});
+ const load=useCallback(async()=>{setLoading(true);setError('');try{const [u,p]=await Promise.all([api.get<StaffUser[]>('/auth/users'),api.get<Permission[]>('/auth/permissions')]);setUsers(u.data||[]);setCatalog(p.data||[]);}catch{setError('Staff accounts could not be loaded.');}finally{setLoading(false);}},[]);
+ useEffect(()=>{void load();},[load]);
+ function openPermissions(user:StaffUser){setSelected(user);setGrants(user.permissions||[]);setError('');setSuccess('');}
+ async function savePermissions(){if(!selected)return;setSaving(true);setError('');setSuccess('');try{const response=await api.patch<StaffUser>('/auth/users/'+selected._id+'/permissions',{permissions:grants});setSelected(response.data);setGrants(response.data.permissions||[]);setUsers(old=>old.map(u=>u._id===response.data._id?response.data:u));setSuccess('Permissions saved. Changes apply immediately to the next request.');}catch(err:unknown){const m=(err as {response?:{data?:{message?:string|string[]}}}).response?.data?.message;setError(Array.isArray(m)?m.join(', '):m||'Permissions could not be saved.');}finally{setSaving(false);}}
+ async function createStaff(event:FormEvent){event.preventDefault();setSaving(true);setError('');try{await api.post('/auth/users',form);setCreateOpen(false);setForm({name:'',email:'',password:''});await load();setSuccess('Staff account created with no permissions. Assign only the access required for the role.');}catch(err:unknown){const m=(err as {response?:{data?:{message?:string|string[]}}}).response?.data?.message;setError(Array.isArray(m)?m.join(', '):m||'Staff account could not be created.');}finally{setSaving(false);}}
+ return <div className="staff-page"><header className="staff-heading"><div><span>ACCESS CONTROL & GOVERNANCE</span><h1>Staff & Permissions</h1><p>Create staff accounts and grant only the business capabilities each person needs.</p></div><div><button onClick={()=>void load()} disabled={loading}><RefreshCw size={15}/> Refresh</button><button className="staff-primary" onClick={()=>{setError('');setCreateOpen(true);}}><UserPlus size={15}/> Add staff</button></div></header>
+ {error&&<div className="staff-error">{error}</div>}{success&&<div className="staff-success">{success}</div>}
+ <section className="staff-card"><div className="staff-card-head"><div><h2>Team members</h2><p>Administrators retain full access. Staff access is deny-by-default.</p></div><span>{users.length} accounts</span></div>
+ <div className="staff-table-wrap"><table><thead><tr><th>TEAM MEMBER</th><th>ROLE</th><th>ACCESS</th><th>STATUS</th><th></th></tr></thead><tbody>{loading?<tr><td colSpan={5}>Loading staff...</td></tr>:users.map(user=><tr key={user._id}><td><strong>{user.name}</strong><small>{user.email}</small></td><td>{user.role}</td><td>{user.role==='staff'?(user.permissions||[]).length+' permissions':'Full administrative access'}</td><td>{user.isActive?'Active':'Inactive'}</td><td>{user.role==='staff'&&<button onClick={()=>openPermissions(user)}>Manage access</button>}</td></tr>)}</tbody></table></div></section>
+ {selected&&<div className="staff-backdrop"><section className="staff-modal"><header><div><span>PERMISSION PROFILE</span><h2>{selected.name}</h2><p>{selected.email}</p></div><button onClick={()=>setSelected(null)}>Close</button></header><p className="staff-guidance">Grant only the permissions needed for this staff member's duties. Sensitive financial, tax and administrative mutations remain owner/admin-only.</p>
+ <div className="staff-permission-list">{catalog.map(permission=><label key={permission.key}><input type="checkbox" checked={grants.includes(permission.key)} onChange={e=>setGrants(old=>e.target.checked?[...old,permission.key]:old.filter(x=>x!==permission.key))}/><span><strong>{descriptions[permission.key]||permission.key}</strong><small>{permission.key}</small></span></label>)}</div>
+ {error&&<div className="staff-error">{error}</div>}{success&&<div className="staff-success">{success}</div>}<footer><button onClick={()=>setSelected(null)}>Cancel</button><button className="staff-primary" onClick={()=>void savePermissions()} disabled={saving}><Save size={15}/>{saving?'Saving...':'Save permissions'}</button></footer></section></div>}
+ {createOpen&&<div className="staff-backdrop"><form className="staff-modal" onSubmit={createStaff}><header><div><span>TEAM MANAGEMENT</span><h2>Create staff account</h2><p>New accounts have no permissions until you assign them.</p></div><button type="button" onClick={()=>setCreateOpen(false)}>Close</button></header><label>Full name<input required minLength={2} maxLength={80} value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label><label>Email<input required type="email" maxLength={254} value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/></label><label>Temporary password<input required type="password" minLength={12} maxLength={72} value={form.password} onChange={e=>setForm({...form,password:e.target.value})}/><small>Use a strong temporary password and share it securely with the staff member.</small></label>{error&&<div className="staff-error">{error}</div>}<footer><button type="button" onClick={()=>setCreateOpen(false)}>Cancel</button><button className="staff-primary" disabled={saving}>{saving?'Creating...':'Create staff'}</button></footer></form></div>}
+ </div>;
+}

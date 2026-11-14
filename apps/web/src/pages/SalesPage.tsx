@@ -1,6 +1,8 @@
 ﻿import { useCallback, useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
 import { Search, RefreshCw, Eye, X, Printer, ChevronLeft, ChevronRight, ReceiptText } from 'lucide-react';
 import { api } from '../api/client';
+import { useAuth } from '../auth/AuthContext';
 import './SalesPage.css';
 
 type Invoice = {
@@ -51,6 +53,8 @@ type Invoice = {
   placeOfSupplyStateCode: string;
 };
 
+type CreditNote = { _id: string; creditNoteNumber: string; totalAmount: number; refundableAmount: number; refundedAmount: number; appliedToDueAmount: number; reason: string; items: Array<{ name: string; quantity: number; restocked: boolean }>; refunds: Array<{ method: string; amount: number; reference?: string; refundedAt: string }> };
+
 type SalesResponse = {
   items: Invoice[];
   total: number;
@@ -82,6 +86,8 @@ const paymentLabel: Record<string, string> = {
   CREDITED: 'Credited',
 };
 
+function newIdempotencyKey() { const bytes = new Uint8Array(16); window.crypto.getRandomValues(bytes); bytes[6]=(bytes[6]&15)|64; bytes[8]=(bytes[8]&63)|128; const h=Array.from(bytes,b=>b.toString(16).padStart(2,'0')); return `${h.slice(0,4).join('')}-${h.slice(4,6).join('')}-${h.slice(6,8).join('')}-${h.slice(8,10).join('')}-${h.slice(10).join('')}`; }
+
 export default function SalesPage() {
   const [data, setData] = useState<SalesResponse | null>(null);
   const [search, setSearch] = useState('');
@@ -90,6 +96,20 @@ export default function SalesPage() {
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState('');
+  const { user } = useAuth();
+  const canManageReturns = user?.role === 'owner' || user?.role === 'admin';
+  const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
+  const [returnOpen, setReturnOpen] = useState(false);
+  const [returnReason, setReturnReason] = useState('');
+  const [returnQty, setReturnQty] = useState<Record<number, string>>({});
+  const [returnRestock, setReturnRestock] = useState<Record<number, boolean>>({});
+  const [returnSaving, setReturnSaving] = useState(false);
+  const [returnError, setReturnError] = useState('');
+  const [refundTarget, setRefundTarget] = useState<CreditNote | null>(null);
+  const [refundAmount, setRefundAmount] = useState('');
+  const [refundMethod, setRefundMethod] = useState('UPI');
+  const [refundReference, setRefundReference] = useState('');
+  const [refundSaving, setRefundSaving] = useState(false);
 
   const loadSales = useCallback(async () => {
     setLoading(true);
@@ -117,11 +137,42 @@ export default function SalesPage() {
     try {
       const response = await api.get<Invoice>(`/sales/${invoice._id}`);
       setSelected(response.data);
+      const notes = await api.get<CreditNote[]>(`/sales/${invoice._id}/credit-notes`);
+      setCreditNotes(notes.data || []);
     } catch {
       setSelected(invoice);
     } finally {
       setDetailLoading(false);
     }
+  }
+
+  async function createReturn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!selected) return;
+    const items = selected.items.map((_, lineIndex) => ({ lineIndex, quantity: Number(returnQty[lineIndex] || 0), restock: returnRestock[lineIndex] === true })).filter(item => item.quantity > 0);
+    if (!items.length || returnReason.trim().length < 3) { setReturnError('Select at least one returned quantity and enter a reason.'); return; }
+    setReturnSaving(true); setReturnError('');
+    try {
+      await api.post('/sales/' + selected._id + '/credit-notes', { idempotencyKey: newIdempotencyKey(), items, reason: returnReason.trim() });
+      const [invoiceResponse, notesResponse] = await Promise.all([api.get<Invoice>('/sales/' + selected._id), api.get<CreditNote[]>('/sales/' + selected._id + '/credit-notes')]);
+      setSelected(invoiceResponse.data); setCreditNotes(notesResponse.data || []);
+      setReturnOpen(false); setReturnReason(''); setReturnQty({}); setReturnRestock({}); await loadSales();
+    } catch (requestError: unknown) {
+      const message = (requestError as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      setReturnError(Array.isArray(message) ? message.join(', ') : message || 'Return could not be recorded.');
+    } finally { setReturnSaving(false); }
+  }
+
+  async function recordRefund(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!selected || !refundTarget) return;
+    setRefundSaving(true); setReturnError('');
+    try {
+      await api.post('/sales/' + selected._id + '/credit-notes/' + refundTarget._id + '/refunds', { idempotencyKey: newIdempotencyKey(), method: refundMethod, amount: Number(refundAmount), reference: refundReference.trim() || undefined });
+      const notes = await api.get<CreditNote[]>('/sales/' + selected._id + '/credit-notes');
+      setCreditNotes(notes.data || []); setRefundTarget(null); setRefundAmount(''); setRefundReference('');
+    } catch (requestError: unknown) {
+      const message = (requestError as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      setReturnError(Array.isArray(message) ? message.join(', ') : message || 'Refund could not be recorded.');
+    } finally { setRefundSaving(false); }
   }
 
   function printInvoice() {
@@ -255,6 +306,7 @@ export default function SalesPage() {
                 <span>{date(selected.invoiceDate)}</span>
               </div>
               <div className="sales-detail-actions">
+                {canManageReturns && selected.status !== 'CANCELLED' && <button onClick={() => { setReturnQty({}); setReturnRestock({}); setReturnReason(''); setReturnError(''); setReturnOpen(true); }}>Record return</button>}
                 <button onClick={printInvoice} title="Print invoice"><Printer size={18} /> Print</button>
                 <button className="sales-close" onClick={() => setSelected(null)} aria-label="Close"><X size={20} /></button>
               </div>
@@ -306,6 +358,7 @@ export default function SalesPage() {
                 <div className="sales-balance"><span>Balance due</span><strong>{money(selected.dueAmount)}</strong></div>
               </div>
             </div>
+            {creditNotes.length > 0 && <section className="sales-credit-notes"><h3>Returns & credit notes</h3>{creditNotes.map(note=><article key={note._id}><div><strong>{note.creditNoteNumber}</strong><small>{note.reason}</small><small>{note.items.map(item=>item.name+' × '+item.quantity+(item.restocked?' · restocked':'')).join(', ')}</small></div><div className="sales-credit-note-values"><b>{money(note.totalAmount)}</b><small>Refunded {money(note.refundedAmount)} · Due adjusted {money(note.appliedToDueAmount)}</small>{canManageReturns && note.refundableAmount>note.refundedAmount && <button onClick={()=>{setRefundTarget(note);setRefundAmount((note.refundableAmount-note.refundedAmount).toFixed(2));setRefundReference('');setReturnError('');}}>Record refund</button>}</div></article>)}</section>}
             <div className="sales-detail-footer">
               <span>Place of supply: {selected.placeOfSupplyStateCode}</span>
               <span className={selected.status === 'CANCELLED' ? 'status-cancelled' : 'status-issued'}>{selected.status}</span>
@@ -313,6 +366,17 @@ export default function SalesPage() {
           </section>
         </div>
       )}
+      {returnOpen && selected && <div className="sales-modal-backdrop"><form className="sales-return-modal" onSubmit={createReturn}><h2>Record customer return</h2><p>Select the quantity physically returned. Returned stock is restored only when you select Restock.</p>
+        {selected.items.map((item,index)=><div className="sales-return-line" key={index}><div><strong>{item.name}</strong><small>Sold {item.quantity} · {money(item.unitPrice)} each</small></div><label>Return qty<input type="number" min="0" max={item.quantity} step="1" value={returnQty[index]||''} onChange={e=>setReturnQty(old=>({...old,[index]:e.target.value}))}/></label><label className="sales-restock-check"><input type="checkbox" checked={returnRestock[index]===true} onChange={e=>setReturnRestock(old=>({...old,[index]:e.target.checked}))}/> Restock</label></div>)}
+        <label className="sales-return-reason">Return reason<textarea required minLength={3} maxLength={250} rows={3} value={returnReason} onChange={e=>setReturnReason(e.target.value)} placeholder="Customer return reason / condition"/></label>
+        {returnError&&<div className="sales-error">{returnError}</div>}<footer><button type="button" onClick={()=>setReturnOpen(false)}>Cancel</button><button disabled={returnSaving}>{returnSaving?'Saving...':'Create credit note'}</button></footer>
+      </form></div>}
+      {refundTarget && selected && <div className="sales-modal-backdrop"><form className="sales-return-modal" onSubmit={recordRefund}><h2>Record refund</h2><p>{refundTarget.creditNoteNumber} · Remaining refundable {money(refundTarget.refundableAmount-refundTarget.refundedAmount)}</p>
+        <label className="sales-return-reason">Refund method<select value={refundMethod} onChange={e=>setRefundMethod(e.target.value)}>{['CASH','UPI','CARD','BANK_TRANSFER','OTHER'].map(m=><option key={m}>{m}</option>)}</select></label>
+        <label className="sales-return-reason">Refund amount (₹)<input required type="number" min=".01" max={refundTarget.refundableAmount-refundTarget.refundedAmount} step=".01" value={refundAmount} onChange={e=>setRefundAmount(e.target.value)}/></label>
+        <label className="sales-return-reason">Reference<input maxLength={100} value={refundReference} onChange={e=>setRefundReference(e.target.value)}/></label>
+        {returnError&&<div className="sales-error">{returnError}</div>}<footer><button type="button" onClick={()=>setRefundTarget(null)}>Cancel</button><button disabled={refundSaving}>{refundSaving?'Saving...':'Confirm refund'}</button></footer>
+      </form></div>}
     </div>
   );
 }

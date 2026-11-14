@@ -198,10 +198,13 @@ export class ReportsService {
     } else {
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(reference)) throw new BadRequestException('GST return period must use YYYY-MM format');
       const [year, month] = reference.split('-').map(Number);
-      const start = new Date(year, month - 1, 1);
-      const end = new Date(year, month, 0);
-      if (end.getTime() >= Date.now()) throw new BadRequestException('GST return period can only be submitted after the period has ended');
-      const range = { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
+      const nextMonthStart = new Date(year, month, 1);
+      if (nextMonthStart.getTime() > Date.now()) throw new BadRequestException('GST return period can only be submitted after the period has ended');
+      const lastDay = new Date(year, month, 0).getDate();
+      const range = {
+        from: year + '-' + String(month).padStart(2, '0') + '-01',
+        to: year + '-' + String(month).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0'),
+      };
       payload = submissionType === 'GSTR1'
         ? { contract: 'SOLSTRA_GST_RETURN_V1', returnType: 'GSTR1', data: await this.gstr1(tenantId, range) }
         : { contract: 'SOLSTRA_GST_RETURN_V1', returnType: 'GSTR3B', data: await this.gstr3b(tenantId, range) };

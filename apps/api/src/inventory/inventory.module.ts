@@ -18,6 +18,7 @@ import { WarehouseInventoryService } from './warehouse-inventory.service';
 import { ReplenishmentPolicy, ReplenishmentPolicySchema } from './schemas/replenishment-policy.schema';
 import { ReplenishmentService } from './replenishment.service';
 import { SalesInvoice, SalesInvoiceSchema } from '../sales/schemas/sales-invoice.schema';
+import { Supplier, SupplierSchema } from '../suppliers/schemas/supplier.schema';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { SalesInvoice, SalesInvoiceSchema } from '../sales/schemas/sales-invoice
       { name: WarehouseTransfer.name, schema: WarehouseTransferSchema },
       { name: ReplenishmentPolicy.name, schema: ReplenishmentPolicySchema },
       { name: SalesInvoice.name, schema: SalesInvoiceSchema },
+      { name: Supplier.name, schema: SupplierSchema },
       {
         name: InventoryMovement.name,
         schema: InventoryMovementSchema,

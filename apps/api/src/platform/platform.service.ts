@@ -41,8 +41,8 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
   private backupTimer?: NodeJS.Timeout;
 
   onModuleInit() {
-    this.backupTimer = setInterval(() => { void this.runScheduledBackupJobs().catch(() => undefined); }, 60_000);
-    void this.runScheduledBackupJobs().catch(() => undefined);
+    this.backupTimer = setInterval(() => { void this.runScheduledPlatformJobs().catch(() => undefined); }, 60_000);
+    void this.runScheduledPlatformJobs().catch(() => undefined);
   }
 
   onModuleDestroy() {
@@ -120,7 +120,9 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
   async triggerAutomation(tenantId: string, userId: string, dto: TriggerAutomationDto) {
     this.identity(tenantId, userId);
     if (!EVENT_TYPES.includes(dto.eventType)) throw new BadRequestException('Unsupported automation event');
-    return this.executeEvent(tenantId, dto.eventType, dto.eventKey, dto.payload || {});
+    const result = await this.executeEvent(tenantId, dto.eventType, dto.eventKey, dto.payload || {});
+    await this.queueEventForIntegrations(tenantId, dto.eventType, dto.eventKey, dto.payload || {});
+    return result;
   }
 
   async executeEvent(tenantId: string, eventType: string, eventKey: string, payload: Record<string, any>) {
@@ -151,18 +153,21 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
 
   async createNotification(tenantId: string, input: { userId?: string; title: string; body: string; severity?: string; category: string; sourceId?: string }) {
     this.identity(tenantId, input.userId);
-    const row = await this.notifications.create({
-      tenantId: new Types.ObjectId(tenantId),
-      userId: input.userId ? new Types.ObjectId(input.userId) : null,
+    const recipients = input.userId
+      ? [{ _id: new Types.ObjectId(input.userId) }]
+      : await this.users.find(tenantFilter(tenantId, { isActive: true })).select('_id').lean();
+    if (!recipients.length) return { created: 0 };
+    const rows = await this.notifications.insertMany(recipients.map((recipient: any) => ({
+      tenantId: new Types.ObjectId(tenantId), userId: recipient._id,
       title: input.title, body: input.body,
       severity: input.severity || 'INFO', category: input.category, sourceId: input.sourceId || '',
-    });
-    return row.toObject();
+    })));
+    return { created: rows.length };
   }
 
   async listNotifications(tenantId: string, userId: string, unreadOnly = false, page = 1) {
     this.identity(tenantId, userId);
-    const filter: Record<string, any> = { $or: [{ userId: null }, { userId: new Types.ObjectId(userId) }] };
+    const filter: Record<string, any> = { userId: new Types.ObjectId(userId) };
     if (unreadOnly) filter.readAt = null;
     const safePage = Math.max(1, Math.floor(page) || 1);
     const [items, unreadCount, total] = await Promise.all([
@@ -177,7 +182,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     this.identity(tenantId, userId);
     if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid notification ID');
     const row = await this.notifications.findOneAndUpdate(
-      tenantFilter(tenantId, { _id: new Types.ObjectId(id), $or: [{ userId: null }, { userId: new Types.ObjectId(userId) }] }),
+      tenantFilter(tenantId, { _id: new Types.ObjectId(id), userId: new Types.ObjectId(userId) }),
       { $set: { readAt: new Date() } }, { new: true },
     ).lean();
     if (!row) throw new NotFoundException('Notification not found');
@@ -417,6 +422,19 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     const checksum = createHash('sha256').update(bytes).digest('hex');
     if (checksum !== artifact.checksumSha256) throw new ConflictException('Stored backup checksum verification failed');
     return { fileName: artifact.fileName, checksumSha256: checksum, archiveBase64: bytes.toString('base64') };
+  }
+
+  async runScheduledPlatformJobs() {
+    const backups = await this.runScheduledBackupJobs();
+    const tenantIds = await this.deliveries.distinct('tenantId', { status: 'PENDING', nextAttemptAt: { $lte: new Date() } });
+    let webhookDeliveries = 0;
+    for (const tenantId of tenantIds.slice(0, 20)) {
+      try {
+        const result = await this.runWebhookDeliveries(String(tenantId), 20);
+        webhookDeliveries += result.processed;
+      } catch { /* Failed delivery attempts remain queued with retry metadata. */ }
+    }
+    return { backups, webhookDeliveries };
   }
 
   async runScheduledBackupJobs() {

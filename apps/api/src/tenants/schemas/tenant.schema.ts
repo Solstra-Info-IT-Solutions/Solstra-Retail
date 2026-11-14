@@ -94,6 +94,18 @@ export class Tenant {
     required: true,
   })
   trialEndsAt!: Date;
+
+  @Prop({ type: String, enum: ['starter', 'growth', 'business', 'enterprise'], default: 'starter', index: true })
+  subscriptionPlan!: 'starter' | 'growth' | 'business' | 'enterprise';
+
+  @Prop({ type: Number, min: 1, default: 3 })
+  maxUsers!: number;
+
+  @Prop({ type: Number, min: 1, default: 1000 })
+  maxProducts!: number;
+
+  @Prop({ type: Number, min: 1, default: 1 })
+  maxBranches!: number;
 }
 
 export const TenantSchema = SchemaFactory.createForClass(Tenant);

@@ -65,8 +65,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        const response = await api.get<{ user: AuthUser }>('/auth/me');
-        setUser(response.data.user || JSON.parse(savedUser) as AuthUser);
+        const response = await api.get<{ user: AuthUser & { userId?: string } }>('/auth/me');
+        const profile = response.data.user;
+        setUser(profile ? { ...profile, id: profile.id || profile.userId || '' } : JSON.parse(savedUser) as AuthUser);
       } catch {
         logout();
       } finally {

@@ -5,6 +5,7 @@ describe('ReportsService validation', () => {
   const createService = () => {
     const invoices = { aggregate: jest.fn() };
     const purchases = { find: jest.fn() };
+    const journals = { find: jest.fn() };
 
     const service = new ReportsService(
       invoices as any,
@@ -12,15 +13,35 @@ describe('ReportsService validation', () => {
       {} as any,
       {} as any,
       {} as any,
-      {} as any,
+      journals as any,
       purchases as any,
       {} as any,
       {} as any,
       {} as any,
     );
 
-    return { service, invoices, purchases };
+    return { service, invoices, purchases, journals };
   };
+
+  it('exports posted balanced journals as escaped Tally XML vouchers', async () => {
+    const { service, journals } = createService();
+    journals.find.mockReturnValue({
+      select: () => ({ sort: () => ({ limit: () => ({ lean: async () => [{
+        entryNumber: 'JV-001', postingDate: new Date('2026-10-10T00:00:00.000Z'),
+        narration: 'Sale & adjustment',
+        lines: [
+          { accountName: 'Cash & Bank', debit: 100, credit: 0 },
+          { accountName: 'Sales', debit: 0, credit: 100 },
+        ],
+      }] }) }) }),
+    });
+    const result = await service.tallyXmlExport('507f1f77bcf86cd799439011', { from: '2026-10-01', to: '2026-10-31' });
+    expect(result.voucherCount).toBe(1);
+    expect(result.content).toContain('<DATE>20261010</DATE>');
+    expect(result.content).toContain('Cash &amp; Bank');
+    expect(result.content).toContain('<AMOUNT>-100.00</AMOUNT>');
+    expect(result.content).toContain('<AMOUNT>100.00</AMOUNT>');
+  });
 
   it('rejects invalid tenant context for Tally XML and migration preflight', async () => {
     const { service, invoices } = createService();

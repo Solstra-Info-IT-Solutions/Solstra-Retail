@@ -11,6 +11,7 @@ import { Tenant, TenantDocument } from '../tenants/schemas/tenant.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { UpdateUserPermissionsDto } from './dto/update-user-permissions.dto';
+import { CreateStaffUserDto } from './dto/create-staff-user.dto';
 import { Types } from 'mongoose';
 
 const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -78,6 +79,34 @@ export class AuthService {
     const tenant = await this.tenants.findById(user.tenantId);
     if (!tenant || tenant.status !== 'active') throw new UnauthorizedException('Workspace unavailable');
     return this.issueToken(user, tenant);
+  }
+
+  async createStaffUser(tenantId: string, dto: CreateStaffUserDto) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    const email = dto.email.toLowerCase().trim();
+    const passwordHash = await bcrypt.hash(dto.password, 12);
+    try {
+      const [user] = await this.users.create([{
+        tenantId: new Types.ObjectId(tenantId),
+        name: dto.name.trim(),
+        email,
+        passwordHash,
+        role: 'staff',
+        permissions: [],
+        isActive: true,
+      }]);
+      return {
+        id: String(user._id),
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        permissions: user.permissions || [],
+        isActive: user.isActive,
+      };
+    } catch (error: any) {
+      if (error?.code === 11000) throw new ConflictException('An account with this email already exists');
+      throw error;
+    }
   }
 
   async listTenantUsers(tenantId: string) {

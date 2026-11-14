@@ -17,6 +17,8 @@ import { Permissions } from '../common/decorators/permissions.decorator';
 import { WarehouseInventoryService } from './warehouse-inventory.service';
 import { WarehouseOpeningStockDto } from './dto/warehouse-opening-stock.dto';
 import { CreateWarehouseTransferDto } from './dto/create-warehouse-transfer.dto';
+import { ReplenishmentService } from './replenishment.service';
+import { UpsertReplenishmentPolicyDto, ReplenishmentQueryDto } from './dto/replenishment.dto';
 
 type AuthenticatedRequest = Request & {
   user: {
@@ -31,7 +33,26 @@ export class InventoryController {
   constructor(
     private readonly inventoryService: InventoryService,
     private readonly warehouseInventory: WarehouseInventoryService,
+    private readonly replenishment: ReplenishmentService,
   ) {}
+
+  @Roles('owner', 'admin')
+  @Post('replenishment/policies')
+  upsertReplenishmentPolicy(@Req() req: AuthenticatedRequest, @Body() dto: UpsertReplenishmentPolicyDto) {
+    return this.replenishment.upsertPolicy(req.user.tenantId, req.user.userId, dto);
+  }
+
+  @Permissions('inventory.view')
+  @Get('replenishment/policies')
+  listReplenishmentPolicies(@Req() req: AuthenticatedRequest, @Query('warehouseId') warehouseId?: string) {
+    return this.replenishment.listPolicies(req.user.tenantId, warehouseId);
+  }
+
+  @Permissions('inventory.view')
+  @Get('replenishment/suggestions')
+  replenishmentSuggestions(@Req() req: AuthenticatedRequest, @Query() query: ReplenishmentQueryDto) {
+    return this.replenishment.suggestions(req.user.tenantId, query);
+  }
 
   @Roles('owner', 'admin')
   @Post('products/:productId/movements')

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsMongoId, IsObject, IsOptional, IsString, IsUrl, Length, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, IsUrl, Length, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 
 export class CreateAutomationRuleDto {
   @IsString() @Length(3, 100) name!: string;
@@ -16,7 +16,7 @@ export class TriggerAutomationDto {
 export class CreateWebhookDto {
   @IsString() @Length(3, 100) name!: string;
   @IsUrl({ protocols: ['https'], require_protocol: true }) @MaxLength(2048) endpointUrl!: string;
-  @IsArray() @ArrayMaxSize(20) @IsIn(['SALE_CREATED', 'LOW_STOCK', 'EXPENSE_PENDING_APPROVAL', 'MANUAL'], { each: true }) events!: string[];
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20) @IsIn(['SALE_CREATED', 'LOW_STOCK', 'EXPENSE_PENDING_APPROVAL', 'MANUAL'], { each: true }) events!: string[];
 }
 export class UpdateWebhookDto { @IsBoolean() enabled!: boolean; }
 export class OfflineSaleOperationDto {

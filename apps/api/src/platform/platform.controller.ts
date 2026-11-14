@@ -135,6 +135,14 @@ export class PlatformController {
     return this.platform.updateCommunicationProvider(req.user.tenantId, id, dto.enabled);
   }
 
+  @Public()
+  @SkipTrial()
+  @Post('communications/callback/:deliveryId')
+  communicationReceipt(@Req() req: AuthenticatedRequest, @Param('deliveryId') deliveryId: string) {
+    const signature = req.headers['x-solstra-communication-signature'];
+    return this.platform.recordCommunicationReceipt(deliveryId, req.rawBody, Array.isArray(signature) ? signature[0] : signature);
+  }
+
   @Roles('owner', 'admin')
   @Post('communications/send')
   queueCommunication(@Req() req: AuthenticatedRequest, @Body() dto: SendCommunicationDto) {

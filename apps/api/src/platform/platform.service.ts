@@ -455,6 +455,10 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     if (syncDevice && dto.batchSequence !== undefined) {
       batchPayloadSha256 = createHash('sha256').update(JSON.stringify(dto.operations)).digest('hex');
       const currentSequence = Number(syncDevice.lastSyncSequence || 0);
+      if (syncDevice.lastSyncStatus === 'PROCESSING' && syncDevice.lastSyncStartedAt
+        && new Date(syncDevice.lastSyncStartedAt).getTime() > Date.now() - 5 * 60 * 1000) {
+        throw new ConflictException('Another offline batch is still processing for this device. Retry after it is acknowledged.');
+      }
       if (dto.batchSequence <= currentSequence) {
         if (dto.batchSequence === currentSequence && syncDevice.lastSyncPayloadSha256 === batchPayloadSha256) {
           if (syncDevice.lastSyncStatus === 'SUCCEEDED' && syncDevice.lastSyncResult) {
@@ -469,7 +473,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
           _id: syncDevice._id, revokedAt: null,
           $or: [{ lastSyncSequence: currentSequence }, ...(currentSequence === 0 ? [{ lastSyncSequence: { $exists: false } }] : [])],
         }),
-        { $set: { lastSyncSequence: dto.batchSequence, lastSyncPayloadSha256: batchPayloadSha256, lastSyncStatus: 'PROCESSING', lastSyncResult: null } },
+        { $set: { lastSyncSequence: dto.batchSequence, lastSyncPayloadSha256: batchPayloadSha256, lastSyncStatus: 'PROCESSING', lastSyncStartedAt: new Date(), lastSyncResult: null } },
       );
       if (!claim.modifiedCount) throw new ConflictException('Another sync batch advanced this device. Retry with a fresh batch sequence.');
     }

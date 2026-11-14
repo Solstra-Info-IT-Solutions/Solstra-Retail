@@ -3,6 +3,16 @@ import { HydratedDocument, Types } from 'mongoose';
 
 export type ExpensePaymentMethod = 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'OTHER';
 export type ExpenseStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID';
+export type ExpenseApprovalStatus = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
+
+@Schema({ _id: false })
+export class ExpenseApprovalEvent {
+  @Prop({ type: String, required: true, enum: ['APPROVED', 'REJECTED'] }) decision!: 'APPROVED' | 'REJECTED';
+  @Prop({ required: true, trim: true, minlength: 5, maxlength: 500 }) reason!: string;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true }) reviewedBy!: Types.ObjectId;
+  @Prop({ required: true, default: Date.now }) reviewedAt!: Date;
+}
+export const ExpenseApprovalEventSchema = SchemaFactory.createForClass(ExpenseApprovalEvent);
 
 @Schema({ _id: false })
 export class ExpensePayment {
@@ -27,6 +37,8 @@ export class Expense {
   @Prop({ trim: true, default: '', maxlength: 100 }) reference!: string;
   @Prop({ trim: true, default: '', maxlength: 500 }) attachmentUrl!: string;
   @Prop({ type: String, required: true, enum: ['UNPAID', 'PARTIALLY_PAID', 'PAID'], default: 'UNPAID' }) status!: ExpenseStatus;
+  @Prop({ type: String, required: true, enum: ['PENDING_APPROVAL', 'APPROVED', 'REJECTED'], default: 'APPROVED', index: true }) approvalStatus!: ExpenseApprovalStatus;
+  @Prop({ type: [ExpenseApprovalEventSchema], default: [] }) approvalHistory!: ExpenseApprovalEvent[];
   @Prop({ required: true, min: 0, default: 0 }) paidAmount!: number;
   @Prop({ required: true, min: 0 }) dueAmount!: number;
   @Prop({ type: [ExpensePaymentSchema], default: [] }) payments!: ExpensePayment[];
@@ -37,3 +49,4 @@ export const ExpenseSchema = SchemaFactory.createForClass(Expense);
 ExpenseSchema.index({ tenantId: 1, expenseDate: -1, createdAt: -1 });
 ExpenseSchema.index({ tenantId: 1, status: 1, expenseDate: -1 });
 ExpenseSchema.index({ tenantId: 1, category: 1, expenseDate: -1 });
+ExpenseSchema.index({ tenantId: 1, approvalStatus: 1, expenseDate: -1 });

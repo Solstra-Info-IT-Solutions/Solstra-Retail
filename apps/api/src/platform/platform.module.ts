@@ -9,7 +9,7 @@ import {
   AutomationExecution, AutomationExecutionSchema, AutomationRule, AutomationRuleSchema, BackupArtifact, BackupArtifactSchema, BackupPolicy, BackupPolicySchema,
   OfflineSyncRecord, OfflineSyncRecordSchema, PlatformNotification, SaasAdminAudit, SaasAdminAuditSchema,
   PlatformNotificationSchema, WebhookDelivery, WebhookDeliverySchema,
-  WebhookIntegration, WebhookIntegrationSchema,
+  WebhookIntegration, WebhookIntegrationSchema, CommunicationProvider, CommunicationProviderSchema, CommunicationDelivery, CommunicationDeliverySchema, SubscriptionInvoice, SubscriptionInvoiceSchema, BackupReplicationEvent, BackupReplicationEventSchema,
 } from './schemas/platform.schema';
 import { PlatformController } from './platform.controller';
 import { PlatformService } from './platform.service';
@@ -28,6 +28,10 @@ import { PlatformEventInterceptor } from './platform-event.interceptor';
       { name: BackupPolicy.name, schema: BackupPolicySchema },
       { name: BackupArtifact.name, schema: BackupArtifactSchema },
       { name: SaasAdminAudit.name, schema: SaasAdminAuditSchema },
+      { name: CommunicationProvider.name, schema: CommunicationProviderSchema },
+      { name: CommunicationDelivery.name, schema: CommunicationDeliverySchema },
+      { name: SubscriptionInvoice.name, schema: SubscriptionInvoiceSchema },
+      { name: BackupReplicationEvent.name, schema: BackupReplicationEventSchema },
       { name: Tenant.name, schema: TenantSchema },
       { name: User.name, schema: UserSchema },
       { name: Product.name, schema: ProductSchema },

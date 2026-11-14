@@ -1324,7 +1324,7 @@ export class ReportsService {
           throw new BadRequestException('Journal contains an invalid ledger line; resolve it before Tally export');
         }
         const amount = debit > 0 ? -debit : credit;
-        return `<ALLLEDGERENTRIES.LIST><LEDGERNAME>${xml(line.accountName || line.accountCode || 'Unmapped Ledger')}</LEDGERNAME><ISDEEMEDPOSITIVE>${debit > 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE><AMOUNT>${amount.toFixed(2)}</AMOUNT><LEDGERENTRIES.LIST><LEDGERNAME>${xml(line.accountName || line.accountCode || 'Unmapped Ledger')}</LEDGERNAME><ISDEEMEDPOSITIVE>${debit > 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE><AMOUNT>${amount.toFixed(2)}</AMOUNT></LEDGERENTRIES.LIST></ALLLEDGERENTRIES.LIST>`;
+        return `<ALLLEDGERENTRIES.LIST><LEDGERNAME>${xml(line.accountName || line.accountCode || 'Unmapped Ledger')}</LEDGERNAME><ISDEEMEDPOSITIVE>${debit > 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE><AMOUNT>${amount.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>`;
       }).join('');
       const totalDebit = (entry.lines || []).reduce((sum: number, line: any) => sum + Number(line.debit || 0), 0);
       const totalCredit = (entry.lines || []).reduce((sum: number, line: any) => sum + Number(line.credit || 0), 0);

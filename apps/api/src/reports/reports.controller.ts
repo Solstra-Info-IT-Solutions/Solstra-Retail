@@ -87,7 +87,7 @@ export class ReportsController {
     return this.reportsService.balanceSheet(req.user.tenantId, query);
   }
 
-  @Roles('owner', 'admin')
+  @Permissions('reports.view')
   @Get('reports/gst/einvoice-submissions')
   listGstEInvoiceSubmissions(@Req() req: AuthenticatedRequest, @Query('page') page = '1') {
     return this.reportsService.listGstEInvoiceSubmissions(req.user.tenantId, Number(page));

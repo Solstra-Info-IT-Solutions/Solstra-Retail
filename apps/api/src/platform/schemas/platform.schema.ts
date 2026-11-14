@@ -108,7 +108,7 @@ export class BackupArtifact {
 export type BackupArtifactDocument = HydratedDocument<BackupArtifact>;
 export const BackupArtifactSchema = SchemaFactory.createForClass(BackupArtifact);
 BackupArtifactSchema.index({ tenantId: 1, createdAt: -1 });
-BackupArtifactSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+BackupArtifactSchema.index({ expiresAt: 1 });
 
 @Schema({ timestamps: true, collection: 'saas_admin_audit', versionKey: false })
 export class SaasAdminAudit {

@@ -90,7 +90,7 @@ export class ReplenishmentService {
       .populate('productId', 'name sku unit trackStock')
       .populate('warehouseId', 'name code')
       .populate('preferredSupplierId', 'name')
-      .lean();
+      .lean() as any[];
     if (!policies.length) return { generatedAt: new Date(), lookbackDays, forecastDays, summary: { policies: 0, reorderRequired: 0, recommendedUnits: 0 }, items: [] };
     const warehouseIds = [...new Set(policies.map(p => String(p.warehouseId?._id || p.warehouseId)))].map(id => new Types.ObjectId(id));
     const productIds = [...new Set(policies.map(p => String(p.productId?._id || p.productId)))].map(id => new Types.ObjectId(id));
@@ -119,7 +119,7 @@ export class ReplenishmentService {
       const forecastDemand = averageDailyDemand * forecastDays;
       const reorderTrigger = Math.max(policy.reorderPoint, leadTimeDemand + policy.safetyStock);
       const needsReorder = onHand <= reorderTrigger;
-      const rawOrderQty = needsReorder ? Math.max(0, policy.targetStock + policy.safetyStock - onHand) : 0;
+      const rawOrderQty = needsReorder ? Math.max(0, policy.targetStock - onHand) : 0;
       const roundedOrderQty = rawOrderQty > 0
         ? Math.max(policy.minimumOrderQty, Math.ceil(rawOrderQty / policy.packSize) * policy.packSize)
         : 0;

@@ -17,6 +17,7 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { ListProductsDto } from './dto/list-products.dto';
 import { InitializeProductValuationDto } from './dto/initialize-product-valuation.dto';
 import { Roles } from '../common/decorators/roles.decorator';
+import { Permissions } from '../common/decorators/permissions.decorator';
 
 type AuthenticatedRequest = Request & {
   user: {
@@ -57,6 +58,7 @@ export class ProductsController {
     );
   }
 
+  @Permissions('products.view')
   @Get()
   findAll(
     @Req() req: AuthenticatedRequest,
@@ -69,6 +71,7 @@ export class ProductsController {
   }
 
   
+  @Permissions('products.view')
   @Get('low-stock')
   findLowStock(@Req() req: AuthenticatedRequest) {
     return this.productsService.findLowStock(
@@ -86,6 +89,7 @@ export class ProductsController {
     return this.productsService.valuationStatus(req.user.tenantId, query);
   }
 
+  @Permissions('products.view')
   @Get(':id')
   findOne(
     @Req() req: AuthenticatedRequest,

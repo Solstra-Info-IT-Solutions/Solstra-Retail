@@ -2,6 +2,7 @@ import { api } from './client';
 
 export type QueuedOfflineSale = {
   idempotencyKey: string;
+  scope: string;
   payload: Record<string, unknown>;
   createdAt: string;
   lastError?: string;
@@ -24,20 +25,21 @@ function database(): Promise<IDBDatabase> {
   });
 }
 
-export async function queueOfflineSale(payload: Record<string, unknown>) {
+export async function queueOfflineSale(payload: Record<string, unknown>, scope: string) {
   const idempotencyKey = String(payload.idempotencyKey || '');
+  if (!scope) throw new Error('Offline sale requires an authenticated tenant scope');
   if (!idempotencyKey) throw new Error('Offline sale requires an idempotency key');
   const db = await database();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).put({ idempotencyKey, payload, createdAt: new Date().toISOString() } satisfies QueuedOfflineSale);
+    tx.objectStore(STORE).put({ idempotencyKey, scope, payload, createdAt: new Date().toISOString() } satisfies QueuedOfflineSale);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error || new Error('Could not save offline invoice'));
   });
   db.close();
 }
 
-export async function listQueuedOfflineSales(): Promise<QueuedOfflineSale[]> {
+export async function listQueuedOfflineSales(scope: string): Promise<QueuedOfflineSale[]> {
   const db = await database();
   const rows = await new Promise<QueuedOfflineSale[]>((resolve, reject) => {
     const request = db.transaction(STORE, 'readonly').objectStore(STORE).getAll();
@@ -45,11 +47,11 @@ export async function listQueuedOfflineSales(): Promise<QueuedOfflineSale[]> {
     request.onerror = () => reject(request.error || new Error('Could not read offline invoices'));
   });
   db.close();
-  return rows.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return rows.filter(row => row.scope === scope).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-export async function syncQueuedOfflineSales() {
-  const queued = await listQueuedOfflineSales();
+export async function syncQueuedOfflineSales(scope: string) {
+  const queued = await listQueuedOfflineSales(scope);
   if (!queued.length) return { synced: 0, pending: 0 };
   const response = await api.post<{ results: Array<{ idempotencyKey: string; status: string; error?: string }> }>('/platform/offline/sync', {
     operations: queued.map(item => ({ type: 'SALE', idempotencyKey: item.idempotencyKey, payload: item.payload })),
@@ -69,23 +71,23 @@ export async function syncQueuedOfflineSales() {
     tx.onerror = () => reject(tx.error || new Error('Could not update offline queue'));
   });
   db.close();
-  const remaining = await listQueuedOfflineSales();
+  const remaining = await listQueuedOfflineSales(scope);
   return { synced: results.filter(row => row.status === 'SUCCEEDED').length, pending: remaining.length };
 }
 
-export async function cacheOfflineProducts(products: Array<Record<string, unknown>>) {
+export async function cacheOfflineProducts(products: Array<Record<string, unknown>>, scope: string) {
   const db = await database();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(PRODUCT_STORE, 'readwrite');
     const store = tx.objectStore(PRODUCT_STORE);
-    for (const product of products) store.put(product);
+    for (const product of products) store.put({ ...product, scope });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error || new Error('Could not cache product catalogue'));
   });
   db.close();
 }
 
-export async function getOfflineProducts<T>(): Promise<T[]> {
+export async function getOfflineProducts<T extends { scope?: string }>(scope: string): Promise<T[]> {
   const db = await database();
   const rows = await new Promise<T[]>((resolve, reject) => {
     const request = db.transaction(PRODUCT_STORE, 'readonly').objectStore(PRODUCT_STORE).getAll();
@@ -93,5 +95,5 @@ export async function getOfflineProducts<T>(): Promise<T[]> {
     request.onerror = () => reject(request.error || new Error('Could not read cached product catalogue'));
   });
   db.close();
-  return rows;
+  return rows.filter(row => row.scope === scope);
 }

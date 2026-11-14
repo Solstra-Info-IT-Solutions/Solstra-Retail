@@ -1374,6 +1374,75 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  async integrationProviderReadiness(tenantId: string) {
+    this.identity(tenantId);
+    const configured = (...keys: string[]) => keys.every(key => Boolean(String(this.config.get<string>(key) || '').trim()));
+    const [emailProviders, smsProviders, whatsappProviders] = await Promise.all([
+      this.communicationProviders.countDocuments(tenantFilter(tenantId, { channel: 'EMAIL', enabled: true })),
+      this.communicationProviders.countDocuments(tenantFilter(tenantId, { channel: 'SMS', enabled: true })),
+      this.communicationProviders.countDocuments(tenantFilter(tenantId, { channel: 'WHATSAPP', enabled: true })),
+    ]);
+    return {
+      generatedAt: new Date(),
+      payment: {
+        razorpay: { configured: configured('RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET', 'RAZORPAY_WEBHOOK_SECRET'), mode: 'LIVE_OR_TEST_KEYS_FROM_DEPLOYMENT_SECRET_STORE' },
+      },
+      accounting: {
+        tallyPrime: { configured: true, mode: 'XML_INTERCHANGE_ONLY', note: 'Export/import file workflow; no live Tally connector.' },
+        zohoBooks: { configured: configured('ZOHO_BOOKS_CLIENT_ID', 'ZOHO_BOOKS_CLIENT_SECRET', 'ZOHO_BOOKS_REDIRECT_URI'), mode: 'OAUTH_CREDENTIALS_ONLY' },
+        quickBooks: { configured: configured('QUICKBOOKS_CLIENT_ID', 'QUICKBOOKS_CLIENT_SECRET', 'QUICKBOOKS_REDIRECT_URI'), mode: 'OAUTH_CREDENTIALS_ONLY' },
+      },
+      commerce: {
+        shopify: { configured: configured('SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET'), mode: 'OAUTH_CREDENTIALS_ONLY' },
+        wooCommerce: { configured: configured('WOOCOMMERCE_CONSUMER_KEY', 'WOOCOMMERCE_CONSUMER_SECRET', 'WOOCOMMERCE_STORE_URL'), mode: 'API_CREDENTIALS_ONLY' },
+      },
+      communications: {
+        email: { configuredProviders: emailProviders, ready: emailProviders > 0 },
+        sms: { configuredProviders: smsProviders, ready: smsProviders > 0 },
+        whatsapp: { configuredProviders: whatsappProviders, ready: whatsappProviders > 0 },
+        deliveryAdapter: 'TENANT_CONFIGURED_HTTPS_WEBHOOK',
+      },
+      disasterRecovery: {
+        offsiteReplication: configured('BACKUP_REPLICATION_ENDPOINT', 'BACKUP_REPLICATION_TOKEN'),
+        isolatedRestore: configured('DR_RESTORE_MONGO_URI'),
+      },
+      monitoring: {
+        alertWebhook: configured('OPERATIONS_ALERT_WEBHOOK_URL', 'OPERATIONS_ALERT_WEBHOOK_TOKEN'),
+      },
+      note: 'Credential presence is not OAuth authorization, provider connectivity, sandbox certification, or successful production delivery. Never expose credential values through this endpoint.',
+    };
+  }
+
+  async dispatchOperationalAlerts(tenantId: string) {
+    this.identity(tenantId);
+    const endpoint = this.config.get<string>('OPERATIONS_ALERT_WEBHOOK_URL') || '';
+    const token = this.config.get<string>('OPERATIONS_ALERT_WEBHOOK_TOKEN') || '';
+    if (!endpoint || !token) throw new ServiceUnavailableException('Configure OPERATIONS_ALERT_WEBHOOK_URL and OPERATIONS_ALERT_WEBHOOK_TOKEN in the deployment secret store');
+    await this.validateWebhookUrl(endpoint);
+    const metrics = await this.operationsMetrics(tenantId);
+    if (!metrics.alerts.length) return { dispatched: false, reason: 'NO_ACTIVE_ALERTS', alertCount: 0 };
+    const payload = JSON.stringify({
+      contract: 'SOLSTRA_RETAIL_OPERATIONAL_ALERTS_V1',
+      tenantId, generatedAt: new Date().toISOString(),
+      alerts: metrics.alerts,
+      service: metrics.service, queues: metrics.queues, backups: metrics.backups,
+    });
+    const signature = createHmac('sha256', token).update(payload).digest('hex');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST', redirect: 'manual', signal: controller.signal,
+        headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', 'x-solstra-alert-signature': signature },
+        body: payload,
+      });
+      if (!response.ok) throw new Error('Monitoring alert receiver returned HTTP ' + response.status);
+      return { dispatched: true, alertCount: metrics.alerts.length, receiverStatus: response.status };
+    } catch {
+      throw new ServiceUnavailableException('Operational alert receiver did not acknowledge delivery');
+    } finally { clearTimeout(timeout); }
+  }
+
   async operationsMetrics(tenantId: string) {
     this.identity(tenantId);
     const filter = (extra: Record<string, any> = {}) => tenantFilter(tenantId, extra);

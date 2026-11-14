@@ -981,6 +981,67 @@ export class ReportsService {
     };
   }
 
+  async advancedAnalytics(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const inactivityCutoff = new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const [dailySales, productMargins, inventoryRows, recentMovements] = await Promise.all([
+      this.invoices.aggregate([
+        { $match: tenantFilter(tenantId, { status: 'ISSUED', invoiceDate: { $gte: start, $lte: end } }) },
+        { $group: { _id: { $dateToString: { date: '$invoiceDate', format: '%Y-%m-%d', timezone: 'Asia/Kolkata' } }, invoices: { $sum: 1 }, grossSales: { $sum: '$grandTotal' }, taxableSales: { $sum: '$taxableValue' }, cogs: { $sum: { $sum: '$items.costOfGoodsSold' } } } },
+        { $sort: { _id: 1 } },
+      ]),
+      this.invoices.aggregate([
+        { $match: tenantFilter(tenantId, { status: 'ISSUED', invoiceDate: { $gte: start, $lte: end } }) },
+        { $unwind: '$items' },
+        { $group: { _id: { productId: '$items.productId', name: '$items.name', sku: '$items.sku' }, unitsSold: { $sum: '$items.quantity' }, revenue: { $sum: '$items.taxableValue' }, cogs: { $sum: '$items.costOfGoodsSold' } } },
+        { $project: { _id: 0, productId: '$_id.productId', name: '$_id.name', sku: '$_id.sku', unitsSold: 1, revenue: 1, cogs: 1, grossMargin: { $subtract: ['$revenue', '$cogs'] }, marginPercent: { $cond: [{ $gt: ['$revenue', 0] }, { $multiply: [{ $divide: [{ $subtract: ['$revenue', '$cogs'] }, '$revenue'] }, 100] }, 0] } } },
+        { $sort: { grossMargin: -1 } }, { $limit: 20 },
+      ]),
+      this.products.aggregate([
+        { $match: tenantFilter(tenantId, { isDeleted: false, trackStock: true, stockQty: { $gt: 0 } }) },
+        { $project: { name: 1, sku: 1, stockQty: 1, inventoryValue: { $ifNull: ['$inventoryValue', { $multiply: ['$purchasePrice', '$stockQty'] }] }, createdAt: 1 } },
+        { $sort: { inventoryValue: -1 } }, { $limit: 500 },
+      ]),
+      this.movements.aggregate([
+        { $match: tenantFilter(tenantId, { createdAt: { $gte: inactivityCutoff, $lte: end } }) },
+        { $group: { _id: '$productId', lastMovementAt: { $max: '$createdAt' } } },
+      ]),
+    ]);
+    let cumulative = 0;
+    const totalInventoryValue = inventoryRows.reduce((sum: number, row: any) => sum + Number(row.inventoryValue || 0), 0);
+    const abcInventory = inventoryRows.map((row: any) => {
+      cumulative += Number(row.inventoryValue || 0);
+      const share = totalInventoryValue > 0 ? cumulative / totalInventoryValue : 0;
+      return { productId: row._id, name: row.name, sku: row.sku, stockQty: row.stockQty, inventoryValue: row.inventoryValue, cumulativeValueSharePercent: Math.round(share * 10000) / 100, classification: share <= 0.8 ? 'A' : share <= 0.95 ? 'B' : 'C' };
+    });
+    const movementMap = new Map(recentMovements.map((row: any) => [String(row._id), row.lastMovementAt]));
+    const deadStock = inventoryRows.filter((row: any) => !movementMap.has(String(row._id))).map((row: any) => ({ productId: row._id, name: row.name, sku: row.sku, stockQty: row.stockQty, inventoryValue: row.inventoryValue, lastMovementAt: null })).slice(0, 100);
+    const totalRevenue = productMargins.reduce((sum: number, row: any) => sum + Number(row.revenue || 0), 0);
+    const totalCogs = productMargins.reduce((sum: number, row: any) => sum + Number(row.cogs || 0), 0);
+    return {
+      from: start, to: end, currency: 'INR', amountUnit: 'RUPEES',
+      salesTrend: dailySales.map((row: any) => ({ date: row._id, invoices: row.invoices, grossSales: row.grossSales, taxableSales: row.taxableSales, cogs: row.cogs, grossProfit: row.taxableSales - row.cogs })),
+      productMargins,
+      marginSummary: { taxableRevenue: totalRevenue, costOfGoodsSold: totalCogs, grossProfit: totalRevenue - totalCogs, grossMarginPercent: totalRevenue > 0 ? Math.round(((totalRevenue - totalCogs) / totalRevenue) * 10000) / 100 : 0 },
+      inventoryABC: { totalInventoryValue, products: abcInventory, classificationNote: 'ABC classes are based on cumulative current inventory value: A first 80%, B next 15%, C remaining 5%. The list is capped at 500 products.' },
+      deadStock: { inactivityDays: 90, count: deadStock.length, inventoryValue: deadStock.reduce((sum: number, row: any) => sum + Number(row.inventoryValue || 0), 0), products: deadStock, note: 'No inventory movement was recorded in the 90 days before the report end date; this is a screening signal, not proof of obsolescence.' },
+    };
+  }
+
+  async businessAssistantInsights(tenantId: string, dto: ReportDateRangeDto) {
+    const [dashboard, analytics] = await Promise.all([this.dashboardSummary(tenantId), this.advancedAnalytics(tenantId, dto)]);
+    const insights: Array<{ severity: 'HIGH' | 'MEDIUM' | 'INFO'; title: string; explanation: string; suggestedAction: string; metric?: number }> = [];
+    if (dashboard.lowStockProductCount > 0) insights.push({ severity: 'HIGH', title: 'Low-stock risk detected', explanation: `${dashboard.lowStockProductCount} products are at or below their reorder threshold.`, suggestedAction: 'Review replenishment recommendations and approve purchase orders for critical items.', metric: dashboard.lowStockProductCount });
+    if (analytics.deadStock.count > 0) insights.push({ severity: 'MEDIUM', title: 'Capital may be tied up in slow-moving stock', explanation: `${analytics.deadStock.count} products have stock but no recorded movement in the last 90 days; value at cost is approximately ₹${analytics.deadStock.inventoryValue.toFixed(2)}.`, suggestedAction: 'Review these products for markdowns, bundles, supplier returns or reduced reorder targets.', metric: analytics.deadStock.inventoryValue });
+    if (analytics.marginSummary.grossMarginPercent < 15 && analytics.marginSummary.taxableRevenue > 0) insights.push({ severity: 'HIGH', title: 'Gross margin is below 15%', explanation: `The selected period gross margin is ${analytics.marginSummary.grossMarginPercent}%.`, suggestedAction: 'Review purchase costs, discount rules and selling prices before approving further promotions.', metric: analytics.marginSummary.grossMarginPercent });
+    const negativeMargin = analytics.productMargins.filter((row: any) => row.grossMargin < 0);
+    if (negativeMargin.length) insights.push({ severity: 'HIGH', title: 'Products sold below recorded cost', explanation: `${negativeMargin.length} of the top 20 product margin rows have negative gross profit.`, suggestedAction: 'Inspect price overrides, discounts, landed cost and stock valuation for the affected products.', metric: negativeMargin.length });
+    if (dashboard.outstandingDuesRupees > 0) insights.push({ severity: 'MEDIUM', title: 'Customer receivables need follow-up', explanation: `Outstanding customer dues total ₹${dashboard.outstandingDuesRupees.toFixed(2)}.`, suggestedAction: 'Review overdue customer balances and prioritize collection reminders.', metric: dashboard.outstandingDuesRupees });
+    if (!insights.length) insights.push({ severity: 'INFO', title: 'No critical signals detected', explanation: 'The current rule-based checks did not identify low stock, slow-moving inventory, low overall margin, negative-margin products or outstanding dues.', suggestedAction: 'Continue monitoring daily sales, stock and margin trends.' });
+    return { generatedAt: new Date(), mode: 'RULE_BASED_BUSINESS_ASSISTANT', disclaimer: 'These are explainable operational signals derived from your tenant data, not autonomous financial, tax or purchasing decisions. Verify source records before acting.', insights };
+  }
+
   private validateTenant(tenantId: string) {
     if (!Types.ObjectId.isValid(tenantId)) {
       throw new BadRequestException('Invalid tenant context');

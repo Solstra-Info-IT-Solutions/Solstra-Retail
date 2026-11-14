@@ -552,6 +552,11 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     return { tenant, auditReason: dto.reason.trim() };
   }
 
+  async listSaasAdminAudit(userId: string) {
+    this.assertPlatformAdmin(userId);
+    return this.saasAudit.find({}).populate('tenantId', 'name slug').populate('actorId', 'name email').sort({ createdAt: -1 }).limit(100).lean();
+  }
+
   async platformUsageSummary(userId: string) {
     this.assertPlatformAdmin(userId);
     const [tenants, users, products] = await Promise.all([

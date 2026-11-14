@@ -14,6 +14,7 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { tenantFilter } from '../common/tenant-scoped.service';
 import { SalesService } from '../sales/sales.service';
+import { RecurringExpensesService } from '../expenses/recurring-expenses.service';
 import { CreateSaleDto } from '../sales/dto/create-sale.dto';
 import { Tenant } from '../tenants/schemas/tenant.schema';
 import { User } from '../auth/schemas/user.schema';
@@ -71,6 +72,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     @InjectModel(BackupRestoreDrill.name) private readonly backupRestoreDrills: Model<any>,
     private readonly sales: SalesService,
     private readonly config: ConfigService,
+    @Optional() private readonly recurringExpenses?: RecurringExpensesService,
   ) {}
 
   private identity(tenantId: string, userId?: string) {
@@ -703,6 +705,9 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       billingReminders += 1;
     }
     const backups = await this.runScheduledBackupJobs();
+    const recurringExpenses = this.recurringExpenses
+      ? await this.recurringExpenses.runDueScheduledForAllTenants()
+      : { tenantCount: 0, processedTenants: 0, results: [] };
     const tenantIds = await this.deliveries.distinct('tenantId', { status: 'PENDING', nextAttemptAt: { $lte: new Date() } });
     let webhookDeliveries = 0;
     for (const tenantId of tenantIds.slice(0, 20)) {
@@ -733,7 +738,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         retriedReplications += 1;
       } catch { /* Replication event history records the retry failure. */ }
     }
-    return { backups, webhookDeliveries, communicationDeliveries, billingReminders, expiredBatches, retriedReplications };
+    return { backups, recurringExpenses, webhookDeliveries, communicationDeliveries, billingReminders, expiredBatches, retriedReplications };
   }
 
   async runScheduledBackupJobs() {

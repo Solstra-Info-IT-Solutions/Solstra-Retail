@@ -20,7 +20,7 @@ import { User } from '../auth/schemas/user.schema';
 import { Product } from '../products/schemas/product.schema';
 import { WarehouseStock } from '../inventory/schemas/warehouse-stock.schema';
 import {
-  AutomationRule, BackupArtifact, BackupPolicy, OfflineSyncRecord, PlatformNotification, SaasAdminAudit,
+  AutomationExecution, AutomationRule, BackupArtifact, BackupPolicy, OfflineSyncRecord, PlatformNotification, SaasAdminAudit,
   WebhookDelivery, WebhookIntegration,
 } from './schemas/platform.schema';
 import {
@@ -51,6 +51,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
   constructor(
     @InjectConnection() private readonly connection: Connection,
     @InjectModel(AutomationRule.name) private readonly rules: Model<any>,
+    @InjectModel(AutomationExecution.name) private readonly executions: Model<any>,
     @InjectModel(PlatformNotification.name) private readonly notifications: Model<any>,
     @InjectModel(WebhookIntegration.name) private readonly integrations: Model<any>,
     @InjectModel(WebhookDelivery.name) private readonly deliveries: Model<any>,
@@ -131,7 +132,25 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     const rules = await this.rules.find(tenantFilter(tenantId, { eventType, enabled: true })).lean();
     const results: Array<{ ruleId: string; status: string }> = [];
     for (const rule of rules) {
+      let execution: any;
       try {
+        execution = await this.executions.findOne(tenantFilter(tenantId, { ruleId: rule._id, eventKey })).lean();
+        if (execution?.status === 'SUCCEEDED' || execution?.status === 'PROCESSING') {
+          results.push({ ruleId: String(rule._id), status: 'SKIPPED_DUPLICATE' });
+          continue;
+        }
+        if (execution?.status === 'FAILED') {
+          await this.executions.updateOne(tenantFilter(tenantId, { _id: execution._id, status: 'FAILED' }), { $set: { status: 'PROCESSING', errorMessage: '', executedAt: new Date() } });
+        } else {
+          try {
+            [execution] = await this.executions.create([{
+              tenantId: new Types.ObjectId(tenantId), ruleId: rule._id, eventKey, status: 'PROCESSING',
+            }]);
+          } catch (error: any) {
+            if (error?.code === 11000) { results.push({ ruleId: String(rule._id), status: 'SKIPPED_DUPLICATE' }); continue; }
+            throw error;
+          }
+        }
         if (rule.actionType === 'NOTIFY') {
           await this.createNotification(tenantId, {
             title: String(rule.config?.title || rule.name).slice(0, 120),
@@ -144,8 +163,10 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
           await this.queueWebhookEvent(tenantId, String(rule.config.integrationId), eventType, eventKey, payload);
           results.push({ ruleId: String(rule._id), status: 'QUEUED' });
         }
+        await this.executions.updateOne(tenantFilter(tenantId, { _id: execution._id }), { $set: { status: 'SUCCEEDED', errorMessage: '', executedAt: new Date() } });
         await this.rules.updateOne(tenantFilter(tenantId, { _id: rule._id }), { $inc: { triggerCount: 1 }, $set: { lastTriggeredAt: new Date() } });
-      } catch {
+      } catch (error: any) {
+        if (execution?._id) await this.executions.updateOne(tenantFilter(tenantId, { _id: execution._id }), { $set: { status: 'FAILED', errorMessage: String(error?.message || 'Automation action failed').slice(0, 500) } });
         results.push({ ruleId: String(rule._id), status: 'FAILED' });
       }
     }

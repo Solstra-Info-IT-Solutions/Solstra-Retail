@@ -57,6 +57,48 @@ export class InventoryController {
   }
 
   @Roles('owner', 'admin')
+  @Post('batches')
+  receiveBatch(@Req() req: AuthenticatedRequest, @Body() dto: ReceiveBatchDto) {
+    return this.advancedInventory.receiveBatch(req.user.tenantId, req.user.userId, dto);
+  }
+
+  @Permissions('inventory.view')
+  @Get('batches')
+  listBatches(@Req() req: AuthenticatedRequest, @Query('productId') productId?: string, @Query('warehouseId') warehouseId?: string) {
+    return this.advancedInventory.listBatches(req.user.tenantId, productId, warehouseId);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('serials')
+  registerSerials(@Req() req: AuthenticatedRequest, @Body() dto: RegisterSerialsDto) {
+    return this.advancedInventory.registerSerials(req.user.tenantId, req.user.userId, dto);
+  }
+
+  @Permissions('inventory.view')
+  @Get('serials')
+  listSerials(@Req() req: AuthenticatedRequest, @Query('productId') productId?: string, @Query('status') status?: string) {
+    return this.advancedInventory.listSerials(req.user.tenantId, productId, status);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('stocktakes')
+  createStocktake(@Req() req: AuthenticatedRequest, @Body() dto: CreateStocktakeDto) {
+    return this.advancedInventory.createStocktake(req.user.tenantId, req.user.userId, dto);
+  }
+
+  @Permissions('inventory.view')
+  @Get('stocktakes')
+  listStocktakes(@Req() req: AuthenticatedRequest) {
+    return this.advancedInventory.listStocktakes(req.user.tenantId);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('stocktakes/:id/complete')
+  completeStocktake(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.advancedInventory.completeStocktake(req.user.tenantId, req.user.userId, id);
+  }
+
+  @Roles('owner', 'admin')
   @Post('products/:productId/movements')
   createMovement(
     @Req() req: AuthenticatedRequest,

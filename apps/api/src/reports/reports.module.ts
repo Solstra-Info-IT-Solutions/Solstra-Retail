@@ -27,7 +27,6 @@ import { GstEInvoiceSubmission, GstEInvoiceSubmissionSchema } from './schemas/gs
 import { GstComplianceSubmission, GstComplianceSubmissionSchema } from './schemas/gst-compliance-submission.schema';
 import { MigrationImportRun, MigrationImportRunSchema } from './schemas/migration-import-run.schema';
 import { HistoricalTransactionImportRun, HistoricalTransactionImportRunSchema, HistoricalTransactionRecord, HistoricalTransactionRecordSchema } from './schemas/historical-transaction-import.schema';
-import { HistoricalTransactionImportRun, HistoricalTransactionImportRunSchema, HistoricalTransactionRecord, HistoricalTransactionRecordSchema } from './schemas/historical-transaction-import.schema';
 
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
@@ -51,8 +50,6 @@ import { ReportsService } from './reports.service';
       { name: GstEInvoiceSubmission.name, schema: GstEInvoiceSubmissionSchema },
       { name: GstComplianceSubmission.name, schema: GstComplianceSubmissionSchema },
       { name: MigrationImportRun.name, schema: MigrationImportRunSchema },
-      { name: HistoricalTransactionImportRun.name, schema: HistoricalTransactionImportRunSchema },
-      { name: HistoricalTransactionRecord.name, schema: HistoricalTransactionRecordSchema },
       { name: HistoricalTransactionImportRun.name, schema: HistoricalTransactionImportRunSchema },
       { name: HistoricalTransactionRecord.name, schema: HistoricalTransactionRecordSchema },
     ]),

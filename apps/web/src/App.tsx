@@ -12,6 +12,8 @@ import InventoryPage from './pages/InventoryPage';
 import SuppliersPage from './pages/SuppliersPage';
 import PurchasesPage from './pages/PurchasesPage';
 import BranchesPage from './pages/BranchesPage';
+import StaffPage from './pages/StaffPage';
+import AuditPage from './pages/AuditPage';
 
 function AppRoutes() {
   const { isAuthenticated } = useAuth();
@@ -35,6 +37,8 @@ function AppRoutes() {
           <Route path="/suppliers" element={<SuppliersPage />} />
           <Route path="/purchases" element={<PurchasesPage />} />
           <Route path="/branches" element={<BranchesPage />} />
+          <Route path="/staff" element={<StaffPage />} />
+          <Route path="/audit" element={<AuditPage />} />
         </Route>
       </Route>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />

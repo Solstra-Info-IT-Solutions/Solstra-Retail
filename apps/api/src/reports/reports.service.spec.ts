@@ -4,6 +4,7 @@ import { ReportsService } from './reports.service';
 describe('ReportsService validation', () => {
   const createService = () => {
     const invoices = { aggregate: jest.fn() };
+    const products = { find: jest.fn() };
     const purchases = { find: jest.fn() };
     const journals = { find: jest.fn() };
 
@@ -11,6 +12,7 @@ describe('ReportsService validation', () => {
       invoices as any,
       {} as any,
       {} as any,
+      products as any,
       {} as any,
       {} as any,
       journals as any,
@@ -20,7 +22,7 @@ describe('ReportsService validation', () => {
       {} as any,
     );
 
-    return { service, invoices, purchases, journals };
+    return { service, invoices, products, purchases, journals };
   };
 
   it('exports posted balanced journals as escaped Tally XML vouchers', async () => {
@@ -59,6 +61,41 @@ describe('ReportsService validation', () => {
     expect(result.mode).toBe('RULE_BASED_COMPARATIVE_ANALYSIS');
     expect(result.change).toMatchObject({ amountRupees: 200, percent: 20, direction: 'UP' });
     expect(sales).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects unsupported demand forecast horizons before querying invoices', async () => {
+    const { service, invoices } = createService();
+    await expect(service.demandForecast('507f1f77bcf86cd799439011', 3)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.demandForecast('invalid-tenant', 30)).rejects.toBeInstanceOf(BadRequestException);
+    expect(invoices.aggregate).not.toHaveBeenCalled();
+  });
+
+  it('builds a tenant-scoped weighted demand forecast with safety stock', async () => {
+    const { service, invoices, products } = createService();
+    invoices.aggregate.mockResolvedValue([{
+      _id: '507f1f77bcf86cd799439099',
+      days: [{ day: '2026-11-13', units: 20 }, { day: '2026-10-01', units: 10 }],
+      totalUnits: 30,
+    }]);
+    products.find.mockReturnValue({
+      select: () => ({ limit: () => ({ lean: async () => [{
+        _id: '507f1f77bcf86cd799439099', name: 'Test product', sku: 'T-1',
+        stockQty: 2, lowStockThreshold: 5,
+      }] }) }),
+    });
+    const result = await service.demandForecast('507f1f77bcf86cd799439011', 30);
+    expect(result.model).toContain('WEIGHTED_30_60_DAY');
+    expect(result.forecasts).toHaveLength(1);
+    expect(result.forecasts[0].suggestedReorderQty).toBeGreaterThan(0);
+    expect(invoices.aggregate).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ $match: expect.objectContaining({ tenantId: expect.anything() }) }),
+    ]));
+  });
+
+  it('rejects invalid GST e-invoice cancellation requests before provider calls', async () => {
+    const { service } = createService();
+    await expect(service.cancelGstEInvoice('invalid-tenant', 'invalid-id', 'reason')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.cancelGstEInvoice('507f1f77bcf86cd799439011', '507f1f77bcf86cd799439012', 'short')).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects impossible calendar dates', async () => {

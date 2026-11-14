@@ -656,14 +656,20 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     for (const invoice of overdueInvoices) await this.tenants.updateOne({ _id: invoice.tenantId }, { $set: { billingStatus: 'PAST_DUE' } });
     const reminderCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const reminderCandidates = await this.subscriptionInvoices.find({
-      status: 'DUE', dueAt: { $lte: new Date() }, reminderCount: { $lt: 7 },
-      $or: [{ lastReminderAt: null }, { lastReminderAt: { $lte: reminderCutoff } }, { lastReminderAt: { $exists: false } }],
+      status: 'DUE', dueAt: { $lte: new Date() },
+      $and: [
+        { $or: [{ reminderCount: { $lt: 7 } }, { reminderCount: { $exists: false } }] },
+        { $or: [{ lastReminderAt: null }, { lastReminderAt: { $lte: reminderCutoff } }, { lastReminderAt: { $exists: false } }] },
+      ],
     }).limit(100).lean();
     let billingReminders = 0;
     for (const invoice of reminderCandidates) {
       const claimed: any = await this.subscriptionInvoices.findOneAndUpdate({
-        _id: invoice._id, tenantId: invoice.tenantId, status: 'DUE', reminderCount: { $lt: 7 },
-        $or: [{ lastReminderAt: null }, { lastReminderAt: { $lte: reminderCutoff } }, { lastReminderAt: { $exists: false } }],
+        _id: invoice._id, tenantId: invoice.tenantId, status: 'DUE',
+        $and: [
+          { $or: [{ reminderCount: { $lt: 7 } }, { reminderCount: { $exists: false } }] },
+          { $or: [{ lastReminderAt: null }, { lastReminderAt: { $lte: reminderCutoff } }, { lastReminderAt: { $exists: false } }] },
+        ],
       }, { $inc: { reminderCount: 1 }, $set: { lastReminderAt: new Date() } }, { new: true }).lean();
       if (!claimed) continue;
       const overdueDays = Math.max(1, Math.floor((Date.now() - new Date(invoice.dueAt).getTime()) / 86400000));

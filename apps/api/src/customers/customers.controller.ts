@@ -12,6 +12,7 @@ import { Body,
 import { Request } from 'express';
 
 import { Roles } from '../common/decorators/roles.decorator';
+import { Permissions } from '../common/decorators/permissions.decorator';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { ListCustomersDto } from './dto/list-customers.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -31,11 +32,13 @@ export class CustomersController {
     return this.customersService.create(req.user.tenantId, dto);
   }
 
+  @Permissions('customers.view')
   @Get()
   findAll(@Req() req: AuthenticatedRequest, @Query() query: ListCustomersDto) {
     return this.customersService.findAll(req.user.tenantId, query);
   }
 
+  @Permissions('customers.view')
   @Get(':id/sales')
   findSalesHistory(
     @Req() req: AuthenticatedRequest,
@@ -64,6 +67,7 @@ export class CustomersController {
     );
   }
 
+  @Permissions('customers.view')
   @Get(':id')
   findOne(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.customersService.findOne(req.user.tenantId, id);

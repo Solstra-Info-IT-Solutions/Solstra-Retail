@@ -87,7 +87,7 @@ export async function cacheOfflineProducts(products: Array<Record<string, unknow
   db.close();
 }
 
-export async function getOfflineProducts<T extends { scope?: string }>(scope: string): Promise<T[]> {
+export async function getOfflineProducts<T>(scope: string): Promise<T[]> {
   const db = await database();
   const rows = await new Promise<T[]>((resolve, reject) => {
     const request = db.transaction(PRODUCT_STORE, 'readonly').objectStore(PRODUCT_STORE).getAll();
@@ -95,5 +95,5 @@ export async function getOfflineProducts<T extends { scope?: string }>(scope: st
     request.onerror = () => reject(request.error || new Error('Could not read cached product catalogue'));
   });
   db.close();
-  return rows.filter(row => row.scope === scope);
+  return rows.filter((row: any) => row.scope === scope);
 }

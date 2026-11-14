@@ -42,6 +42,15 @@ export class Customer {
   @Prop({ trim: true, maxlength: 1000, default: '' })
   notes!: string;
 
+  @Prop({ type: Number, min: 0, default: 0 })
+  loyaltyPoints!: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  lifetimeLoyaltyPoints!: number;
+
+  @Prop({ type: String, enum: ['BRONZE', 'SILVER', 'GOLD', 'PLATINUM'], default: 'BRONZE', index: true })
+  loyaltyTier!: 'BRONZE' | 'SILVER' | 'GOLD' | 'PLATINUM';
+
   @Prop({ type: Boolean, default: false, index: true })
   isDeleted!: boolean;
 

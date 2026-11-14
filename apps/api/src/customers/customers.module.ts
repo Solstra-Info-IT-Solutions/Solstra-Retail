@@ -6,6 +6,7 @@ import {
   SalesInvoiceSchema,
 } from '../sales/schemas/sales-invoice.schema';
 import { Customer, CustomerSchema } from './schemas/customer.schema';
+import { LoyaltyLedger, LoyaltyLedgerSchema } from './schemas/loyalty-ledger.schema';
 import { CustomersController } from './customers.controller';
 import { CustomersService } from './customers.service';
 
@@ -14,6 +15,7 @@ import { CustomersService } from './customers.service';
     MongooseModule.forFeature([
       { name: Customer.name, schema: CustomerSchema },
       { name: SalesInvoice.name, schema: SalesInvoiceSchema },
+      { name: LoyaltyLedger.name, schema: LoyaltyLedgerSchema },
     ]),
   ],
   controllers: [CustomersController],

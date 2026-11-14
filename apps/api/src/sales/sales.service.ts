@@ -10,6 +10,7 @@ import { Connection, Model, Types } from 'mongoose';
 
 import { Product } from '../products/schemas/product.schema';
 import { Customer, CustomerDocument } from '../customers/schemas/customer.schema';
+import { LoyaltyLedger, LoyaltyLedgerDocument } from '../customers/schemas/loyalty-ledger.schema';
 import { Tenant } from '../tenants/schemas/tenant.schema';
 import { InventoryMovement } from '../inventory/schemas/inventory-movement.schema';
 import { Warehouse } from '../branches/schemas/warehouse.schema';
@@ -64,7 +65,15 @@ export class SalesService {
     @InjectModel(Warehouse.name) private readonly warehouses: Model<Warehouse>,
     @InjectModel(Branch.name) private readonly branches: Model<Branch>,
     @InjectModel(WarehouseStock.name) private readonly warehouseStocks: Model<WarehouseStockDocument>,
+    @InjectModel(LoyaltyLedger.name) private readonly loyaltyLedger: Model<LoyaltyLedgerDocument>,
   ) {}
+
+  private loyaltyTier(points: number): 'BRONZE' | 'SILVER' | 'GOLD' | 'PLATINUM' {
+    if (points >= 5000) return 'PLATINUM';
+    if (points >= 2000) return 'GOLD';
+    if (points >= 500) return 'SILVER';
+    return 'BRONZE';
+  }
 
   private toPaise(value: number): number {
     return Math.round((value + Number.EPSILON) * 100);
@@ -660,6 +669,31 @@ export class SalesService {
         });
 
         await invoice.save({ session });
+
+        // Loyalty rewards are earned only by linked customers and only on taxable value (GST excluded).
+        const loyaltyPointsEarned = linkedCustomer ? Math.floor(taxableTotalPaise / 10000) : 0;
+        if (linkedCustomer && loyaltyPointsEarned > 0) {
+          const rewardedCustomer = await this.customers.findOneAndUpdate(
+            tenantFilter(tenantId, { _id: linkedCustomer._id, isDeleted: false }),
+            { $inc: { loyaltyPoints: loyaltyPointsEarned, lifetimeLoyaltyPoints: loyaltyPointsEarned } },
+            { new: true, session, setDefaultsOnInsert: false },
+          );
+          if (!rewardedCustomer) throw new NotFoundException('Customer not found while applying loyalty rewards');
+          rewardedCustomer.loyaltyTier = this.loyaltyTier(rewardedCustomer.lifetimeLoyaltyPoints ?? 0);
+          await rewardedCustomer.save({ session });
+          await this.loyaltyLedger.create([{
+            tenantId: new Types.ObjectId(tenantId),
+            customerId: linkedCustomer._id,
+            eventType: 'SALE_EARN',
+            sourceType: 'SALE',
+            sourceId: invoice._id.toString(),
+            points: loyaltyPointsEarned,
+            pointsDelta: loyaltyPointsEarned,
+            balanceAfter: rewardedCustomer.loyaltyPoints,
+            reason: `Rewards earned on invoice ${invoiceNumber}`,
+            createdBy: new Types.ObjectId(userId),
+          }], { session });
+        }
         const saleLines: Array<{ accountCode: string; debit: number; credit: number; description: string }> = [];
         for (const payment of payments) {
           saleLines.push({

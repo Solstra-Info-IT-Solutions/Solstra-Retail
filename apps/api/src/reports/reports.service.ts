@@ -339,10 +339,11 @@ export class ReportsService {
           status: 'SUBMITTED', providerReference: String(result.referenceId || '').slice(0, 120),
           irn: String(result.irn).slice(0, 120), acknowledgementNumber: String(result.ackNo).slice(0, 120),
           acknowledgementDate: ackDate && !Number.isNaN(ackDate.getTime()) ? ackDate : null,
+          signedQrCode: String(result.signedQRCode || result.signedQrCode || '').slice(0, 20000),
           submittedAt: new Date(), lastError: '',
         },
       });
-      return { status: 'SUBMITTED', irn: result.irn, acknowledgementNumber: result.ackNo, acknowledgementDate: ackDate, duplicate: false };
+      return { status: 'SUBMITTED', irn: result.irn, acknowledgementNumber: result.ackNo, acknowledgementDate: ackDate, signedQrCodeAvailable: Boolean(result.signedQRCode || result.signedQrCode), duplicate: false };
     } catch (error: any) {
       if (!(error instanceof BadRequestException)) {
         await this.gstSubmissions.updateOne(tenantFilter(tenantId, { _id: submission._id }), {

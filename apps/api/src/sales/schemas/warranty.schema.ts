@@ -41,6 +41,9 @@ export class Warranty {
   @Prop({ type: Number, required: true, min: 1 })
   warrantyDays!: number;
 
+  @Prop({ type: Number, min: 0, default: 0 })
+  claimedQuantity!: number;
+
   @Prop({ type: String, default: '' })
   terms!: string;
 

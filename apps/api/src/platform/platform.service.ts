@@ -1082,6 +1082,47 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     return this.backupRestoreDrills.find(filter).sort({ createdAt: -1 }).limit(100).lean();
   }
 
+  async operationsMetrics(tenantId: string) {
+    this.identity(tenantId);
+    const filter = (extra: Record<string, any> = {}) => tenantFilter(tenantId, extra);
+    const now = new Date();
+    const [pendingWebhooks, deadWebhooks, pendingCommunications, deadCommunications, failedCommunications, latestBackup, latestReplication, pendingOffline, failedOffline] = await Promise.all([
+      this.deliveries.countDocuments(filter({ status: { $in: ['PENDING', 'DELIVERING'] } })),
+      this.deliveries.countDocuments(filter({ status: 'DEAD' })),
+      this.communicationDeliveries.countDocuments(filter({ status: { $in: ['PENDING', 'DELIVERING'] } })),
+      this.communicationDeliveries.countDocuments(filter({ status: 'DEAD' })),
+      this.communicationDeliveries.countDocuments(filter({ status: 'FAILED' })),
+      this.backupArtifacts.findOne(filter({})).sort({ createdAt: -1 }).select('createdAt checksumSha256 compressedBytes').lean(),
+      this.backupReplicationEvents.findOne(filter({})).sort({ createdAt: -1 }).select('status createdAt message artifactId').lean(),
+      this.syncRecords.countDocuments(filter({ status: 'PROCESSING' })),
+      this.syncRecords.countDocuments(filter({ status: 'FAILED' })),
+    ]);
+    const backupAgeMinutes = latestBackup?.createdAt ? Math.max(0, Math.floor((now.getTime() - new Date(latestBackup.createdAt).getTime()) / 60000)) : null;
+    return {
+      generatedAt: now,
+      service: { status: this.connection.readyState === 1 ? 'READY' : 'DEGRADED', database: this.connection.readyState === 1 ? 'CONNECTED' : 'DISCONNECTED' },
+      queues: {
+        webhooks: { pending: pendingWebhooks, dead: deadWebhooks },
+        communications: { pending: pendingCommunications, failed: failedCommunications, dead: deadCommunications },
+        offlineSales: { processing: pendingOffline, failed: failedOffline },
+      },
+      backups: {
+        latestCreatedAt: latestBackup?.createdAt || null,
+        latestAgeMinutes: backupAgeMinutes,
+        latestChecksum: latestBackup?.checksumSha256 || null,
+        latestCompressedBytes: latestBackup?.compressedBytes || 0,
+        latestReplication: latestReplication ? { status: latestReplication.status, createdAt: latestReplication.createdAt, message: latestReplication.message } : null,
+      },
+      alerts: [
+        ...(this.connection.readyState !== 1 ? [{ severity: 'CRITICAL', code: 'DATABASE_DISCONNECTED', message: 'MongoDB connection is not ready.' }] : []),
+        ...(deadWebhooks ? [{ severity: 'WARNING', code: 'WEBHOOK_DEAD_LETTER', count: deadWebhooks, message: 'Webhook deliveries exhausted retry attempts.' }] : []),
+        ...(deadCommunications ? [{ severity: 'WARNING', code: 'COMMUNICATION_DEAD_LETTER', count: deadCommunications, message: 'Communication deliveries exhausted retry attempts.' }] : []),
+        ...(backupAgeMinutes === null ? [{ severity: 'WARNING', code: 'BACKUP_NOT_FOUND', message: 'No tenant backup artifact has been created.' }] : backupAgeMinutes > 60 * 48 ? [{ severity: 'WARNING', code: 'BACKUP_STALE', ageMinutes: backupAgeMinutes, message: 'Latest backup is older than 48 hours.' }] : []),
+        ...(latestReplication?.status === 'FAILED' ? [{ severity: 'WARNING', code: 'BACKUP_REPLICATION_FAILED', message: latestReplication.message }] : []),
+      ],
+    };
+  }
+
   async listBackupReplicationEvents(tenantId: string, artifactId?: string) {
     this.identity(tenantId);
     const filter: any = tenantFilter(tenantId, {});

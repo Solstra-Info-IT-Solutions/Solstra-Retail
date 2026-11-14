@@ -22,6 +22,24 @@ describe('ReportsService validation', () => {
     return { service, invoices, purchases };
   };
 
+  it('rejects invalid tenant context for Tally XML and migration preflight', async () => {
+    const { service, invoices } = createService();
+    await expect(service.tallyXmlExport('invalid-tenant', {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.migrationReadiness('invalid-tenant')).rejects.toBeInstanceOf(BadRequestException);
+    expect(invoices.aggregate).not.toHaveBeenCalled();
+  });
+
+  it('compares this month sales with the previous complete month without enabling arbitrary query execution', async () => {
+    const { service } = createService();
+    const sales = jest.spyOn(service, 'salesReport')
+      .mockResolvedValueOnce({ invoiceCount: 8, netSalesRupees: 1200 } as any)
+      .mockResolvedValueOnce({ invoiceCount: 6, netSalesRupees: 1000 } as any);
+    const result = await service.answerBusinessQuestion('507f1f77bcf86cd799439011', 'compare sales this month vs last month');
+    expect(result.mode).toBe('RULE_BASED_COMPARATIVE_ANALYSIS');
+    expect(result.change).toMatchObject({ amountRupees: 200, percent: 20, direction: 'UP' });
+    expect(sales).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects impossible calendar dates', async () => {
     const { service, invoices } = createService();
 

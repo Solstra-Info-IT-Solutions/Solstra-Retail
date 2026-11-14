@@ -26,6 +26,8 @@ type MovementList = {
   pagination: { total: number; page: number; limit: number; totalPages: number };
 };
 type MovementForm = { productId: string; type: 'IN' | 'OUT' | 'ADJUSTMENT'; quantity: string; reason: string };
+type ReplenishmentSuggestion = { policyId: string; product: { id: string; name: string; sku?: string; unit?: string } | null; warehouse: { id: string; name: string; code?: string } | null; onHand: number; unitsSoldInLookback: number; averageDailyDemand: number; forecastDemand: number; leadTimeDays: number; leadTimeDemand: number; reorderPoint: number; safetyStock: number; targetStock: number; needsReorder: boolean; suggestedOrderQty: number; status: 'REORDER' | 'HEALTHY' };
+type ReplenishmentResult = { lookbackDays: number; forecastDays: number; summary: { policies: number; reorderRequired: number; recommendedUnits: number }; items: ReplenishmentSuggestion[]; note: string };
 const blankForm: MovementForm = { productId: '', type: 'IN', quantity: '1', reason: '' };
 const number = (value: number) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(value);
 const money = (value: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(value) || 0);
@@ -54,6 +56,11 @@ export default function InventoryPage() {
   const [warehouseReconciliation, setWarehouseReconciliation] = useState<WarehouseReconciliation | null>(null);
   const [allocationOpen, setAllocationOpen] = useState(false);
   const [allocationForm, setAllocationForm] = useState({ productId: '', quantity: '1', reason: '' });
+  const [replenishment, setReplenishment] = useState<ReplenishmentResult | null>(null);
+  const [policyOpen, setPolicyOpen] = useState(false);
+  const [policySaving, setPolicySaving] = useState(false);
+  const [policyError, setPolicyError] = useState('');
+  const [policyForm, setPolicyForm] = useState({ productId: '', reorderPoint: '5', targetStock: '20', safetyStock: '3', leadTimeDays: '7', minimumOrderQty: '1', packSize: '1' });
 
   const loadInventory = useCallback(async () => {
     setLoading(true);
@@ -120,6 +127,35 @@ export default function InventoryPage() {
       .finally(() => { if (active) setWarehouseLoading(false); });
     return () => { active = false; };
   }, [selectedWarehouse]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedWarehouse) { setReplenishment(null); return; }
+    api.get<ReplenishmentResult>('/inventory/replenishment/suggestions', { params: { warehouseId: selectedWarehouse, lookbackDays: 90, forecastDays: 30 } })
+      .then(response => { if (active) setReplenishment(response.data); })
+      .catch(() => { if (active) setReplenishment(null); });
+    return () => { active = false; };
+  }, [selectedWarehouse]);
+
+  async function saveReplenishmentPolicy(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedWarehouse) return;
+    setPolicySaving(true); setPolicyError('');
+    try {
+      await api.post('/inventory/replenishment/policies', {
+        ...policyForm, warehouseId: selectedWarehouse,
+        reorderPoint: Number(policyForm.reorderPoint), targetStock: Number(policyForm.targetStock),
+        safetyStock: Number(policyForm.safetyStock), leadTimeDays: Number(policyForm.leadTimeDays),
+        minimumOrderQty: Number(policyForm.minimumOrderQty), packSize: Number(policyForm.packSize),
+      });
+      setPolicyOpen(false);
+      const response = await api.get<ReplenishmentResult>('/inventory/replenishment/suggestions', { params: { warehouseId: selectedWarehouse, lookbackDays: 90, forecastDays: 30 } });
+      setReplenishment(response.data);
+    } catch (requestError: unknown) {
+      const message = (requestError as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      setPolicyError(Array.isArray(message) ? message.join(', ') : message || 'Replenishment policy could not be saved.');
+    } finally { setPolicySaving(false); }
+  }
 
   async function saveOpeningAllocation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -263,6 +299,39 @@ export default function InventoryPage() {
           {warehouseLoading?<tr><td colSpan={4} className="inventory-empty">Loading warehouse stock...</td></tr>:warehouseStock.length?warehouseStock.map(row=>{const p=typeof row.productId==='string'?null:row.productId;return <tr key={row._id}><td><strong>{p?.name||'Product'}</strong>{p?.sku&&<small>{p.sku}</small>}</td><td>{number(row.quantity)}</td><td>{money(row.averageCost)}</td><td>{money(row.inventoryValue)}</td></tr>;}):<tr><td colSpan={4} className="inventory-empty">No stock allocations in this warehouse yet.</td></tr>}
         </tbody></table></div>
       </section>}
+
+      {warehouseOptions.length > 0 && <section className="inventory-panel inventory-replenishment-panel">
+        <div className="inventory-panel-heading">
+          <div><h2>Smart replenishment & demand forecast</h2><p>Warehouse-specific reorder recommendations based on the last 90 days of issued sales.</p></div>
+          {canManage && <button className="inventory-primary" onClick={() => { setPolicyError(''); setPolicyForm({ productId: trackedProducts[0]?._id || '', reorderPoint: '5', targetStock: '20', safetyStock: '3', leadTimeDays: '7', minimumOrderQty: '1', packSize: '1' }); setPolicyOpen(true); }} disabled={!trackedProducts.length}>Configure reorder policy</button>}
+        </div>
+        {replenishment ? <>
+          <div className="inventory-replenishment-metrics">
+            <span>Configured products <b>{number(replenishment.summary.policies)}</b></span>
+            <span>Reorder required <b>{number(replenishment.summary.reorderRequired)}</b></span>
+            <span>Suggested units <b>{number(replenishment.summary.recommendedUnits)}</b></span>
+          </div>
+          <div className="inventory-table-wrap"><table className="inventory-table"><thead><tr><th>PRODUCT</th><th>ON HAND</th><th>AVG. DAILY DEMAND</th><th>30-DAY FORECAST</th><th>LEAD-TIME DEMAND</th><th>REORDER POINT</th><th>SUGGESTED QTY</th><th>STATUS</th></tr></thead><tbody>
+            {replenishment.items.length ? replenishment.items.map(item => <tr key={item.policyId}><td><strong>{item.product?.name || 'Product'}</strong><small>{item.warehouse?.name || 'Warehouse'} · {item.product?.sku || 'No SKU'}</small></td><td>{number(item.onHand)} {item.product?.unit || 'pcs'}</td><td>{number(item.averageDailyDemand)}</td><td>{number(item.forecastDemand)}</td><td>{number(item.leadTimeDemand)}</td><td>{number(item.reorderPoint)}</td><td><strong>{number(item.suggestedOrderQty)} {item.product?.unit || 'pcs'}</strong></td><td><span className={item.needsReorder ? 'inventory-replenishment-status is-reorder' : 'inventory-replenishment-status'}>{item.needsReorder ? 'REORDER' : 'HEALTHY'}</span></td></tr>) : <tr><td colSpan={8} className="inventory-empty">No replenishment policies configured for this warehouse.</td></tr>}
+          </tbody></table></div>
+          <p className="inventory-replenishment-note">{replenishment.note}</p>
+        </> : <div className="inventory-all-clear">Demand forecast is not available yet. Configure a replenishment policy to start tracking reorder recommendations.</div>}
+      </section>}
+
+      {policyOpen && <div className="inventory-backdrop" onClick={() => !policySaving && setPolicyOpen(false)}><form className="inventory-modal" onSubmit={saveReplenishmentPolicy} onClick={e => e.stopPropagation()}>
+        <div className="inventory-modal-heading"><div><span className="inventory-eyebrow">DEMAND-BASED STOCK PLANNING</span><h2>Configure replenishment policy</h2><p>Set warehouse-level thresholds and supplier lead-time buffers.</p></div><button type="button" className="inventory-close" onClick={() => setPolicyOpen(false)}><X size={18}/></button></div>
+        <label className="inventory-field">Product *<select required value={policyForm.productId} onChange={e => setPolicyForm({ ...policyForm, productId: e.target.value })}><option value="">Select stock-tracked product</option>{trackedProducts.map(p => <option key={p._id} value={p._id}>{p.name} · {p.sku || 'No SKU'}</option>)}</select></label>
+        <div className="inventory-policy-grid">
+          <label className="inventory-field">Reorder point *<input required type="number" min="0" step="0.01" value={policyForm.reorderPoint} onChange={e => setPolicyForm({ ...policyForm, reorderPoint: e.target.value })}/></label>
+          <label className="inventory-field">Target stock *<input required type="number" min="1" step="0.01" value={policyForm.targetStock} onChange={e => setPolicyForm({ ...policyForm, targetStock: e.target.value })}/></label>
+          <label className="inventory-field">Safety stock *<input required type="number" min="0" step="0.01" value={policyForm.safetyStock} onChange={e => setPolicyForm({ ...policyForm, safetyStock: e.target.value })}/></label>
+          <label className="inventory-field">Supplier lead time (days) *<input required type="number" min="0" max="365" step="1" value={policyForm.leadTimeDays} onChange={e => setPolicyForm({ ...policyForm, leadTimeDays: e.target.value })}/></label>
+          <label className="inventory-field">Minimum order qty *<input required type="number" min="1" step="1" value={policyForm.minimumOrderQty} onChange={e => setPolicyForm({ ...policyForm, minimumOrderQty: e.target.value })}/></label>
+          <label className="inventory-field">Supplier pack size *<input required type="number" min="1" step="1" value={policyForm.packSize} onChange={e => setPolicyForm({ ...policyForm, packSize: e.target.value })}/></label>
+        </div>
+        {policyError && <div className="inventory-error">{policyError}</div>}
+        <div className="inventory-modal-actions"><button type="button" className="inventory-secondary" onClick={() => setPolicyOpen(false)} disabled={policySaving}>Cancel</button><button type="submit" className="inventory-primary" disabled={policySaving || !policyForm.productId}>{policySaving ? 'Saving...' : 'Save replenishment policy'}</button></div>
+      </form></div>}
 
       <section className="inventory-panel inventory-low-panel">
         <div className="inventory-panel-heading"><div><h2>Low stock watchlist</h2>

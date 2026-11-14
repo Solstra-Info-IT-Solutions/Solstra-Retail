@@ -12,6 +12,8 @@ export class User {
   tenantId!: Types.ObjectId;
   @Prop({ required: true, enum: ['owner', 'admin', 'staff'], default: 'owner' })
   role!: string;
+  @Prop({ type: [String], default: [] })
+  permissions!: string[];
   @Prop({ default: true }) isActive!: boolean;
 }
 export const UserSchema = SchemaFactory.createForClass(User);

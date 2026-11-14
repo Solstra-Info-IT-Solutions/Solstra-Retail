@@ -165,7 +165,7 @@ describe('PlatformService security boundaries', () => {
   it('lists offline sync history within tenant and restricts staff to their own records', async () => {
     const service: any = createService();
     const rows = [{ idempotencyKey: 'offline-key-123', status: 'FAILED', createdBy: userId }];
-    const find = jest.fn(() => ({ select: () => ({ sort: () => ({ skip: () => ({ limit: () => ({ lean: async () => rows }) }) }) }) }));
+    const find = jest.fn((_filter: any) => ({ select: () => ({ sort: () => ({ skip: () => ({ limit: () => ({ lean: async () => rows }) }) }) }) }));
     service.syncRecords = { find, countDocuments: jest.fn().mockResolvedValue(1) };
     const result = await service.listOfflineSyncRecords(tenantId, userId, 'staff', 1, 'FAILED');
     expect(result.items).toEqual(rows);

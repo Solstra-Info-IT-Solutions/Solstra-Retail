@@ -465,7 +465,10 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         throw new ConflictException('Offline sync sequence is stale or was already used by a different batch. Refresh device sync state before retrying.');
       }
       const claim: any = await this.offlineDevices.updateOne(
-        tenantFilter(tenantId, { _id: syncDevice._id, lastSyncSequence: currentSequence, revokedAt: null }),
+        tenantFilter(tenantId, {
+          _id: syncDevice._id, revokedAt: null,
+          $or: [{ lastSyncSequence: currentSequence }, ...(currentSequence === 0 ? [{ lastSyncSequence: { $exists: false } }] : [])],
+        }),
         { $set: { lastSyncSequence: dto.batchSequence, lastSyncPayloadSha256: batchPayloadSha256, lastSyncStatus: 'PROCESSING', lastSyncResult: null } },
       );
       if (!claim.modifiedCount) throw new ConflictException('Another sync batch advanced this device. Retry with a fresh batch sequence.');

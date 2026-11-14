@@ -538,12 +538,18 @@ export class SalesService {
             );
           }
           const newQty = previousQty - quantity;
+          let movementPreviousQty = previousQty;
+          let movementNewQty = newQty;
           const warehouseCostPaise = dto.warehouseId ? this.toPaise(warehouseStock.averageCost || 0) : this.toPaise(product.averageCost || 0);
           const relievedValuePaise = dto.warehouseId
             ? (quantity === warehouseStock.quantity ? this.toPaise(warehouseStock.inventoryValue || 0) : warehouseCostPaise * quantity)
             : this.toPaise(product.averageCost || 0) * quantity;
           if (dto.warehouseId) {
             const warehouseNewQty = warehouseStock.quantity - quantity;
+            movementPreviousQty = warehouseStock.quantity;
+            movementNewQty = warehouseNewQty;
+            const warehouseValuePaise = this.toPaise(warehouseStock.inventoryValue || 0);
+            if (relievedValuePaise > warehouseValuePaise) throw new ConflictException('Warehouse inventory valuation is inconsistent; reconcile before selling');
             const warehouseNewValuePaise = Math.max(0, this.toPaise(warehouseStock.inventoryValue || 0) - relievedValuePaise);
             const warehouseUpdated = await this.warehouseStocks.findOneAndUpdate(
               tenantFilter(tenantId, { _id: warehouseStock._id, quantity: warehouseStock.quantity }),
@@ -553,7 +559,9 @@ export class SalesService {
             if (!warehouseUpdated) throw new ConflictException(`Warehouse stock changed while processing ${product.name}. Please retry.`);
           }
 
-          const nextInventoryValuePaise = Math.max(0, this.toPaise(product.inventoryValue || 0) - relievedValuePaise);
+          const productValuePaise = this.toPaise(product.inventoryValue || 0);
+          if (dto.warehouseId && relievedValuePaise > productValuePaise) throw new ConflictException('Product inventory valuation is inconsistent with warehouse stock; reconcile before selling');
+          const nextInventoryValuePaise = Math.max(0, productValuePaise - relievedValuePaise);
           const updated = await this.products.findOneAndUpdate(
             tenantFilter(tenantId, {
               _id: product._id,
@@ -589,8 +597,8 @@ export class SalesService {
                 ...(dto.warehouseId ? { warehouseId: selectedWarehouse._id } : {}),
                 type: 'SALE',
                 quantityDelta: -quantity,
-                previousQty,
-                newQty,
+                previousQty: movementPreviousQty,
+                newQty: movementNewQty,
                 reason: `Sale invoice ${invoiceNumber}`,
                 performedBy: new Types.ObjectId(userId),
               },

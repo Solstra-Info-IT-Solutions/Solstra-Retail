@@ -120,3 +120,16 @@ export class SaasAdminAudit {
 export type SaasAdminAuditDocument = HydratedDocument<SaasAdminAudit>;
 export const SaasAdminAuditSchema = SchemaFactory.createForClass(SaasAdminAudit);
 SaasAdminAuditSchema.index({ tenantId: 1, createdAt: -1 });
+
+@Schema({ timestamps: true, collection: 'automation_executions', versionKey: false })
+export class AutomationExecution {
+  @Prop(tenantRef) tenantId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'AutomationRule', required: true, index: true }) ruleId!: Types.ObjectId;
+  @Prop({ type: String, required: true, maxlength: 160 }) eventKey!: string;
+  @Prop({ type: String, required: true, enum: ['PROCESSING', 'SUCCEEDED', 'FAILED'] }) status!: string;
+  @Prop({ type: String, default: '', maxlength: 500 }) errorMessage!: string;
+  @Prop({ type: Date, default: Date.now }) executedAt!: Date;
+}
+export type AutomationExecutionDocument = HydratedDocument<AutomationExecution>;
+export const AutomationExecutionSchema = SchemaFactory.createForClass(AutomationExecution);
+AutomationExecutionSchema.index({ tenantId: 1, ruleId: 1, eventKey: 1 }, { unique: true });

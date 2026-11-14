@@ -1271,6 +1271,165 @@ describe('Authentication HTTP E2E', () => {
     })).toBeGreaterThanOrEqual(5);
   });
 
+  it('enforces staff expense approval decisions and includes credit notes in GST outward reports', async () => {
+    const owner = await registerAccount();
+    expect(owner.status).toBe(201);
+    const ownerHeaders = { Authorization: `Bearer ${owner.body.accessToken}` };
+    const tenantId = new Types.ObjectId(owner.body.tenant.id);
+
+    const staffRegistration = await registerAccount();
+    expect(staffRegistration.status).toBe(201);
+    await users.updateOne(
+      { _id: staffRegistration.body.user.id, tenantId: staffRegistration.body.tenant.id },
+      { $set: { role: 'staff', permissions: ['expenses.create', 'expenses.view'] } },
+    );
+    const staffLogin = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: staffRegistration.body.user.email, password });
+    expect(staffLogin.status).toBe(201);
+    const staffHeaders = { Authorization: `Bearer ${staffLogin.body.accessToken}` };
+
+    const pendingApproval = await request(app.getHttpServer())
+      .post('/api/v1/expenses')
+      .set(staffHeaders)
+      .send({
+        title: 'E2E Staff Travel Claim',
+        category: 'Travel',
+        amount: 450,
+        expenseDate: '2026-11-14',
+        payee: 'Staff Travel',
+      });
+    expect(pendingApproval.status).toBe(201);
+    expect(pendingApproval.body.approvalStatus).toBe('PENDING_APPROVAL');
+
+    const selfApproval = await request(app.getHttpServer())
+      .post(`/api/v1/expenses/${pendingApproval.body._id}/review`)
+      .set(staffHeaders)
+      .send({ decision: 'APPROVED', reason: 'Attempted self approval' });
+    expect(selfApproval.status).toBe(403);
+
+    const approved = await request(app.getHttpServer())
+      .post(`/api/v1/expenses/${pendingApproval.body._id}/review`)
+      .set(ownerHeaders)
+      .send({ decision: 'APPROVED', reason: 'Verified supporting receipt' });
+    expect(approved.status).toBe(201);
+    expect(approved.body.approvalStatus).toBe('APPROVED');
+    expect(approved.body.approvalHistory).toHaveLength(1);
+    expect(await journalEntries.countDocuments({
+      tenantId, sourceType: 'EXPENSE', sourceId: pendingApproval.body._id,
+    })).toBe(1);
+
+    const pendingRejection = await request(app.getHttpServer())
+      .post('/api/v1/expenses')
+      .set(staffHeaders)
+      .send({
+        title: 'E2E Unsupported Expense',
+        category: 'Miscellaneous',
+        amount: 275,
+        expenseDate: '2026-11-14',
+      });
+    expect(pendingRejection.status).toBe(201);
+    const rejected = await request(app.getHttpServer())
+      .post(`/api/v1/expenses/${pendingRejection.body._id}/review`)
+      .set(ownerHeaders)
+      .send({ decision: 'REJECTED', reason: 'Missing supporting documentation' });
+    expect(rejected.status).toBe(201);
+    expect(rejected.body.approvalStatus).toBe('REJECTED');
+    expect(rejected.body.approvalHistory).toHaveLength(1);
+    expect(await journalEntries.countDocuments({
+      tenantId, sourceType: 'EXPENSE', sourceId: pendingRejection.body._id,
+    })).toBe(0);
+
+    const duplicateReview = await request(app.getHttpServer())
+      .post(`/api/v1/expenses/${pendingRejection.body._id}/review`)
+      .set(ownerHeaders)
+      .send({ decision: 'APPROVED', reason: 'Attempt to reverse rejection' });
+    expect(duplicateReview.status).toBe(400);
+
+    const expenseSummary = await request(app.getHttpServer())
+      .get('/api/v1/expenses')
+      .set(ownerHeaders);
+    expect(expenseSummary.status).toBe(200);
+    expect(expenseSummary.body.summary.pendingApprovalCount).toBe(0);
+    expect(expenseSummary.body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ _id: pendingApproval.body._id, approvalStatus: 'APPROVED' }),
+      expect.objectContaining({ _id: pendingRejection.body._id, approvalStatus: 'REJECTED' }),
+    ]));
+
+    await tenants.updateOne(
+      { _id: owner.body.tenant.id },
+      { $set: { stateCode: '09' } },
+    );
+    const product = await request(app.getHttpServer())
+      .post('/api/v1/products')
+      .set(ownerHeaders)
+      .send({
+        name: 'E2E GST Credit Note Product',
+        purchasePrice: 50,
+        sellingPrice: 118,
+        mrp: 118,
+        gstRate: 18,
+        stockQty: 3,
+      });
+    expect(product.status).toBe(201);
+
+    const sale = await request(app.getHttpServer())
+      .post('/api/v1/sales')
+      .set(ownerHeaders)
+      .send({
+        idempotencyKey: randomUUID(),
+        items: [{ productId: product.body._id, quantity: 2 }],
+        placeOfSupplyStateCode: '09',
+        invoiceDate: '2026-11-14',
+      });
+    expect(sale.status).toBe(201);
+    const creditNote = await request(app.getHttpServer())
+      .post(`/api/v1/sales/${sale.body._id}/credit-notes`)
+      .set(ownerHeaders)
+      .send({
+        idempotencyKey: randomUUID(),
+        reason: 'GST reporting regression return',
+        items: [{ lineIndex: 0, quantity: 1, restock: true }],
+      });
+    expect(creditNote.status).toBe(201);
+
+    const gstr1 = await request(app.getHttpServer())
+      .get('/api/v1/reports/gst/gstr1?from=2026-11-14&to=2026-11-14')
+      .set(ownerHeaders);
+    expect(gstr1.status).toBe(200);
+    expect(gstr1.body.creditNotes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        _id: creditNote.body.creditNote._id,
+        originalInvoiceNumber: sale.body.invoiceNumber,
+      }),
+    ]));
+    const note = gstr1.body.creditNotes.find(
+      (row: any) => row._id === creditNote.body.creditNote._id,
+    );
+    expect(gstr1.body.totals.net.taxableValue).toBeCloseTo(
+      gstr1.body.totals.invoice.taxableValue - note.taxableValue, 2,
+    );
+    expect(gstr1.body.totals.net.tax).toBeCloseTo(
+      gstr1.body.totals.invoice.tax - note.totalTax, 2,
+    );
+
+    const gstr3b = await request(app.getHttpServer())
+      .get('/api/v1/reports/gst/gstr3b?from=2026-11-14&to=2026-11-14')
+      .set(ownerHeaders);
+    expect(gstr3b.status).toBe(200);
+    expect(gstr3b.body.outwardTaxableSupplies.creditNoteCount).toBeGreaterThanOrEqual(1);
+    expect(gstr3b.body.outwardTaxableSupplies.totalTax).toBeCloseTo(
+      sale.body.totalTax - creditNote.body.creditNote.totalTax, 2,
+    );
+
+    const gstCsv = await request(app.getHttpServer())
+      .get('/api/v1/reports/gst/export/gstr1?from=2026-11-14&to=2026-11-14')
+      .set(ownerHeaders);
+    expect(gstCsv.status).toBe(200);
+    expect(gstCsv.text).toContain('CREDIT_NOTE');
+    expect(gstCsv.text).toContain(creditNote.body.creditNote.creditNoteNumber);
+  });
+
   it('rejects invalid customer sales history pagination', async () => {
     const registration = await registerAccount();
     expect(registration.status).toBe(201);

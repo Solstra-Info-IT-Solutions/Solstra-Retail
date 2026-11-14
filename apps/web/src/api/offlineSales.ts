@@ -51,28 +51,36 @@ export async function listQueuedOfflineSales(scope: string): Promise<QueuedOffli
 }
 
 export async function syncQueuedOfflineSales(scope: string) {
-  const queued = await listQueuedOfflineSales(scope);
-  if (!queued.length) return { synced: 0, pending: 0 };
-  const response = await api.post<{ results: Array<{ idempotencyKey: string; status: string; error?: string }> }>('/platform/offline/sync', {
-    operations: queued.map(item => ({ type: 'SALE', idempotencyKey: item.idempotencyKey, payload: item.payload })),
-  });
-  const results = response.data.results || [];
-  const db = await database();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite');
-    const store = tx.objectStore(STORE);
-    for (const result of results) {
-      const item = queued.find(row => row.idempotencyKey === result.idempotencyKey);
-      if (!item) continue;
-      if (result.status === 'SUCCEEDED') store.delete(result.idempotencyKey);
-      else if (result.status === 'FAILED') store.put({ ...item, lastError: result.error || 'Sync failed' });
-    }
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error || new Error('Could not update offline queue'));
-  });
-  db.close();
-  const remaining = await listQueuedOfflineSales(scope);
-  return { synced: results.filter(row => row.status === 'SUCCEEDED').length, pending: remaining.length };
+  let remaining = await listQueuedOfflineSales(scope);
+  let synced = 0;
+  const maxBatches = Math.ceil(remaining.length / 100);
+  for (let batchIndex = 0; batchIndex < maxBatches && remaining.length; batchIndex += 1) {
+    const batch = remaining.slice(0, 100);
+    const response = await api.post<{ results: Array<{ idempotencyKey: string; status: string; error?: string }> }>('/platform/offline/sync', {
+      operations: batch.map(item => ({ type: 'SALE', idempotencyKey: item.idempotencyKey, payload: item.payload })),
+    });
+    const results = response.data.results || [];
+    const db = await database();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      const store = tx.objectStore(STORE);
+      for (const result of results) {
+        const item = batch.find(row => row.idempotencyKey === result.idempotencyKey);
+        if (!item) continue;
+        if (result.status === 'SUCCEEDED') store.delete(result.idempotencyKey);
+        else if (result.status === 'FAILED') store.put({ ...item, lastError: result.error || 'Sync failed' });
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('Could not update offline queue'));
+    });
+    db.close();
+    const batchSuccess = results.filter(row => row.status === 'SUCCEEDED').length;
+    synced += batchSuccess;
+    if (!batchSuccess) break;
+    remaining = await listQueuedOfflineSales(scope);
+  }
+  remaining = await listQueuedOfflineSales(scope);
+  return { synced, pending: remaining.length };
 }
 
 export async function cacheOfflineProducts(products: Array<Record<string, unknown>>, scope: string) {

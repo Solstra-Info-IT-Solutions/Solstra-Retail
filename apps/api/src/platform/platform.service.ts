@@ -21,12 +21,12 @@ import { Product } from '../products/schemas/product.schema';
 import { WarehouseStock } from '../inventory/schemas/warehouse-stock.schema';
 import {
   AutomationExecution, AutomationRule, BackupArtifact, BackupPolicy, OfflineSyncRecord, PlatformNotification, SaasAdminAudit,
-  WebhookDelivery, WebhookIntegration,
+  WebhookDelivery, WebhookIntegration, CommunicationProvider, CommunicationDelivery, SubscriptionInvoice, BackupReplicationEvent,
 } from './schemas/platform.schema';
 import {
   BackupPolicyDto, CreateAutomationRuleDto, CreateWebhookDto, OfflineSyncBatchDto,
   TriggerAutomationDto, UpdateAutomationRuleDto, UpdateSaasTenantDto,
-  UpdateWebhookDto, VerifyBackupDto,
+  UpdateWebhookDto, VerifyBackupDto, CreateCommunicationProviderDto, SendCommunicationDto, RecordSubscriptionPaymentDto,
 } from './dto/platform.dto';
 
 const EVENT_TYPES = ['MANUAL', 'SALE_CREATED', 'LOW_STOCK', 'EXPENSE_PENDING_APPROVAL'];
@@ -63,6 +63,10 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     @InjectModel(User.name) private readonly users: Model<any>,
     @InjectModel(Product.name) private readonly products: Model<any>,
     @InjectModel(WarehouseStock.name) private readonly warehouseStocks: Model<any>,
+    @InjectModel(CommunicationProvider.name) private readonly communicationProviders: Model<any>,
+    @InjectModel(CommunicationDelivery.name) private readonly communicationDeliveries: Model<any>,
+    @InjectModel(SubscriptionInvoice.name) private readonly subscriptionInvoices: Model<any>,
+    @InjectModel(BackupReplicationEvent.name) private readonly backupReplicationEvents: Model<any>,
     private readonly sales: SalesService,
     private readonly config: ConfigService,
   ) {}

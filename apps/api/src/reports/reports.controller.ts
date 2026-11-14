@@ -14,6 +14,7 @@ import { ReportsService } from './reports.service';
 import { ReportDateRangeDto } from './dto/report-date-range.dto';
 import { BusinessQuestionDto } from './dto/business-question.dto';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
 
 type AuthenticatedRequest = Request & {
   user: {
@@ -83,6 +84,18 @@ export class ReportsController {
   @Get('reports/balance-sheet')
   balanceSheet(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {
     return this.reportsService.balanceSheet(req.user.tenantId, query);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('reports/gst/einvoice/:invoiceId/submit')
+  submitGstEInvoice(@Req() req: AuthenticatedRequest, @Param('invoiceId') invoiceId: string) {
+    return this.reportsService.submitGstEInvoice(req.user.tenantId, invoiceId);
+  }
+
+  @Roles('owner', 'admin')
+  @Get('reports/migration/readiness')
+  migrationReadiness(@Req() req: AuthenticatedRequest) {
+    return this.reportsService.migrationReadiness(req.user.tenantId);
   }
 
   @Permissions('reports.view')

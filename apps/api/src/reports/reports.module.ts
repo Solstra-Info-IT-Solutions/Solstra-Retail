@@ -21,6 +21,7 @@ import { Account, AccountSchema } from '../accounting/schemas/account.schema';
 import { JournalEntry, JournalEntrySchema } from '../accounting/schemas/journal-entry.schema';
 import { Purchase, PurchaseSchema } from '../purchases/schemas/purchase.schema';
 import { Tenant, TenantSchema } from '../tenants/schemas/tenant.schema';
+import { GstEInvoiceSubmission, GstEInvoiceSubmissionSchema } from './schemas/gst-einvoice-submission.schema';
 
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
@@ -39,6 +40,7 @@ import { ReportsService } from './reports.service';
       { name: JournalEntry.name, schema: JournalEntrySchema },
       { name: Purchase.name, schema: PurchaseSchema },
       { name: Tenant.name, schema: TenantSchema },
+      { name: GstEInvoiceSubmission.name, schema: GstEInvoiceSubmissionSchema },
     ]),
   ],
   controllers: [ReportsController],

@@ -525,7 +525,7 @@ export class ReportsService {
     const expectedTotalPaise = dto.expectedTotalAmount === undefined ? null : Math.round(dto.expectedTotalAmount * 100);
     return {
       entity: dto.entity, sourceSystem: dto.sourceSystem.trim(), runKey: dto.runKey,
-      totalRows: dto.rows.length, validRows: normalized.length - errors.length,
+      totalRows: dto.rows.length, validRows: normalized.filter((row: any) => !errors.some(error => error.row === normalized.indexOf(row) + 1)).length,
       actualDocumentCount: normalized.length, actualTotalAmount: totalPaise / 100,
       expectedDocumentCount: dto.expectedDocumentCount ?? dto.rows.length,
       expectedTotalAmount: expectedTotalPaise === null ? null : expectedTotalPaise / 100,

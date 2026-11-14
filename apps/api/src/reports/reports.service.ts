@@ -1412,6 +1412,63 @@ export class ReportsService {
     return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'Question not matched to a supported report', period, answer: 'I can currently answer questions about sales, profit and margin, top-selling products, low stock, GST reconciliation and cash flow. Try asking with a period such as today, last 7 days or this month.', supportedTopics: ['sales', 'profit and margin', 'top-selling products', 'low stock', 'GST reconciliation', 'cash flow'], disclaimer: 'This assistant uses an explicit allowlist of tenant-scoped reports. It does not execute arbitrary database queries or take business actions.' };
   }
 
+  async demandForecast(tenantId: string, horizonDays = 30) {
+    this.validateTenant(tenantId);
+    if (!Number.isInteger(horizonDays) || horizonDays < 7 || horizonDays > 90) {
+      throw new BadRequestException('Forecast horizon must be between 7 and 90 days');
+    }
+    const end = new Date();
+    const start = new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const [dailyRows, products] = await Promise.all([
+      this.invoices.aggregate([
+        { $match: tenantFilter(tenantId, { status: 'ISSUED', invoiceDate: { $gte: start, $lte: end } }) },
+        { $unwind: '$items' },
+        { $match: { 'items.productId': { $exists: true, $ne: null }, 'items.quantity': { $gt: 0 } } },
+        { $group: { _id: { productId: '$items.productId', day: { $dateToString: { date: '$invoiceDate', format: '%Y-%m-%d', timezone: 'Asia/Kolkata' } } }, units: { $sum: '$items.quantity' } } },
+        { $group: { _id: '$_id.productId', days: { $push: { day: '$_id.day', units: '$units' } }, totalUnits: { $sum: '$units' } } },
+        { $sort: { totalUnits: -1 } }, { $limit: 500 },
+      ]),
+      this.products.find(tenantFilter(tenantId, { isDeleted: false, trackStock: true }))
+        .select('name sku stockQty lowStockThreshold purchasePrice sellingPrice').limit(500).lean(),
+    ]);
+    const productMap = new Map((products as any[]).map(product => [String(product._id), product]));
+    const forecasts = (dailyRows as any[]).map(row => {
+      const product: any = productMap.get(String(row._id));
+      if (!product) return null;
+      const daily = new Map<string, number>((row.days || []).map((entry: any) => [entry.day, Number(entry.units || 0)]));
+      const recentStart = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+      let recentUnits = 0, priorUnits = 0;
+      for (const [day, units] of daily) {
+        const date = new Date(day + 'T00:00:00');
+        if (date >= recentStart) recentUnits += units;
+        else priorUnits += units;
+      }
+      const recentDaily = recentUnits / 30;
+      const priorDaily = priorUnits / 60;
+      const weightedDaily = recentDaily * 0.7 + priorDaily * 0.3;
+      const trendPercent = priorDaily > 0 ? Math.round(((recentDaily - priorDaily) / priorDaily) * 10000) / 100 : recentDaily > 0 ? 100 : 0;
+      const expectedDemand = Math.max(0, Math.round(weightedDaily * horizonDays * 100) / 100);
+      const safetyStock = Math.ceil(weightedDaily * 7);
+      const targetStock = Math.ceil(expectedDemand + safetyStock);
+      const currentStock = Number(product.stockQty || 0);
+      return {
+        productId: String(product._id), name: product.name, sku: product.sku || '',
+        currentStock, averageDailyUnits: Math.round(weightedDaily * 100) / 100,
+        forecastUnits: expectedDemand, trendPercent, safetyStock,
+        suggestedReorderQty: Math.max(0, targetStock - currentStock),
+        lowStockThreshold: Number(product.lowStockThreshold || 0),
+        model: 'WEIGHTED_30_60_DAY_MOVING_AVERAGE',
+      };
+    }).filter(Boolean).sort((a: any, b: any) => b.suggestedReorderQty - a.suggestedReorderQty).slice(0, 100);
+    return {
+      generatedAt: end, historyDays: 90, horizonDays, currency: 'INR',
+      model: 'WEIGHTED_30_60_DAY_MOVING_AVERAGE_WITH_7_DAY_SAFETY_STOCK',
+      sampleProducts: forecasts.length,
+      forecasts,
+      limitations: ['Uses issued invoice quantities; credit-note returns are not subtracted from historical demand.', 'Forecast is a transparent statistical baseline, not a trained machine-learning model.', 'Stock is aggregate product stock; branch/warehouse allocation and supplier lead times are not modeled in this endpoint.', 'Review suggestions before creating purchase orders.'],
+    };
+  }
+
   async advancedAnalytics(tenantId: string, dto: ReportDateRangeDto) {
     this.validateTenant(tenantId);
     const { start, end } = this.resolveRange(dto);

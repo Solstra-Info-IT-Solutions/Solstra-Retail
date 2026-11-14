@@ -669,8 +669,8 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     return { fileName: artifact.fileName, checksumSha256: checksum, archiveBase64: bytes.toString('base64') };
   }
 
-  async runScheduledPlatformJobs() {
-    const expiredSubscriptionsResult = await this.tenants.updateMany(
+  async expirePaidSubscriptions() {
+    const result = await this.tenants.updateMany(
       {
         status: 'active',
         subscriptionStatus: 'active',
@@ -678,7 +678,11 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       },
       { $set: { subscriptionStatus: 'expired', billingStatus: 'PAST_DUE' } },
     );
-    const expiredSubscriptions = expiredSubscriptionsResult.modifiedCount || 0;
+    return result.modifiedCount || 0;
+  }
+
+  async runScheduledPlatformJobs() {
+    const expiredSubscriptions = await this.expirePaidSubscriptions();
     let expiredBatches = 0;
     if (this.connection.db) {
       const expiredResult = await this.connection.db.collection('inventory_batches').updateMany(

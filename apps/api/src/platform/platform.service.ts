@@ -502,6 +502,14 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
   }
 
   async runScheduledPlatformJobs() {
+    let expiredBatches = 0;
+    if (this.connection.db) {
+      const expiredResult = await this.connection.db.collection('inventory_batches').updateMany(
+        { status: 'ACTIVE', expiresAt: { $lte: new Date() } },
+        { $set: { status: 'EXPIRED' } },
+      );
+      expiredBatches = expiredResult.modifiedCount;
+    }
     const overdueInvoices = await this.subscriptionInvoices.find({ status: 'DUE', dueAt: { $lte: new Date() } }).select('tenantId').lean();
     for (const invoice of overdueInvoices) await this.tenants.updateOne({ _id: invoice.tenantId }, { $set: { billingStatus: 'PAST_DUE' } });
     const backups = await this.runScheduledBackupJobs();
@@ -521,7 +529,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         communicationDeliveries += result.processed;
       } catch { /* Failed communication attempts retain retry state. */ }
     }
-    return { backups, webhookDeliveries, communicationDeliveries };
+    return { backups, webhookDeliveries, communicationDeliveries, expiredBatches };
   }
 
   async runScheduledBackupJobs() {

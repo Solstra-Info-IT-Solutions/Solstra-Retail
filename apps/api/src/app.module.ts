@@ -25,6 +25,7 @@ import { PlatformService } from './platform/platform.service';
 import { PlatformEventInterceptor } from './platform/platform-event.interceptor';
 import { TrialGuard } from './common/guards/trial.guard';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { ApiRateLimitGuard } from './common/guards/api-rate-limit.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
 import { HealthController } from './health.controller';
@@ -48,6 +49,7 @@ import { HealthController } from './health.controller';
   ],
   controllers: [HealthController],
   providers: [
+    { provide: APP_GUARD, useClass: ApiRateLimitGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },

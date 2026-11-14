@@ -321,4 +321,24 @@ describe('ReportsService validation', () => {
       .rejects.toBeInstanceOf(BadRequestException);
     expect(purchases.find).not.toHaveBeenCalled();
   });
+  it('returns a deterministic SHA-256 integrity manifest for each migration export page', async () => {
+    const { service } = createService();
+    const rows = [
+      { _id: '507f1f77bcf86cd799439099', name: 'Customer One' },
+      { _id: '507f1f77bcf86cd799439100', name: 'Customer Two' },
+    ];
+    const customers: any = {
+      find: jest.fn(() => ({ select: () => ({ sort: () => ({ limit: () => ({ lean: async () => rows }) }) }) })),
+      countDocuments: jest.fn().mockResolvedValue(3),
+    };
+    service.customers = customers;
+    const result = await service.exportMigrationRecords('507f1f77bcf86cd799439011', 'customers', '', 2);
+    const { createHash } = require('crypto');
+    expect(result.exportedCount).toBe(2);
+    expect(result.totalMatching).toBe(3);
+    expect(result.hasMore).toBe(true);
+    expect(result.pageSha256).toBe(createHash('sha256').update(JSON.stringify(rows)).digest('hex'));
+    expect(result.integrityAlgorithm).toBe('SHA-256');
+  });
+
 });

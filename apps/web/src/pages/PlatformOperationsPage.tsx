@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Activity, Bell, Bot, CloudDownload, PlugZap, RefreshCw, ShieldCheck, Wifi, Workflow } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
-import { listQueuedOfflineSales } from '../api/offlineSales';
+import { listQueuedOfflineSales, type QueuedOfflineSale } from '../api/offlineSales';
 import './PlatformOperationsPage.css';
 
 type Rule = { _id: string; name: string; eventType: string; actionType: string; enabled: boolean; triggerCount: number };
@@ -21,7 +21,7 @@ export default function PlatformOperationsPage() {
   const offlineScope = user?.tenantId && user?.id ? user.tenantId + ':' + user.id : '';
   const [rules,setRules]=useState<Rule[]>([]),[notices,setNotices]=useState<Notice[]>([]),[hooks,setHooks]=useState<Hook[]>([]);
   const [policy,setPolicy]=useState<Policy>({enabled:false,frequency:'DAILY',retentionDays:30});
-  const [valuation,setValuation]=useState<Valuation|null>(null),[pendingOffline,setPendingOffline]=useState(0),[backups,setBackups]=useState<Backup[]>([]),[saasTenants,setSaasTenants]=useState<SaaSTenant[]>([]),[saasAudit,setSaasAudit]=useState<any[]>([]),[saasUsage,setSaasUsage]=useState<any|null>(null);
+  const [valuation,setValuation]=useState<Valuation|null>(null),[pendingOffline,setPendingOffline]=useState(0),[offlineConflicts,setOfflineConflicts]=useState<QueuedOfflineSale[]>([]),[backups,setBackups]=useState<Backup[]>([]),[saasTenants,setSaasTenants]=useState<SaaSTenant[]>([]),[saasAudit,setSaasAudit]=useState<any[]>([]),[saasUsage,setSaasUsage]=useState<any|null>(null);
   const [loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
   const [ruleForm,setRuleForm]=useState({name:'',eventType:'SALE_CREATED',actionType:'NOTIFY',integrationId:'',title:'New sale recorded',body:'A sale was successfully created.'});
   const [hookForm,setHookForm]=useState({name:'',endpointUrl:'',events:['SALE_CREATED']});
@@ -39,7 +39,7 @@ export default function PlatformOperationsPage() {
         listQueuedOfflineSales(offlineScope),
         api.get<Backup[]>('/platform/backups'),
       ]);
-      setRules(r.data);setNotices(n.data.items||[]);setHooks(h.data);setPolicy(p.data);setValuation(v.data);setPendingOffline(q.length);setBackups(bk.data||[]);
+      setRules(r.data);setNotices(n.data.items||[]);setHooks(h.data);setPolicy(p.data);setValuation(v.data);setPendingOffline(q.length);setOfflineConflicts(q.filter(item=>item.blocked));setBackups(bk.data||[]);
     } catch {setError('Some platform operations could not be loaded. Verify your permissions and refresh.');}
     finally {setLoading(false);}
   },[]);
@@ -109,7 +109,7 @@ export default function PlatformOperationsPage() {
         <div className="platform-list">{restoreDrills.slice(0,8).map(d=><article key={d._id||d.id}><div><b>Restore drill · {d.status}</b><small>{d.collectionCount} collections · {d.documentCount} documents · {new Date(d.testedAt||d.createdAt).toLocaleString('en-IN')}</small></div></article>)}</div><div className="platform-list">{replicationEvents.slice(0,8).map((event:any)=><article key={event._id}><div><b>Off-site replication · {event.status}</b><small>{event.message} · {new Date(event.createdAt).toLocaleString('en-IN')}</small></div></article>)}</div>
       </div></section>
       <section className="platform-card"><h2><ShieldCheck size={18}/> Inventory valuation reconciliation</h2>{valuation?<><div className="platform-recon-stats"><span>Tracked products <b>{valuation.summary.products}</b></span><span>Valuation pending <b>{valuation.summary.valuationPending}</b></span><span>Over-allocated <b>{valuation.summary.overAllocated}</b></span></div><p className="platform-muted">Unallocated stock is allowed. This read-only check flags warehouse allocations exceeding aggregate stock or value.</p>{valuation.discrepancies.slice(0,8).map(row=><article className="platform-discrepancy" key={row.productId}><b>{row.name}</b><small>Qty variance {row.quantityDelta} · Value variance ₹{row.valueDelta.toFixed(2)}</small></article>)}</>:<p className="platform-muted">Loading reconciliation…</p>}</section>
-      <section className="platform-card"><h2><Activity size={18}/> Offline POS sync</h2><p>Invoices saved in this browser are stored in IndexedDB and automatically submitted when connectivity returns. The server applies the normal sales validation, stock checks, accounting transaction and idempotency rules.</p><p><b>{pendingOffline}</b> pending invoice(s) in this browser's queue.</p><p className="platform-muted">Do not clear browser site data until the queue has synchronized. A separate device has its own queue.</p></section>
+      <section className="platform-card"><h2><Activity size={18}/> Offline POS sync</h2><p>Invoices saved in this browser are stored in IndexedDB and automatically submitted when connectivity returns. The server applies the normal sales validation, stock checks, accounting transaction and idempotency rules.</p><p><b>{pendingOffline}</b> pending invoice(s) in this browser's queue.</p>{offlineConflicts.map(item=><article className="platform-discrepancy" key={item.queueId}><b>Invoice needs manual review · {item.idempotencyKey}</b><small>{item.lastError||'Payload conflict detected'} · queued {new Date(item.createdAt).toLocaleString('en-IN')}</small><button onClick={()=>void navigator.clipboard.writeText(JSON.stringify(item.payload,null,2))}>Copy original invoice payload</button></article>)}<p className="platform-muted">Conflicting payloads are blocked from automatic retry. Preserve the original payload and resolve the invoice before creating a new key. Do not clear browser site data until all queued invoices are reconciled.</p></section>
       <section className="platform-card"><h2><Bot size={18}/> SaaS operator controls</h2>{saasUsage?<p>{saasUsage.totalUsers} users · {saasUsage.totalProducts} products across {saasTenants.length} workspaces</p>:<p>Tenant plan, suspension and capacity administration is restricted to user IDs listed in server-side <code>PLATFORM_ADMIN_USER_IDS</code>.</p>}{saasTenants.map(t=><article className="platform-discrepancy" key={t._id}><b>{t.name} · {t.subscriptionPlan||'starter'}</b><small>{t.status} / {t.subscriptionStatus} · users {t.maxUsers} · products {t.maxProducts} · branches {t.maxBranches}</small><button onClick={()=>void updateSaasTenant(t)} disabled={busy}>Upgrade to Business</button></article>)}{saasAudit.slice(0,5).map((a:any)=><p className="platform-muted" key={a._id}>{a.tenantId?.name||'Workspace'} · {a.reason} · {new Date(a.createdAt).toLocaleString('en-IN')}</p>)}</section>
     </div>
     {loading&&<p className="platform-muted">Refreshing platform operations…</p>}

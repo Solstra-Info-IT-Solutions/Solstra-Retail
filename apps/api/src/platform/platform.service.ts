@@ -139,12 +139,16 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       let execution: any;
       try {
         execution = await this.executions.findOne(tenantFilter(tenantId, { ruleId: rule._id, eventKey })).lean();
-        if (execution?.status === 'SUCCEEDED' || execution?.status === 'PROCESSING') {
+        if (execution?.status === 'SUCCEEDED') {
           results.push({ ruleId: String(rule._id), status: 'SKIPPED_DUPLICATE' });
           continue;
         }
-        if (execution?.status === 'FAILED') {
-          await this.executions.updateOne(tenantFilter(tenantId, { _id: execution._id, status: 'FAILED' }), { $set: { status: 'PROCESSING', errorMessage: '', executedAt: new Date() } });
+        if (execution?.status === 'PROCESSING' && new Date(execution.executedAt).getTime() > Date.now() - 5 * 60 * 1000) {
+          results.push({ ruleId: String(rule._id), status: 'SKIPPED_IN_PROGRESS' });
+          continue;
+        }
+        if (execution?.status === 'FAILED' || execution?.status === 'PROCESSING') {
+          await this.executions.updateOne(tenantFilter(tenantId, { _id: execution._id, status: execution.status }), { $set: { status: 'PROCESSING', errorMessage: '', executedAt: new Date() } });
         } else {
           try {
             [execution] = await this.executions.create([{
@@ -312,6 +316,8 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
   async runWebhookDeliveries(tenantId: string, limit = 20) {
     this.identity(tenantId);
     const safeLimit = Math.min(50, Math.max(1, Math.floor(limit) || 20));
+    const staleDeliveryCutoff = new Date(Date.now() - 5 * 60 * 1000);
+    await this.deliveries.updateMany(tenantFilter(tenantId, { status: 'DELIVERING', updatedAt: { $lte: staleDeliveryCutoff } }), { $set: { status: 'PENDING', nextAttemptAt: new Date() } });
     const due = await this.deliveries.find(tenantFilter(tenantId, { status: 'PENDING', nextAttemptAt: { $lte: new Date() } })).sort({ nextAttemptAt: 1 }).limit(safeLimit).lean();
     const results: Array<{ id: string; status: string; error?: string }> = [];
     const key = await this.encryptionKey();
@@ -352,7 +358,11 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     for (const operation of dto.operations) {
       const existing = await this.syncRecords.findOne(tenantFilter(tenantId, { idempotencyKey: operation.idempotencyKey })).lean();
       if (existing?.status === 'SUCCEEDED') { results.push({ idempotencyKey: operation.idempotencyKey, status: 'SUCCEEDED', result: existing.result, replayed: true }); continue; }
-      if (existing?.status === 'PROCESSING') { results.push({ idempotencyKey: operation.idempotencyKey, status: 'PROCESSING', replayed: true }); continue; }
+      if (existing?.status === 'PROCESSING' && new Date(existing.updatedAt || existing.createdAt).getTime() > Date.now() - 5 * 60 * 1000) { results.push({ idempotencyKey: operation.idempotencyKey, status: 'PROCESSING', replayed: true }); continue; }
+      if (existing?.status === 'PROCESSING') {
+        const recovered = await this.syncRecords.findOneAndUpdate(tenantFilter(tenantId, { _id: existing._id, status: 'PROCESSING', updatedAt: { $lte: new Date(Date.now() - 5 * 60 * 1000) } }), { $set: { status: 'PROCESSING', errorMessage: '' } }, { new: true }).lean();
+        if (!recovered) { results.push({ idempotencyKey: operation.idempotencyKey, status: 'PROCESSING', replayed: true }); continue; }
+      }
       if (!existing) {
         try {
           await this.syncRecords.create({ tenantId: new Types.ObjectId(tenantId), idempotencyKey: operation.idempotencyKey, status: 'PROCESSING', createdBy: new Types.ObjectId(userId) });

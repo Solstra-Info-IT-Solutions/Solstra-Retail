@@ -3,6 +3,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { AddExpensePaymentDto } from './dto/add-expense-payment.dto';
 import { ListExpensesDto } from './dto/list-expenses.dto';
+import { ReviewExpenseDto } from './dto/review-expense.dto';
 import { ExpensesService } from './expenses.service';
 
 @Controller('expenses')
@@ -20,9 +21,15 @@ export class ExpensesController {
   }
 
   @Post()
-  @Roles('owner', 'admin')
+  @Roles('owner', 'admin', 'staff')
   create(@Req() req: any, @Body() dto: CreateExpenseDto) {
-    return this.expenses.create(req.user.tenantId, req.user.userId, dto);
+    return this.expenses.create(req.user.tenantId, req.user.userId, req.user.role, dto);
+  }
+
+  @Post(':id/review')
+  @Roles('owner', 'admin')
+  review(@Req() req: any, @Param('id') id: string, @Body() dto: ReviewExpenseDto) {
+    return this.expenses.review(req.user.tenantId, req.user.userId, id, dto);
   }
 
   @Post(':id/payments')

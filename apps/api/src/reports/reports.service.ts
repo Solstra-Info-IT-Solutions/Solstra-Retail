@@ -448,7 +448,7 @@ export class ReportsService {
   async migrationReadiness(tenantId: string) {
     if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant context');
     const tenantObjectId = new Types.ObjectId(tenantId);
-    const [inventory, journalIssues, purchaseQuality, accountCount] = await Promise.all([
+    const [inventory, journalIssues, purchaseQuality, accountCount, customerCount, supplierCount, salesCount, purchaseCount, postedJournalCount] = await Promise.all([
       this.products.aggregate([
         { $match: tenantFilter(tenantId, { isDeleted: false }) },
         { $group: {
@@ -469,6 +469,11 @@ export class ReportsService {
         $or: [{ supplierInvoiceDate: null }, { supplierInvoiceDate: { $exists: false } }],
       })),
       this.accounts.countDocuments(tenantFilter(tenantId, { isActive: true })),
+      this.customers.countDocuments(tenantFilter(tenantId, { isDeleted: false })),
+      this.suppliers.countDocuments(tenantFilter(tenantId, { isDeleted: false })),
+      this.invoices.countDocuments(tenantFilter(tenantId, { status: 'ISSUED' })),
+      this.purchases.countDocuments(tenantFilter(tenantId, { status: { $ne: 'CANCELLED' } })),
+      this.journals.countDocuments(tenantFilter(tenantId, { status: 'POSTED' })),
     ]);
     const stock = inventory[0] || {
       activeProducts: 0, stockedProducts: 0, pendingValuationProducts: 0,
@@ -493,6 +498,11 @@ export class ReportsService {
         postedJournalImbalances: journalIssues.length,
         purchasesMissingSupplierInvoiceDate: purchaseQuality,
         activeAccounts: accountCount,
+        activeCustomers: customerCount,
+        activeSuppliers: supplierCount,
+        issuedSalesInvoices: salesCount,
+        activePurchases: purchaseCount,
+        postedJournalEntries: postedJournalCount,
         actionRequired: checks.filter(check => check.status === 'ACTION_REQUIRED').length,
         reviewRequired: checks.filter(check => check.status === 'REVIEW').length,
       },
@@ -500,6 +510,7 @@ export class ReportsService {
       journalIssues,
       limitations: [
         'This preflight is read-only and does not import, rewrite or post historical transactions.',
+        'Customers, suppliers, products, issued sales, active purchases and posted journals can be exported in tenant-scoped pages of up to 500 records.',
         'Historical opening balances must be approved and posted through the controlled opening-balance workflow after source-ledger reconciliation.',
         'Journal imbalance results are capped at 50; resolve every exception before migration sign-off.',
       ],

@@ -34,9 +34,9 @@ export class BackupPolicyDto {
 }
 export class VerifyBackupDto { @IsString() @Length(1, 30000000) archiveBase64!: string; }
 export class UpdateSaasTenantDto {
-  @IsOptional() @IsIn(['trial', 'active', 'expired', 'cancelled']) subscriptionStatus?: string;
-  @IsOptional() @IsIn(['starter', 'growth', 'business', 'enterprise']) subscriptionPlan?: string;
-  @IsOptional() @IsIn(['active', 'suspended']) status?: string;
+  @IsOptional() @IsIn(['trial', 'active', 'expired', 'cancelled']) subscriptionStatus?: 'trial' | 'active' | 'expired' | 'cancelled';
+  @IsOptional() @IsIn(['starter', 'growth', 'business', 'enterprise']) subscriptionPlan?: 'starter' | 'growth' | 'business' | 'enterprise';
+  @IsOptional() @IsIn(['active', 'suspended']) status?: 'active' | 'suspended';
   @IsOptional() @IsInt() @Min(1) @Max(10000) maxUsers?: number;
   @IsOptional() @IsInt() @Min(1) @Max(1000000) maxProducts?: number;
   @IsOptional() @IsInt() @Min(1) @Max(1000) maxBranches?: number;

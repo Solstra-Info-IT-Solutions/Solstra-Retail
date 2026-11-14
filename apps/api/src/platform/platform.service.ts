@@ -443,12 +443,32 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
 
   async syncOfflineSales(tenantId: string, userId: string, dto: OfflineSyncBatchDto) {
     this.identity(tenantId, userId);
+    let syncDevice: any = null;
+    let batchPayloadSha256 = '';
     if (dto.deviceId) {
-      const device: any = await this.offlineDevices.findOneAndUpdate(
+      syncDevice = await this.offlineDevices.findOneAndUpdate(
         tenantFilter(tenantId, { userId: new Types.ObjectId(userId), deviceId: dto.deviceId, revokedAt: null }),
         { $set: { lastSeenAt: new Date() } }, { new: true },
       ).lean();
-      if (!device) throw new ForbiddenException('This offline device is not registered or has been revoked. Register the device again before syncing invoices.');
+      if (!syncDevice) throw new ForbiddenException('This offline device is not registered or has been revoked. Register the device again before syncing invoices.');
+    }
+    if (syncDevice && dto.batchSequence !== undefined) {
+      batchPayloadSha256 = createHash('sha256').update(JSON.stringify(dto.operations)).digest('hex');
+      const currentSequence = Number(syncDevice.lastSyncSequence || 0);
+      if (dto.batchSequence <= currentSequence) {
+        if (dto.batchSequence === currentSequence && syncDevice.lastSyncPayloadSha256 === batchPayloadSha256) {
+          if (syncDevice.lastSyncStatus === 'SUCCEEDED' && syncDevice.lastSyncResult) {
+            return { accepted: dto.operations.length, batchSequence: dto.batchSequence, replayed: true, ...syncDevice.lastSyncResult };
+          }
+          return { accepted: dto.operations.length, batchSequence: dto.batchSequence, replayed: true, results: [], batchStatus: 'PROCESSING' };
+        }
+        throw new ConflictException('Offline sync sequence is stale or was already used by a different batch. Refresh device sync state before retrying.');
+      }
+      const claim: any = await this.offlineDevices.updateOne(
+        tenantFilter(tenantId, { _id: syncDevice._id, lastSyncSequence: currentSequence, revokedAt: null }),
+        { $set: { lastSyncSequence: dto.batchSequence, lastSyncPayloadSha256: batchPayloadSha256, lastSyncStatus: 'PROCESSING', lastSyncResult: null } },
+      );
+      if (!claim.modifiedCount) throw new ConflictException('Another sync batch advanced this device. Retry with a fresh batch sequence.');
     }
     const results: any[] = [];
     for (const operation of dto.operations) {
@@ -493,7 +513,15 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         results.push({ idempotencyKey: operation.idempotencyKey, status: 'FAILED', error: message });
       }
     }
-    return { accepted: dto.operations.length, results };
+    const response = { accepted: dto.operations.length, results };
+    if (syncDevice && dto.batchSequence !== undefined) {
+      await this.offlineDevices.updateOne(
+        tenantFilter(tenantId, { _id: syncDevice._id, lastSyncSequence: dto.batchSequence, lastSyncPayloadSha256: batchPayloadSha256 }),
+        { $set: { lastSyncStatus: 'SUCCEEDED', lastSyncResult: response, lastSyncAcknowledgedAt: new Date(), lastSeenAt: new Date() } },
+      );
+      return { ...response, batchSequence: dto.batchSequence, replayed: false };
+    }
+    return response;
   }
 
   async getBackupPolicy(tenantId: string) {

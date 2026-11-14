@@ -8,7 +8,7 @@ import { WarehouseStock, WarehouseStockSchema } from '../inventory/schemas/wareh
 import {
   AutomationExecution, AutomationExecutionSchema, AutomationRule, AutomationRuleSchema, BackupArtifact, BackupArtifactSchema, BackupPolicy, BackupPolicySchema,
   BackupRestoreDrill, BackupRestoreDrillSchema,
-  OfflineSyncRecord, OfflineSyncRecordSchema, PlatformNotification, SaasAdminAudit, SaasAdminAuditSchema,
+  OfflineDevice, OfflineDeviceSchema, OfflineSyncRecord, OfflineSyncRecordSchema, PlatformNotification, SaasAdminAudit, SaasAdminAuditSchema,
   PlatformNotificationSchema, WebhookDelivery, WebhookDeliverySchema,
   WebhookIntegration, WebhookIntegrationSchema, CommunicationProvider, CommunicationProviderSchema, CommunicationDelivery, CommunicationDeliverySchema, SubscriptionInvoice, SubscriptionInvoiceSchema, BackupReplicationEvent, BackupReplicationEventSchema,
 } from './schemas/platform.schema';
@@ -26,6 +26,7 @@ import { PlatformEventInterceptor } from './platform-event.interceptor';
       { name: WebhookIntegration.name, schema: WebhookIntegrationSchema },
       { name: WebhookDelivery.name, schema: WebhookDeliverySchema },
       { name: OfflineSyncRecord.name, schema: OfflineSyncRecordSchema },
+      { name: OfflineDevice.name, schema: OfflineDeviceSchema },
       { name: BackupPolicy.name, schema: BackupPolicySchema },
       { name: BackupArtifact.name, schema: BackupArtifactSchema },
       { name: BackupRestoreDrill.name, schema: BackupRestoreDrillSchema },

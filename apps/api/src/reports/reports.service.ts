@@ -396,7 +396,7 @@ export class ReportsService {
       if (!response.ok || result.status !== 'CANCELLED' || !result.cancellationReference) {
         throw new ServiceUnavailableException(String(result.message || result.error || 'GSP adapter did not confirm e-invoice cancellation').slice(0, 500));
       }
-      const updated = await this.gstSubmissions.findOneAndUpdate(
+      const updated: any = await this.gstSubmissions.findOneAndUpdate(
         tenantFilter(tenantId, { _id: submission._id, status: 'SUBMITTED', irn: submission.irn }),
         { $set: { status: 'CANCELLED', cancellationReference: String(result.cancellationReference).slice(0, 120), cancellationReason, cancelledAt: new Date(), lastError: '' } },
         { new: true },

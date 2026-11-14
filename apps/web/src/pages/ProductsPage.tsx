@@ -234,7 +234,7 @@ export default function ProductsPage() {
         {importPreview && <div className="products-import-preview"><b>{importPreview.validRows} valid · {importPreview.invalidRows} need correction · {importPreview.totalRows} rows</b>{importPreview.rows.filter(row=>!row.valid).slice(0,5).map(row=><small key={row.rowNumber}>Row {row.rowNumber}: {row.errors.join('; ')}</small>)}<button className="products-primary" onClick={()=>void commitCatalogueImport()} disabled={importBusy||!importPreview.validRows}>Import valid rows</button></div>}
         {importMessage && <p className="products-stock-note">{importMessage}</p>}
       </section>}
-      {error && <div className="products-error">{error}</div>
+      {error && <div className="products-error">{error}</div>}
 
       <div className="products-table-card"><div className="products-table-wrap">
         <table className="products-table"><thead><tr>

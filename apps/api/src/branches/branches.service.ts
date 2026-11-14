@@ -22,7 +22,7 @@ export class BranchesService {
 
   async createBranch(tenantId: string, dto: CreateBranchDto) {
     this.validateTenant(tenantId);
-    const tenant = await this.tenants.findById(tenantId).select('maxBranches').lean();
+    const tenant: any = await this.tenants.findById(tenantId).select('maxBranches').lean();
     if (!tenant) throw new NotFoundException('Workspace not found');
     const branchCount = await this.branches.countDocuments(tenantFilter(tenantId, { isDeleted: false }));
     if (branchCount >= Number(tenant.maxBranches || 1)) throw new ConflictException('Workspace branch limit reached for the current subscription plan');

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Activity, Bell, Bot, CloudDownload, PlugZap, RefreshCw, ShieldCheck, Wifi, Workflow } from 'lucide-react';
+import { Activity, Bell, Bot, CloudDownload, PlugZap, RefreshCw, Send, ShieldCheck, Wifi, Workflow } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { listQueuedOfflineSales, type QueuedOfflineSale } from '../api/offlineSales';

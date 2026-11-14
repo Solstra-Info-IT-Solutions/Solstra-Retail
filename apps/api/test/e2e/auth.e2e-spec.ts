@@ -1284,11 +1284,12 @@ describe('Authentication HTTP E2E', () => {
       .send({ name: 'E2E Expense Staff', email: staffEmail, password });
     expect(staffCreation.status).toBe(201);
     createdUserIds.push(staffCreation.body.id);
-    const staffUpdate = await users.updateOne(
-      { _id: staffCreation.body.id, tenantId: owner.body.tenant.id },
-      { $set: { permissions: ['expenses.create', 'expenses.view'] } },
-    );
-    expect(staffUpdate.matchedCount).toBe(1);
+    const staffUpdate = await request(app.getHttpServer())
+      .patch(`/api/v1/auth/users/${staffCreation.body.id}/permissions`)
+      .set(ownerHeaders)
+      .send({ permissions: ['expenses.create', 'expenses.view'] });
+    expect(staffUpdate.status).toBe(200);
+    expect(staffUpdate.body.permissions).toEqual(['expenses.create', 'expenses.view']);
     const staffLogin = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
       .send({ email: staffEmail, password });

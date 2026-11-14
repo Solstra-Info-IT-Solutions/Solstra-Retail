@@ -29,9 +29,12 @@ export class ApiRateLimitGuard implements CanActivate {
     }
     bucket.count += 1;
 
-    if (this.buckets.size > 20_000) {
+    if (this.buckets.size >= 20_000) {
       for (const [bucketKey, value] of this.buckets) {
         if (value.resetAt <= now) this.buckets.delete(bucketKey);
+      }
+      if (this.buckets.size >= 20_000 && !this.buckets.has(key)) {
+        throw new TooManyRequestsException('API rate-limit capacity is temporarily exhausted. Retry shortly.');
       }
     }
 

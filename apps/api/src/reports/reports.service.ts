@@ -1005,7 +1005,7 @@ export class ReportsService {
       if (!invoice.sellerAddress?.trim()) warnings.push('Seller address is not populated on the invoice snapshot');
       if (!Array.isArray(invoice.items) || !invoice.items.length) issues.push('Invoice has no line items');
       for (const [index, item] of (invoice.items || []).entries()) {
-        if (!/^\d{4,8}$/.test(String(item.hsnCode || ''))) issues.push(`Line ${index + 1}: HSN code must contain 4–8 digits`);
+        if (!/^(?:\d{4}|\d{6}|\d{8})$/.test(String(item.hsnCode || ''))) issues.push(`Line ${index + 1}: HSN code must contain 4–8 digits`);
         if (!String(item.unit || '').trim()) issues.push(`Line ${index + 1}: unit/UQC is missing`);
         if (!(Number(item.quantity) > 0)) issues.push(`Line ${index + 1}: quantity must be greater than zero`);
         if (!Number.isFinite(Number(item.taxableValue)) || Number(item.taxableValue) < 0) issues.push(`Line ${index + 1}: taxable value is invalid`);

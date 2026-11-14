@@ -110,6 +110,11 @@ export class PlatformController {
   }
 
   @Permissions('sales.create')
+  @Get('offline/sync-records')
+  listOfflineSyncRecords(@Req() req: AuthenticatedRequest, @Query('page') page = '1', @Query('status') status = '') {
+    return this.platform.listOfflineSyncRecords(req.user.tenantId, req.user.userId, req.user.role, Number(page), status);
+  }
+
   @Post('offline/sync')
   syncOfflineSales(@Req() req: AuthenticatedRequest, @Body() dto: OfflineSyncBatchDto) {
     return this.platform.syncOfflineSales(req.user.tenantId, req.user.userId, dto);

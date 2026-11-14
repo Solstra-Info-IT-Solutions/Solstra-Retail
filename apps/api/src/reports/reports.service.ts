@@ -354,6 +354,45 @@ export class ReportsService {
     } finally { clearTimeout(timeout); }
   }
 
+  async cancelGstEInvoice(tenantId: string, invoiceId: string, reason: string) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(invoiceId)) throw new BadRequestException('Invalid tenant or invoice ID');
+    const cancellationReason = String(reason || '').trim();
+    if (cancellationReason.length < 10 || cancellationReason.length > 500) throw new BadRequestException('E-invoice cancellation reason must contain 10 to 500 characters');
+    const submission: any = await this.gstSubmissions.findOne(tenantFilter(tenantId, { invoiceId: new Types.ObjectId(invoiceId) })).lean();
+    if (!submission) throw new BadRequestException('E-invoice submission not found in this workspace');
+    if (submission.status === 'CANCELLED') return { status: 'CANCELLED', cancellationReference: submission.cancellationReference, cancelledAt: submission.cancelledAt, duplicate: true };
+    if (submission.status !== 'SUBMITTED' || !submission.irn) throw new BadRequestException('Only an acknowledged e-invoice with an IRN can be cancelled');
+    const endpoint = process.env.GST_GSP_ADAPTER_URL || '';
+    const token = process.env.GST_GSP_ADAPTER_TOKEN || '';
+    if (!endpoint || !token) throw new ServiceUnavailableException('GST GSP adapter is not configured');
+    let url: URL;
+    try { url = new URL(endpoint); } catch { throw new BadRequestException('GST GSP adapter URL is invalid'); }
+    if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443') ||
+      ['localhost', '127.0.0.1', '::1'].includes(url.hostname.toLowerCase()) || url.hostname.endsWith('.local') || url.hostname.endsWith('.internal')) {
+      throw new BadRequestException('GST GSP adapter must be a public HTTPS endpoint on port 443');
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST', redirect: 'error', signal: controller.signal,
+        headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', 'idempotency-key': String(submission._id) + ':cancel' },
+        body: JSON.stringify({ contract: 'SOLSTRA_GST_EINVOICE_CANCEL_V1', irn: submission.irn, invoiceNumber: submission.invoiceNumber, reason: cancellationReason }),
+      });
+      const result: any = await response.json().catch(() => ({}));
+      if (!response.ok || result.status !== 'CANCELLED' || !result.cancellationReference) {
+        throw new ServiceUnavailableException(String(result.message || result.error || 'GSP adapter did not confirm e-invoice cancellation').slice(0, 500));
+      }
+      const updated = await this.gstSubmissions.findOneAndUpdate(
+        tenantFilter(tenantId, { _id: submission._id, status: 'SUBMITTED', irn: submission.irn }),
+        { $set: { status: 'CANCELLED', cancellationReference: String(result.cancellationReference).slice(0, 120), cancellationReason, cancelledAt: new Date(), lastError: '' } },
+        { new: true },
+      ).lean();
+      if (!updated) throw new BadRequestException('E-invoice status changed during cancellation; verify provider status before retrying');
+      return { status: 'CANCELLED', cancellationReference: updated.cancellationReference, cancelledAt: updated.cancelledAt, duplicate: false };
+    } finally { clearTimeout(timeout); }
+  }
+
   async migrationReadiness(tenantId: string) {
     if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant context');
     const tenantObjectId = new Types.ObjectId(tenantId);

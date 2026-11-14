@@ -44,7 +44,7 @@ The Advanced Inventory workspace exposes batch receipts and expiry lists, serial
 
 - Reports expose `GET /api/v1/reports/gst/einvoice-readiness?from=YYYY-MM-DD&to=YYYY-MM-DD` for issued B2B invoices. It checks seller/recipient GSTIN format, invoice number length, state codes, recipient name, HSN/UQC/quantity/taxable values and GST component reconciliation.
 - The preflight is a data-quality checklist only. It does not decide statutory e-invoice applicability/turnover thresholds or generate IRNs itself. The separate GSP adapter workflow can submit approved invoice payloads and retain returned IRN/acknowledgement metadata when a certified provider is configured; it does not itself certify statutory applicability or produce a signed QR code.
-- `GET /api/v1/reports/accounting/journal-export?from=YYYY-MM-DD&to=YYYY-MM-DD` downloads posted journal lines as a generic accounting interchange CSV. Map ledger codes/names and reconcile opening balances before importing into Tally or another accounting package. It is not an official Tally XML or live sync connector.
+- `GET /api/v1/reports/accounting/journal-export?from=YYYY-MM-DD&to=YYYY-MM-DD` downloads posted journal lines as a generic accounting interchange CSV. Map ledger codes/names and reconcile opening balances before importing into Tally or another accounting package. A separate Tally XML voucher export is also available as an import draft; neither file is a live synchronization connector.
 
 ## Natural-language business assistant
 

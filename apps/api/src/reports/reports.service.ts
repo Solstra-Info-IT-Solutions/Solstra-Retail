@@ -29,6 +29,8 @@ import { Account, AccountDocument } from '../accounting/schemas/account.schema';
 import { JournalEntry, JournalEntryDocument } from '../accounting/schemas/journal-entry.schema';
 import { Purchase, PurchaseDocument } from '../purchases/schemas/purchase.schema';
 import { Tenant } from '../tenants/schemas/tenant.schema';
+import { Customer } from '../customers/schemas/customer.schema';
+import { Supplier } from '../suppliers/schemas/supplier.schema';
 import { GstEInvoiceSubmission } from './schemas/gst-einvoice-submission.schema';
 import { GstComplianceSubmission } from './schemas/gst-compliance-submission.schema';
 
@@ -63,6 +65,12 @@ export class ReportsService {
 
     @InjectModel(Tenant.name)
     private readonly tenants: Model<Tenant>,
+
+    @InjectModel(Customer.name)
+    private readonly customers: Model<any>,
+
+    @InjectModel(Supplier.name)
+    private readonly suppliers: Model<any>,
 
     @InjectModel(GstEInvoiceSubmission.name)
     private readonly gstSubmissions: Model<any>,
@@ -407,6 +415,34 @@ export class ReportsService {
       if (error instanceof BadRequestException || error instanceof ServiceUnavailableException) throw error;
       throw new ServiceUnavailableException('GST GSP cancellation request failed; verify IRP status before retrying');
     } finally { clearTimeout(timeout); }
+  }
+
+  async exportMigrationRecords(tenantId: string, entity: string, cursor = '', limit = 250) {
+    this.validateTenant(tenantId);
+    const allowed = ['customers', 'suppliers', 'products', 'sales', 'purchases', 'journals'];
+    if (!allowed.includes(entity)) throw new BadRequestException('Unsupported migration export entity');
+    const safeLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 500) : 250;
+    if (cursor && !Types.ObjectId.isValid(cursor)) throw new BadRequestException('Invalid migration cursor');
+    const filter: Record<string, any> = {};
+    if (cursor) filter._id = { $gt: new Types.ObjectId(cursor) };
+    const scoped = tenantFilter(tenantId, filter);
+    let model: any;
+    let projection = '';
+    if (entity === 'customers') { model = this.customers; projection = '-__v'; scoped.isDeleted = false; }
+    else if (entity === 'suppliers') { model = this.suppliers; projection = '-__v'; scoped.isDeleted = false; }
+    else if (entity === 'products') { model = this.products; projection = '-__v'; scoped.isDeleted = false; }
+    else if (entity === 'sales') { model = this.invoices; projection = '-__v'; scoped.status = 'ISSUED'; }
+    else if (entity === 'purchases') { model = this.purchases; projection = '-__v'; scoped.status = { $ne: 'CANCELLED' }; }
+    else { model = this.journals; projection = '-__v'; }
+    const rows = await model.find(scoped).select(projection).sort({ _id: 1 }).limit(safeLimit + 1).lean();
+    const hasMore = rows.length > safeLimit;
+    const items = rows.slice(0, safeLimit);
+    return {
+      entity, items, exportedCount: items.length,
+      nextCursor: hasMore && items.length ? String(items[items.length - 1]._id) : null,
+      hasMore, limit: safeLimit, generatedAt: new Date(),
+      disclaimer: 'Tenant-scoped source-data export for migration and reconciliation. This does not post opening balances, recreate historical payment side effects, or certify external accounting/GST data.',
+    };
   }
 
   async migrationReadiness(tenantId: string) {

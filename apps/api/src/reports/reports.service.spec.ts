@@ -104,7 +104,7 @@ describe('ReportsService validation', () => {
       .rejects.toBeInstanceOf(BadRequestException);
     await expect(service.submitGstCompliance('507f1f77bcf86cd799439011', 'GSTR3B', '2999-01'))
       .rejects.toBeInstanceOf(BadRequestException);
-    expect(invoices.findOne).toBeUndefined();
+    expect(invoices.aggregate).not.toHaveBeenCalled();
   });
 
   it('rejects invalid tenant context in dashboard summary', async () => {

@@ -201,6 +201,18 @@ export class PlatformController {
   }
 
   @Roles('owner', 'admin')
+  @Post('backups/:id/restore-drill')
+  runBackupRestoreDrill(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.platform.runBackupRestoreDrill(req.user.tenantId, id);
+  }
+
+  @Roles('owner', 'admin')
+  @Get('backups/restore-drills')
+  listBackupRestoreDrills(@Req() req: AuthenticatedRequest, @Query('artifactId') artifactId?: string) {
+    return this.platform.listBackupRestoreDrills(req.user.tenantId, artifactId);
+  }
+
+  @Roles('owner', 'admin')
   @Get('backups/replication-events')
   listBackupReplicationEvents(@Req() req: AuthenticatedRequest, @Query('artifactId') artifactId?: string) {
     return this.platform.listBackupReplicationEvents(req.user.tenantId, artifactId);

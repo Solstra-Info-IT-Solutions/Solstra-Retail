@@ -52,6 +52,24 @@ export class RecurringExpensesService {
     return schedule;
   }
 
+  async runDueScheduledForAllTenants(now = new Date()) {
+    const tenantIds = await this.schedules.distinct('tenantId', { status: 'ACTIVE', nextRunAt: { $lte: now } });
+    const results: any[] = [];
+    for (const tenantObjectId of tenantIds.slice(0, 100)) {
+      const tenantId = String(tenantObjectId);
+      try {
+        const firstDue: any = await this.schedules.find(tenantFilter(tenantId, {
+          status: 'ACTIVE', nextRunAt: { $lte: now },
+        })).sort({ nextRunAt: 1 }).select('createdBy').limit(1).lean();
+        if (!firstDue.length || !firstDue[0].createdBy) continue;
+        results.push({ tenantId, ...(await this.runDue(tenantId, String(firstDue[0].createdBy), now)) });
+      } catch (error: any) {
+        results.push({ tenantId, failed: true, error: String(error?.message || 'Scheduled expense processing failed').slice(0, 250) });
+      }
+    }
+    return { tenantCount: tenantIds.length, processedTenants: results.length, results };
+  }
+
   async runDue(tenantId: string, userId: string, now = new Date()) {
     this.validateIdentity(tenantId, userId);
     const due = await this.schedules.find(tenantFilter(tenantId, {
@@ -78,7 +96,7 @@ export class RecurringExpensesService {
             recurringScheduleId: current._id, recurringPeriod: period,
           }], { session });
           await this.accounting.postOperationalJournal({
-            tenantId, userId, postingDate: current.nextRunAt,
+            tenantId, userId: String(current.createdBy), postingDate: current.nextRunAt,
             narration: `Recurring expense: ${current.title}`,
             sourceType: 'EXPENSE', sourceId: expense._id.toString(),
             lines: [

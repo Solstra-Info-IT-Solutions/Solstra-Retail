@@ -10,6 +10,12 @@ import { ExpensesService } from './expenses.service';
 export class ExpensesController {
   constructor(private readonly expenses: ExpensesService) {}
 
+  @Get('reconciliation')
+  @Roles('owner', 'admin')
+  reconciliation(@Req() req: any, @Query() query: ListExpensesDto) {
+    return this.expenses.reconciliation(req.user.tenantId, query);
+  }
+
   @Get()
   findAll(@Req() req: any, @Query() query: ListExpensesDto) {
     return this.expenses.findAll(req.user.tenantId, query);

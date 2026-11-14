@@ -8,12 +8,14 @@ import { AddExpensePaymentDto } from './dto/add-expense-payment.dto';
 import { ListExpensesDto } from './dto/list-expenses.dto';
 import { ReviewExpenseDto } from './dto/review-expense.dto';
 import { Expense, ExpenseDocument } from './schemas/expense.schema';
+import { JournalEntry } from '../accounting/schemas/journal-entry.schema';
 
 @Injectable()
 export class ExpensesService {
   constructor(
     @InjectModel(Expense.name) private readonly expenses: Model<ExpenseDocument>,
     private readonly accounting: AccountingService,
+    @InjectModel(JournalEntry.name) private readonly journals: Model<any>,
   ) {}
 
   async create(tenantId: string, userId: string, role: string, dto: CreateExpenseDto) {
@@ -204,6 +206,110 @@ export class ExpensesService {
     return {
       items, summary: summary[0] ?? { totalAmount: 0, paidAmount: 0, dueAmount: 0, expenseCount: 0, pendingApprovalCount: 0 },
       pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  async reconciliation(tenantId: string, query: ListExpensesDto) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant ID');
+    const from = query.from ? new Date(query.from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const to = query.to ? new Date(query.to) : new Date();
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
+      throw new BadRequestException('Invalid expense reconciliation date range');
+    }
+    to.setHours(23, 59, 59, 999);
+
+    const scoped = tenantFilter(tenantId, {
+      $or: [
+        { expenseDate: { $gte: from, $lte: to } },
+        { payments: { $elemMatch: { paidAt: { $gte: from, $lte: to } } } },
+      ],
+    });
+    const [expenses, journalRows] = await Promise.all([
+      this.expenses.find(scoped)
+        .select('_id title expenseDate amount approvalStatus payments')
+        .lean(),
+      this.journals.find(tenantFilter(tenantId, {
+        status: 'POSTED',
+        postingDate: { $gte: from, $lte: to },
+        $or: [
+          { sourceType: 'EXPENSE' },
+          { sourceType: 'PAYMENT', sourceId: { $regex: '^EXPENSE:' } },
+        ],
+      })).select('sourceType sourceId lines postingDate').lean(),
+    ]);
+
+    const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+    const journalBySource = new Map<string, any>();
+    for (const journal of journalRows as any[]) {
+      if (journal.sourceId) journalBySource.set(journal.sourceId, journal);
+    }
+
+    let expectedExpenseAmount = 0;
+    let postedExpenseAmount = 0;
+    let expectedPaymentAmount = 0;
+    let postedPaymentAmount = 0;
+    const discrepancies: Array<Record<string, unknown>> = [];
+
+    for (const expense of expenses as any[]) {
+      const expenseId = String(expense._id);
+      const expenseDate = new Date(expense.expenseDate);
+      if (expense.approvalStatus === 'APPROVED' && expenseDate >= from && expenseDate <= to) {
+        expectedExpenseAmount = round(expectedExpenseAmount + expense.amount);
+        const journal = journalBySource.get(expenseId);
+        const lines = journal?.lines ?? [];
+        const debit = round(lines.filter((line: any) => line.accountCode === '5200')
+          .reduce((sum: number, line: any) => sum + line.debit, 0));
+        const credit = round(lines.filter((line: any) => line.accountCode === '2000')
+          .reduce((sum: number, line: any) => sum + line.credit, 0));
+        postedExpenseAmount = round(postedExpenseAmount + debit);
+        if (!journal || Math.abs(debit - expense.amount) >= 0.01 || Math.abs(credit - expense.amount) >= 0.01) {
+          discrepancies.push({
+            type: journal ? 'EXPENSE_JOURNAL_AMOUNT_MISMATCH' : 'MISSING_EXPENSE_JOURNAL',
+            expenseId, title: expense.title, expectedAmount: expense.amount,
+            postedExpenseDebit: debit, postedPayableCredit: credit,
+          });
+        }
+      }
+
+      for (const payment of expense.payments ?? []) {
+        const paidAt = new Date(payment.paidAt);
+        if (paidAt < from || paidAt > to) continue;
+        expectedPaymentAmount = round(expectedPaymentAmount + payment.amount);
+        const sourceId = `EXPENSE:${expenseId}:${payment.idempotencyKey}`;
+        const journal = journalBySource.get(sourceId);
+        const lines = journal?.lines ?? [];
+        const debit = round(lines.filter((line: any) => line.accountCode === '2000')
+          .reduce((sum: number, line: any) => sum + line.debit, 0));
+        const credit = round(lines.filter((line: any) => ['1000', '1010'].includes(line.accountCode))
+          .reduce((sum: number, line: any) => sum + line.credit, 0));
+        postedPaymentAmount = round(postedPaymentAmount + credit);
+        if (!journal || Math.abs(debit - payment.amount) >= 0.01 || Math.abs(credit - payment.amount) >= 0.01) {
+          discrepancies.push({
+            type: journal ? 'EXPENSE_PAYMENT_JOURNAL_AMOUNT_MISMATCH' : 'MISSING_EXPENSE_PAYMENT_JOURNAL',
+            expenseId, title: expense.title, paymentReference: payment.reference || '',
+            expectedAmount: payment.amount, postedPayableDebit: debit, postedCashBankCredit: credit,
+          });
+        }
+      }
+    }
+
+    const expenseDifference = round(expectedExpenseAmount - postedExpenseAmount);
+    const paymentDifference = round(expectedPaymentAmount - postedPaymentAmount);
+    return {
+      from, to, currency: 'INR', amountUnit: 'RUPEES',
+      basis: 'APPROVED_EXPENSES_AND_RECORDED_PAYMENTS_VS_POSTED_SOURCE_JOURNALS',
+      expenses: {
+        expected: expectedExpenseAmount, posted: postedExpenseAmount,
+        difference: expenseDifference, reconciled: Math.abs(expenseDifference) < 0.01,
+      },
+      payments: {
+        expected: expectedPaymentAmount, posted: postedPaymentAmount,
+        difference: paymentDifference, reconciled: Math.abs(paymentDifference) < 0.01,
+      },
+      discrepancyCount: discrepancies.length,
+      discrepancies: discrepancies.slice(0, 50),
+      truncated: discrepancies.length > 50,
+      note: 'This source-journal control does not reconcile bank statements or independently verify external payment settlement.',
     };
   }
 

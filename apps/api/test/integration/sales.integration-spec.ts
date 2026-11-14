@@ -204,6 +204,7 @@ describe('SalesService MongoDB integration', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
     );
   });
 

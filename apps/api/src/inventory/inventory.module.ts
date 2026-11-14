@@ -19,6 +19,10 @@ import { ReplenishmentPolicy, ReplenishmentPolicySchema } from './schemas/replen
 import { ReplenishmentService } from './replenishment.service';
 import { SalesInvoice, SalesInvoiceSchema } from '../sales/schemas/sales-invoice.schema';
 import { Supplier, SupplierSchema } from '../suppliers/schemas/supplier.schema';
+import { InventoryBatch, InventoryBatchSchema } from './schemas/inventory-batch.schema';
+import { InventorySerial, InventorySerialSchema } from './schemas/inventory-serial.schema';
+import { Stocktake, StocktakeSchema } from './schemas/stocktake.schema';
+import { AdvancedInventoryService } from './advanced-inventory.service';
 
 @Module({
   imports: [
@@ -32,6 +36,9 @@ import { Supplier, SupplierSchema } from '../suppliers/schemas/supplier.schema';
       { name: ReplenishmentPolicy.name, schema: ReplenishmentPolicySchema },
       { name: SalesInvoice.name, schema: SalesInvoiceSchema },
       { name: Supplier.name, schema: SupplierSchema },
+      { name: InventoryBatch.name, schema: InventoryBatchSchema },
+      { name: InventorySerial.name, schema: InventorySerialSchema },
+      { name: Stocktake.name, schema: StocktakeSchema },
       {
         name: InventoryMovement.name,
         schema: InventoryMovementSchema,
@@ -39,7 +46,7 @@ import { Supplier, SupplierSchema } from '../suppliers/schemas/supplier.schema';
     ]),
   ],
   controllers: [InventoryController],
-  providers: [InventoryService, WarehouseInventoryService, ReplenishmentService],
+  providers: [InventoryService, WarehouseInventoryService, ReplenishmentService, AdvancedInventoryService],
   exports: [InventoryService],
 })
 export class InventoryModule {}

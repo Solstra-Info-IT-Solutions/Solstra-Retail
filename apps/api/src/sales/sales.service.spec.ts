@@ -70,6 +70,7 @@ describe('SalesService createSale idempotency', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
     );
 
     return { service, invoices };

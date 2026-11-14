@@ -33,6 +33,8 @@ import { TaxPeriodsService } from '../accounting/tax-periods.service';
 import { Promotion, PromotionDocument } from './schemas/promotion.schema';
 import { Warranty, WarrantyDocument } from './schemas/warranty.schema';
 import { WarrantyClaim, WarrantyClaimDocument } from './schemas/warranty-claim.schema';
+import { PriceRule, PriceRuleDocument } from './schemas/price-rule.schema';
+import { CreatePriceRuleDto } from './dto/create-price-rule.dto';
 import { CreatePromotionDto } from './dto/create-promotion.dto';
 import { UpdatePromotionStatusDto } from './dto/update-promotion-status.dto';
 import { CreateWarrantyClaimDto, ReviewWarrantyClaimDto } from './dto/warranty-claim.dto';
@@ -77,6 +79,7 @@ export class SalesService {
     @InjectModel(Promotion.name) private readonly promotions: Model<PromotionDocument>,
     @InjectModel(Warranty.name) private readonly warranties: Model<WarrantyDocument>,
     @InjectModel(WarrantyClaim.name) private readonly warrantyClaims: Model<WarrantyClaimDocument>,
+    @InjectModel(PriceRule.name) private readonly priceRules: Model<PriceRuleDocument>,
   ) {}
 
   private loyaltyTier(points: number): 'BRONZE' | 'SILVER' | 'GOLD' | 'PLATINUM' {
@@ -255,6 +258,34 @@ export class SalesService {
     promotion.updatedBy = new Types.ObjectId(userId);
     await promotion.save();
     return promotion;
+  }
+
+  async createPriceRule(tenantId: string, userId: string, dto: CreatePriceRuleDto) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(userId)) throw new BadRequestException('Invalid tenant or user identity');
+    if (dto.appliesTo === 'PRODUCT' && !dto.productId) throw new BadRequestException('Select a product for a product-specific price rule');
+    if (dto.appliesTo === 'CATEGORY' && !dto.category?.trim()) throw new BadRequestException('Enter a category for a category price rule');
+    if (dto.productId && !Types.ObjectId.isValid(dto.productId)) throw new BadRequestException('Invalid product ID');
+    if (dto.ruleType === 'PERCENT_OFF' && dto.value > 100) throw new BadRequestException('Percentage reduction cannot exceed 100%');
+    const startsAt = new Date(dto.startsAt), endsAt = new Date(dto.endsAt);
+    if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime()) || startsAt >= endsAt) throw new BadRequestException('Price rule end date must be after its start date');
+    if (dto.productId) {
+      const product = await this.products.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.productId), isDeleted: false })).lean();
+      if (!product) throw new NotFoundException('Product not found in this business');
+    }
+    return this.priceRules.create({ tenantId: new Types.ObjectId(tenantId), name: dto.name.trim(), appliesTo: dto.appliesTo, productId: dto.productId ? new Types.ObjectId(dto.productId) : null, category: dto.category?.trim() || '', ruleType: dto.ruleType, value: dto.value, minimumQuantity: dto.minimumQuantity ?? 1, startsAt, endsAt, priority: dto.priority ?? 0, status: 'ACTIVE', createdBy: new Types.ObjectId(userId) });
+  }
+
+  async listPriceRules(tenantId: string) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    return this.priceRules.find(tenantFilter(tenantId, {})).sort({ priority: -1, createdAt: -1 }).populate('productId', 'name sku').lean();
+  }
+
+  async updatePriceRuleStatus(tenantId: string, id: string, status: 'ACTIVE' | 'PAUSED') {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid tenant or price rule ID');
+    const rule = await this.priceRules.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(id) }));
+    if (!rule) throw new NotFoundException('Price rule not found');
+    if (status === 'ACTIVE' && rule.endsAt <= new Date()) throw new ConflictException('An expired price rule cannot be reactivated');
+    rule.status = status; await rule.save(); return rule;
   }
 
   async createSale(
@@ -513,9 +544,18 @@ export class SalesService {
           });
           return allocations;
         };
+        const activePriceRules = await this.priceRules.find(tenantFilter(tenantId, { status: 'ACTIVE', startsAt: { $lte: saleDate }, endsAt: { $gt: saleDate }, $or: [{ appliesTo: 'PRODUCT', productId: { $in: Array.from(productMap.values()).map((p: any) => p._id) } }, { appliesTo: 'CATEGORY' }] })).session(session).sort({ priority: -1, createdAt: 1 }).lean();
+        const priceFor = (product: any, quantity: number) => {
+          const rule: any = activePriceRules.find((candidate: any) => quantity >= candidate.minimumQuantity && (candidate.appliesTo === 'PRODUCT' ? String(candidate.productId) === String(product._id) : candidate.category === product.category));
+          if (!rule) return this.toPaise(product.sellingPrice);
+          const base = this.toPaise(product.sellingPrice);
+          if (rule.ruleType === 'FIXED_PRICE') return this.toPaise(rule.value);
+          if (rule.ruleType === 'PERCENT_OFF') return Math.max(0, base - Math.round(base * rule.value / 100));
+          return Math.max(0, base - this.toPaise(rule.value));
+        };
         const baseNetByLine = dto.items.map((item) => {
           const product = productMap.get(item.productId);
-          return Math.max(0, this.toPaise(product.sellingPrice) * item.quantity - this.toPaise(item.discountAmount || 0));
+          return Math.max(0, priceFor(product, item.quantity) * item.quantity - this.toPaise(item.discountAmount || 0));
         });
         const promotionAllocations = allocateDiscount(promotionDiscountPaise, baseNetByLine);
         const afterPromotionBases = baseNetByLine.map((value, index) => value - promotionAllocations[index]);
@@ -526,7 +566,7 @@ export class SalesService {
           const product = productMap.get(item.productId);
           const quantity = item.quantity;
 
-          const unitPricePaise = this.toPaise(product.sellingPrice);
+          const unitPricePaise = priceFor(product, quantity);
           const grossPaise = unitPricePaise * quantity;
           const discountPaise = this.toPaise(item.discountAmount || 0) + (promotionAllocations[itemIndex] || 0) + (voucherAllocations[itemIndex] || 0);
 

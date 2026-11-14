@@ -19,6 +19,8 @@ import { WarehouseOpeningStockDto } from './dto/warehouse-opening-stock.dto';
 import { CreateWarehouseTransferDto } from './dto/create-warehouse-transfer.dto';
 import { ReplenishmentService } from './replenishment.service';
 import { UpsertReplenishmentPolicyDto, ReplenishmentQueryDto } from './dto/replenishment.dto';
+import { AdvancedInventoryService } from './advanced-inventory.service';
+import { ReceiveBatchDto, RegisterSerialsDto, CreateStocktakeDto } from './dto/advanced-inventory.dto';
 
 type AuthenticatedRequest = Request & {
   user: {
@@ -34,6 +36,7 @@ export class InventoryController {
     private readonly inventoryService: InventoryService,
     private readonly warehouseInventory: WarehouseInventoryService,
     private readonly replenishment: ReplenishmentService,
+    private readonly advancedInventory: AdvancedInventoryService,
   ) {}
 
   @Roles('owner', 'admin')
@@ -52,6 +55,48 @@ export class InventoryController {
   @Get('replenishment/suggestions')
   replenishmentSuggestions(@Req() req: AuthenticatedRequest, @Query() query: ReplenishmentQueryDto) {
     return this.replenishment.suggestions(req.user.tenantId, query);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('batches')
+  receiveBatch(@Req() req: AuthenticatedRequest, @Body() dto: ReceiveBatchDto) {
+    return this.advancedInventory.receiveBatch(req.user.tenantId, req.user.userId, dto);
+  }
+
+  @Permissions('inventory.view')
+  @Get('batches')
+  listBatches(@Req() req: AuthenticatedRequest, @Query('productId') productId?: string, @Query('warehouseId') warehouseId?: string) {
+    return this.advancedInventory.listBatches(req.user.tenantId, productId, warehouseId);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('serials')
+  registerSerials(@Req() req: AuthenticatedRequest, @Body() dto: RegisterSerialsDto) {
+    return this.advancedInventory.registerSerials(req.user.tenantId, req.user.userId, dto);
+  }
+
+  @Permissions('inventory.view')
+  @Get('serials')
+  listSerials(@Req() req: AuthenticatedRequest, @Query('productId') productId?: string, @Query('status') status?: string) {
+    return this.advancedInventory.listSerials(req.user.tenantId, productId, status);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('stocktakes')
+  createStocktake(@Req() req: AuthenticatedRequest, @Body() dto: CreateStocktakeDto) {
+    return this.advancedInventory.createStocktake(req.user.tenantId, req.user.userId, dto);
+  }
+
+  @Permissions('inventory.view')
+  @Get('stocktakes')
+  listStocktakes(@Req() req: AuthenticatedRequest) {
+    return this.advancedInventory.listStocktakes(req.user.tenantId);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('stocktakes/:id/complete')
+  completeStocktake(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.advancedInventory.completeStocktake(req.user.tenantId, req.user.userId, id);
   }
 
   @Roles('owner', 'admin')

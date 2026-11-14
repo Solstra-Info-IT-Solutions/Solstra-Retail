@@ -37,6 +37,7 @@ import { SalesService } from './sales.service';
 import { Promotion, PromotionSchema } from './schemas/promotion.schema';
 import { Warranty, WarrantySchema } from './schemas/warranty.schema';
 import { WarrantyClaim, WarrantyClaimSchema } from './schemas/warranty-claim.schema';
+import { PriceRule, PriceRuleSchema } from './schemas/price-rule.schema';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { WarrantyClaim, WarrantyClaimSchema } from './schemas/warranty-claim.sch
       { name: Promotion.name, schema: PromotionSchema },
       { name: Warranty.name, schema: WarrantySchema },
       { name: WarrantyClaim.name, schema: WarrantyClaimSchema },
+      { name: PriceRule.name, schema: PriceRuleSchema },
     ]),
   ],
   controllers: [SalesController],

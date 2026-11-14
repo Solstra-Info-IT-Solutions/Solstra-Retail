@@ -357,7 +357,7 @@ describe('ReportsService validation', () => {
       findOne: jest.fn(() => ({ select: () => ({ lean: async () => null }) })),
       create: jest.fn().mockResolvedValue({ _id: '507f1f77bcf86cd799439088' }),
     };
-    service.customers = customers;
+    (service as any).customers = customers;
     migrationImportRuns.create.mockResolvedValue({ _id: '507f1f77bcf86cd799439099' });
     migrationImportRuns.updateOne.mockResolvedValue({ modifiedCount: 1 });
     const dto = { entity: 'customers', runKey: 'customer-import-002', rows: [{ name: 'Customer One', phone: '9876543210', email: 'one@example.com' }] };

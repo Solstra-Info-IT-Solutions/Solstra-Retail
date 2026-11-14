@@ -1279,14 +1279,16 @@ describe('Authentication HTTP E2E', () => {
 
     const staffRegistration = await registerAccount();
     expect(staffRegistration.status).toBe(201);
-    await users.updateOne(
-      { _id: staffRegistration.body.user.id, tenantId: staffRegistration.body.tenant.id },
+    const staffUpdate = await users.updateOne(
+      { _id: staffRegistration.body.user.id },
       { $set: { role: 'staff', permissions: ['expenses.create', 'expenses.view'], tenantId: owner.body.tenant.id } },
     );
+    expect(staffUpdate.matchedCount).toBe(1);
     const staffLogin = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
       .send({ email: staffRegistration.body.user.email, password });
     expect(staffLogin.status).toBe(201);
+    expect(staffLogin.body.user.role).toBe('staff');
     const staffHeaders = { Authorization: `Bearer ${staffLogin.body.accessToken}` };
 
     const pendingApproval = await request(app.getHttpServer())

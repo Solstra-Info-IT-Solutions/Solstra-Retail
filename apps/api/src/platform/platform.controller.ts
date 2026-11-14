@@ -8,7 +8,7 @@ import { PlatformService } from './platform.service';
 import {
   BackupPolicyDto, CreateAutomationRuleDto, CreateWebhookDto, OfflineSyncBatchDto,
   TriggerAutomationDto, UpdateAutomationRuleDto, UpdateSaasTenantDto,
-  UpdateWebhookDto, VerifyBackupDto, CreateCommunicationProviderDto, SendCommunicationDto, RecordSubscriptionPaymentDto,
+  UpdateWebhookDto, VerifyBackupDto, RegisterOfflineDeviceDto, CreateCommunicationProviderDto, SendCommunicationDto, RecordSubscriptionPaymentDto,
 } from './dto/platform.dto';
 
 type AuthenticatedRequest = Request & { user: { tenantId: string; userId: string; role: string }; rawBody?: Buffer };
@@ -91,6 +91,22 @@ export class PlatformController {
   @Post('integrations/webhooks/deliver-due')
   deliverWebhooks(@Req() req: AuthenticatedRequest, @Query('limit') limit = '20') {
     return this.platform.runWebhookDeliveries(req.user.tenantId, Number(limit));
+  }
+
+  @Post('offline/devices/register')
+  registerOfflineDevice(@Req() req: AuthenticatedRequest, @Body() dto: RegisterOfflineDeviceDto) {
+    return this.platform.registerOfflineDevice(req.user.tenantId, req.user.userId, dto);
+  }
+
+  @Get('offline/devices')
+  listOfflineDevices(@Req() req: AuthenticatedRequest) {
+    return this.platform.listOfflineDevices(req.user.tenantId, req.user.userId);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('offline/devices/:deviceId/revoke')
+  revokeOfflineDevice(@Req() req: AuthenticatedRequest, @Param('deviceId') deviceId: string) {
+    return this.platform.revokeOfflineDevice(req.user.tenantId, deviceId);
   }
 
   @Permissions('sales.create')

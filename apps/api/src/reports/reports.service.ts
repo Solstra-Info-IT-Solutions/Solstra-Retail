@@ -1053,14 +1053,14 @@ export class ReportsService {
     if (normalized.length < 3 || normalized.length > 300) throw new BadRequestException('Question must contain 3 to 300 characters');
     const now = new Date();
     const localIso = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-    const to = localIso(now);
+    let to = localIso(now);
     let from = localIso(new Date(now.getFullYear(), now.getMonth(), 1));
     let period = 'THIS_MONTH_TO_DATE';
     if (/today/.test(normalized)) { from = to; period = 'TODAY'; }
-    else if (/yesterday/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 1); from = localIso(d); period = 'YESTERDAY'; }
+    else if (/yesterday/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 1); from = localIso(d); to = from; period = 'YESTERDAY'; }
     else if (/last\s+7\s+days|past\s+week/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 6); from = localIso(d); period = 'LAST_7_DAYS'; }
     else if (/last\s+30\s+days|past\s+month/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 29); from = localIso(d); period = 'LAST_30_DAYS'; }
-    else if (/last\s+month/.test(normalized)) { from = localIso(new Date(now.getFullYear(), now.getMonth() - 1, 1)); const last = new Date(now.getFullYear(), now.getMonth(), 0); const range = { from, to: localIso(last) }; period = 'LAST_MONTH'; const result = await this.salesReport(tenantId, range); return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'Sales performance for last month', period, answer: `Last month recorded ${result.invoiceCount} issued invoices and gross sales of ₹${Number(result.grossSalesRupees).toFixed(2)}; net sales after credit notes were ₹${Number(result.netSalesRupees).toFixed(2)}.`, data: result, disclaimer: 'Answers are deterministic summaries from tenant records, not generated financial advice. Verify the underlying report before acting.' }; }
+    else if (/last\\s+month/.test(normalized)) { from = localIso(new Date(now.getFullYear(), now.getMonth() - 1, 1)); to = localIso(new Date(now.getFullYear(), now.getMonth(), 0)); period = 'LAST_MONTH'; }
     const range = { from, to };
     if (/low\s*stock|reorder|out of stock/.test(normalized)) {
       const result = await this.inventoryReport(tenantId, range);
@@ -1080,7 +1080,7 @@ export class ReportsService {
     }
     if (/top\s+products|best\s+selling|most\s+sold/.test(normalized)) {
       const result = await this.salesReport(tenantId, range);
-      return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'Top-selling products by sales value', period, answer: result.topProducts.length ? `Top product by revenue is ${result.topProducts[0].name} at ₹${result.topProducts[0].revenueRupees.toFixed(2)}.` : 'No issued product sales were found for this period.', period, data: result.topProducts, disclaimer: 'Ranked by recorded invoice line revenue, not by units unless the report says so.' };
+      return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'Top-selling products by sales value', period, answer: result.topProducts.length ? `Top product by revenue is ${result.topProducts[0].name} at ₹${result.topProducts[0].revenueRupees.toFixed(2)}.` : 'No issued product sales were found for this period.', data: result.topProducts, disclaimer: 'Ranked by recorded invoice line revenue, not by units unless the report says so.' };
     }
     if (/sales|revenue|turnover/.test(normalized)) {
       const result = await this.salesReport(tenantId, range);

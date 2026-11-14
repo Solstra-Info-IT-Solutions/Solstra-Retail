@@ -1131,6 +1131,9 @@ if (existingPayment) {
 
     const lineIndexes = dto.items.map((item) => item.lineIndex);
 
+    const requestedSerials = dto.items.flatMap(item => item.serialNumbers || []).map(value => value.trim().toUpperCase());
+    if (new Set(requestedSerials).size !== requestedSerials.length) throw new BadRequestException('A serial number can be returned only once per credit note');
+
     if (new Set(lineIndexes).size !== lineIndexes.length) {
       throw new BadRequestException(
         'A credit note cannot contain the same invoice line more than once.',
@@ -1593,6 +1596,17 @@ if (existingPayment) {
           ],
           { session },
         );
+
+        for (const line of creditLines) {
+          const serialNumbers = line.serialNumbers || [];
+          if (!serialNumbers.length) continue;
+          const updatedSerials = await this.connection.db!.collection('inventory_serials').updateMany(
+            { tenantId: new Types.ObjectId(tenantId), productId: line.productId, saleInvoiceId: invoice._id, serialNumber: { $in: serialNumbers }, status: 'SOLD' },
+            { $set: { status: line.restocked ? 'IN_STOCK' : 'RETURNED' } },
+            { session },
+          );
+          if (updatedSerials.modifiedCount !== serialNumbers.length) throw new ConflictException('Serial status changed while processing this return; please retry');
+        }
 
         // Reverse earned loyalty points proportionally to cumulative taxable returns.
         // Already-spent points are not driven negative; the actual deduction is auditable.

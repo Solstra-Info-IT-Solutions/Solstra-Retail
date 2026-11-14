@@ -223,7 +223,7 @@ export class SalesService {
       customerPhone: dto.customerPhone ?? '',
       customerGstin: dto.customerGstin ?? null,
       placeOfSupplyStateCode: dto.placeOfSupplyStateCode,
-      warehouseId: dto.warehouseId ?? null,
+      ...(dto.warehouseId ? { warehouseId: dto.warehouseId } : {}),
       payments: (dto.payments ?? []).map((payment) => ({
         method: payment.method,
         amountPaise: this.toPaise(payment.amount),

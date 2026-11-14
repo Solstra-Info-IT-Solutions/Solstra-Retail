@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, Injectable, TooManyRequestsException } from '@nestjs/common';
+import { CanActivate, ExecutionContext, HttpException, HttpStatus, Injectable } from '@nestjs/common';
 
 type Bucket = { count: number; resetAt: number };
 
@@ -27,7 +27,7 @@ export class ApiRateLimitGuard implements CanActivate {
         if (value.resetAt <= now) this.buckets.delete(bucketKey);
       }
       if (this.buckets.size >= 20_000) {
-        throw new TooManyRequestsException('API rate-limit capacity is temporarily exhausted. Retry shortly.');
+        throw new HttpException('API rate-limit capacity is temporarily exhausted. Retry shortly.', HttpStatus.TOO_MANY_REQUESTS);
       }
     }
 
@@ -43,7 +43,7 @@ export class ApiRateLimitGuard implements CanActivate {
     response.setHeader('X-RateLimit-Reset', String(Math.ceil(bucket.resetAt / 1000)));
     if (bucket.count > limit) {
       response.setHeader('Retry-After', String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))));
-      throw new TooManyRequestsException('Request rate limit exceeded. Retry after the indicated interval.');
+      throw new HttpException('Request rate limit exceeded. Retry after the indicated interval.', HttpStatus.TOO_MANY_REQUESTS);
     }
     return true;
   }

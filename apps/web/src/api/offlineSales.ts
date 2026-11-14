@@ -9,13 +9,15 @@ export type QueuedOfflineSale = {
 
 const DB_NAME = 'solstra-retail-offline';
 const STORE = 'sales';
+const PRODUCT_STORE = 'products';
 
 function database(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
+    const request = indexedDB.open(DB_NAME, 2);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'idempotencyKey' });
+      if (!db.objectStoreNames.contains(PRODUCT_STORE)) db.createObjectStore(PRODUCT_STORE, { keyPath: '_id' });
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error('Offline storage unavailable'));
@@ -69,4 +71,27 @@ export async function syncQueuedOfflineSales() {
   db.close();
   const remaining = await listQueuedOfflineSales();
   return { synced: results.filter(row => row.status === 'SUCCEEDED').length, pending: remaining.length };
+}
+
+export async function cacheOfflineProducts(products: Array<Record<string, unknown>>) {
+  const db = await database();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(PRODUCT_STORE, 'readwrite');
+    const store = tx.objectStore(PRODUCT_STORE);
+    for (const product of products) store.put(product);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error('Could not cache product catalogue'));
+  });
+  db.close();
+}
+
+export async function getOfflineProducts<T>(): Promise<T[]> {
+  const db = await database();
+  const rows = await new Promise<T[]>((resolve, reject) => {
+    const request = db.transaction(PRODUCT_STORE, 'readonly').objectStore(PRODUCT_STORE).getAll();
+    request.onsuccess = () => resolve(request.result as T[]);
+    request.onerror = () => reject(request.error || new Error('Could not read cached product catalogue'));
+  });
+  db.close();
+  return rows;
 }

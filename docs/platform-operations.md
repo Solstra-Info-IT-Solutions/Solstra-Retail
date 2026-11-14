@@ -168,3 +168,32 @@ The Advanced Inventory workspace exposes batch receipts and expiry lists, serial
 
 - Platform Operations now exposes manual off-site replication for stored tenant backup artifacts and displays the append-only replication event history alongside restore-drill results.
 - A successful event requires the configured receiver to acknowledge durable storage with the exact checksum and tenant ID. A local restore drill validates the stored archive but does not restore it into a separate live database.
+
+
+## External connector operations
+
+- Webhook endpoints now support owner/admin signing-secret rotation, tenant-scoped delivery history and manual retry of FAILED/DEAD deliveries.
+- Secret rotation returns the new secret once and invalidates the previous signing secret immediately. Coordinate receiver-side secret replacement before processing additional deliveries.
+- Delivery history omits payload bodies; it reports status, event identity, attempt count and last error. Manual retry resets the attempt counter and re-enters the normal signed delivery worker.
+- Existing outbound webhook contracts remain generic HTTPS + HMAC-SHA256. Vendor-specific OAuth, accounting ledger mapping, marketplace catalog sync and payment gateway certification are not implied by registering a webhook.
+
+## Historical migration exports
+
+- Owner/admin endpoint: `GET /api/v1/reports/migration/export?entity=customers&limit=500&cursor=<ObjectId>`.
+- Supported entities: `customers`, `suppliers`, `products`, `sales` (issued invoices), `purchases` (non-cancelled) and `journals`.
+- Exports are tenant-scoped, ordered by MongoDB ObjectId and cursor-paginated, with a maximum page size of 500.
+- Reports workspace can download up to 20,000 records per JSON export. For larger workspaces, continue with the returned API cursor in separate controlled batches.
+- Export is read-only. It does not import legacy payments, restore inventory movements, reconstruct old tax submissions or create opening balances. Reconcile source ledgers and use the audited opening-balance workflow for cutover.
+
+## Offline POS device registration
+
+- Browser POS stores a UUID device identity per authenticated tenant/user scope and registers it through `POST /api/v1/platform/offline/devices/register`.
+- `POST /api/v1/platform/offline/sync` accepts the device ID and updates last-seen only for an active device belonging to the authenticated tenant and user.
+- `GET /api/v1/platform/offline/devices` lists the current user's registered devices. Owner/admin can revoke a device using `POST /api/v1/platform/offline/devices/:deviceId/revoke`.
+- A revoked identity cannot self-reactivate. Clear the local device identity and enroll a new device identity after an administrator has verified the device. Pending invoices from revoked devices require manual reconciliation before they are re-entered under another device.
+- Legacy clients that omit deviceId remain accepted for compatibility; updated browser clients always include it.
+
+## Enterprise security posture
+
+- Owner/admin endpoint `GET /api/v1/platform/operations/security-posture` checks database connectivity/replica-set detection and presence of encryption, JWT, backup receiver, GST GSP and payment webhook configuration.
+- The dashboard reports configuration presence only. It is not a penetration test, key-strength/rotation audit, external provider connectivity test or compliance certification.

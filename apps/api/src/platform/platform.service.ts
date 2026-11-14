@@ -1245,7 +1245,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     if (!restoreUri) return { status: 'NOT_CONFIGURED', message: 'Set DR_RESTORE_MONGO_URI to a separately managed MongoDB deployment to run an isolated restore rehearsal.' };
     let restoreHost = '';
     let productionHost = '';
-    try { restoreHost = new URL(restoreUri).host.toLowerCase(); productionHost = productionUri ? new URL(productionUri).host.toLowerCase() : ''; }
+    try { restoreHost = new URL(restoreUri).hostname.toLowerCase(); productionHost = productionUri ? new URL(productionUri).hostname.toLowerCase() : ''; }
     catch { throw new BadRequestException('Disaster-recovery restore URI is invalid'); }
     if (!restoreHost || (productionHost && restoreHost === productionHost)) {
       throw new BadRequestException('DR_RESTORE_MONGO_URI must target a separate MongoDB host from the production database');

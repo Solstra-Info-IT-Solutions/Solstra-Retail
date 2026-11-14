@@ -162,6 +162,26 @@ describe('PlatformService security boundaries', () => {
     expect(service.sales.createSale).not.toHaveBeenCalled();
   });
 
+  it('records a failed offline batch as terminal and replays its result exactly', async () => {
+    const service: any = createService();
+    const { createHash } = require('crypto');
+    const operations = [{ type: 'SALE', idempotencyKey: 'offline-key-456', payload: { idempotencyKey: 'offline-key-456' } }];
+    const hash = createHash('sha256').update(JSON.stringify(operations)).digest('hex');
+    const device = {
+      _id: '507f1f77bcf86cd799439088', lastSyncSequence: 4,
+      lastSyncPayloadSha256: hash, lastSyncStatus: 'FAILED',
+      lastSyncResult: { accepted: 1, batchStatus: 'FAILED', results: [{ idempotencyKey: 'offline-key-456', status: 'FAILED' }] },
+    };
+    service.offlineDevices = { findOneAndUpdate: jest.fn(() => ({ lean: async () => device })) };
+    service.syncRecords = { findOne: jest.fn() };
+    const replay = await service.syncOfflineSales(tenantId, userId, {
+      deviceId: 'b5f6a4c2-1d4e-4b2a-9f0c-123456789abc', batchSequence: 4, operations,
+    } as any);
+    expect(replay.batchStatus).toBe('FAILED');
+    expect(replay.replayed).toBe(true);
+    expect(service.syncRecords.findOne).not.toHaveBeenCalled();
+  });
+
   it('lists offline sync history within tenant and restricts staff to their own records', async () => {
     const service: any = createService();
     const rows = [{ idempotencyKey: 'offline-key-123', status: 'FAILED', createdBy: userId }];

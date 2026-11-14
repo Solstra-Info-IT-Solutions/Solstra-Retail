@@ -2,6 +2,7 @@ import { api } from './client';
 
 export type QueuedOfflineSale = {
   idempotencyKey: string;
+  queueId: string;
   scope: string;
   payload: Record<string, unknown>;
   createdAt: string;
@@ -9,16 +10,42 @@ export type QueuedOfflineSale = {
 };
 
 const DB_NAME = 'solstra-retail-offline';
-const STORE = 'sales';
-const PRODUCT_STORE = 'products';
+const STORE = 'sales_v3';
+const PRODUCT_STORE = 'products_v3';
 
 function database(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 2);
+    const request = indexedDB.open(DB_NAME, 3);
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'idempotencyKey' });
-      if (!db.objectStoreNames.contains(PRODUCT_STORE)) db.createObjectStore(PRODUCT_STORE, { keyPath: '_id' });
+      const tx = request.transaction;
+      if (!db.objectStoreNames.contains(STORE)) {
+        const sales = db.createObjectStore(STORE, { keyPath: 'queueId' });
+        if (db.objectStoreNames.contains('sales')) {
+          const cursorRequest = tx!.objectStore('sales').openCursor();
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result;
+            if (!cursor) return;
+            const row = cursor.value as QueuedOfflineSale;
+            sales.put({ ...row, queueId: `${row.scope}::${row.idempotencyKey}` });
+            cursor.continue();
+          };
+        }
+      }
+      if (!db.objectStoreNames.contains(PRODUCT_STORE)) {
+        const products = db.createObjectStore(PRODUCT_STORE, { keyPath: 'cacheKey' });
+        if (db.objectStoreNames.contains('products')) {
+          const cursorRequest = tx!.objectStore('products').openCursor();
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result;
+            if (!cursor) return;
+            const row = cursor.value as Record<string, unknown>;
+            const scope = String(row.scope || '');
+            if (scope && row._id) products.put({ ...row, cacheKey: `${scope}::${String(row._id)}` });
+            cursor.continue();
+          };
+        }
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error('Offline storage unavailable'));
@@ -32,7 +59,7 @@ export async function queueOfflineSale(payload: Record<string, unknown>, scope: 
   const db = await database();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).put({ idempotencyKey, scope, payload, createdAt: new Date().toISOString() } satisfies QueuedOfflineSale);
+    tx.objectStore(STORE).put({ idempotencyKey, queueId: `${scope}::${idempotencyKey}`, scope, payload, createdAt: new Date().toISOString(), attempts: 0 } satisfies QueuedOfflineSale);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error || new Error('Could not save offline invoice'));
   });
@@ -67,8 +94,8 @@ export async function syncQueuedOfflineSales(scope: string) {
       for (const result of results) {
         const item = batch.find(row => row.idempotencyKey === result.idempotencyKey);
         if (!item) continue;
-        if (result.status === 'SUCCEEDED') store.delete(result.idempotencyKey);
-        else if (result.status === 'FAILED') store.put({ ...item, lastError: result.error || 'Sync failed' });
+        if (result.status === 'SUCCEEDED') store.delete(item.queueId);
+        else if (result.status === 'FAILED') store.put({ ...item, attempts: Number((item as any).attempts || 0) + 1, lastError: result.error || 'Sync failed', lastAttemptAt: new Date().toISOString() });
       }
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error || new Error('Could not update offline queue'));
@@ -88,7 +115,7 @@ export async function cacheOfflineProducts(products: Array<Record<string, unknow
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(PRODUCT_STORE, 'readwrite');
     const store = tx.objectStore(PRODUCT_STORE);
-    for (const product of products) store.put({ ...product, scope });
+    for (const product of products) store.put({ ...product, scope, cacheKey: `${scope}::${String(product._id)}`, cachedAt: new Date().toISOString() });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error || new Error('Could not cache product catalogue'));
   });

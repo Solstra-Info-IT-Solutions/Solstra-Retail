@@ -331,7 +331,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
   async retryWebhookDelivery(tenantId: string, id: string) {
     this.identity(tenantId);
     if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid delivery ID');
-    const row = await this.deliveries.findOneAndUpdate(
+    const row: any = await this.deliveries.findOneAndUpdate(
       tenantFilter(tenantId, { _id: new Types.ObjectId(id), status: { $in: ['FAILED', 'DEAD'] } }),
       { $set: { status: 'PENDING', attempts: 0, lastError: '', nextAttemptAt: new Date() } },
       { new: true },
@@ -433,7 +433,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
 
   async revokeOfflineDevice(tenantId: string, deviceId: string) {
     this.identity(tenantId);
-    const row = await this.offlineDevices.findOneAndUpdate(
+    const row: any = await this.offlineDevices.findOneAndUpdate(
       tenantFilter(tenantId, { deviceId, revokedAt: null }),
       { $set: { revokedAt: new Date() } }, { new: true },
     ).select('deviceId label revokedAt').lean();

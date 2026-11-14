@@ -239,6 +239,12 @@ export class PlatformController {
   }
 
   @Roles('owner', 'admin')
+  @Get('operations/security-posture')
+  securityPosture(@Req() req: AuthenticatedRequest) {
+    return this.platform.platformSecurityPosture(req.user.tenantId);
+  }
+
+  @Roles('owner', 'admin')
   @Get('operations/metrics')
   operationsMetrics(@Req() req: AuthenticatedRequest) {
     return this.platform.operationsMetrics(req.user.tenantId);

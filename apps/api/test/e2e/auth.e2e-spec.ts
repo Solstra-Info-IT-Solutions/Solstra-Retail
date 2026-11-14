@@ -809,6 +809,12 @@ describe('Authentication HTTP E2E', () => {
     expect(updatedProduct?.stockQty).toBe(2);
     expect(updatedProduct?.inventoryValue).toBe(200);
     expect(updatedProduct?.averageCost).toBe(100);
+    expect(await movements.countDocuments({
+      tenantId: new Types.ObjectId(registration.body.tenant.id),
+      productId: new Types.ObjectId(product.body._id),
+      type: 'IN',
+      quantityDelta: 2,
+    })).toBe(1);
 
     const purchasePaymentPayload = {
       idempotencyKey: randomUUID(),
@@ -852,6 +858,11 @@ describe('Authentication HTTP E2E', () => {
       .set(headers);
 
     expect(supplierLedger.status).toBe(200);
+    expect(supplierLedger.body.summary).toEqual(expect.objectContaining({
+      purchaseTotal: 236,
+      paidTotal: 100,
+      outstanding: 136,
+    }));
     expect(supplierLedger.body.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -884,6 +895,8 @@ describe('Authentication HTTP E2E', () => {
       .set(headers);
 
     expect(trialBalance.status).toBe(200);
+    expect(trialBalance.body.balanced).toBe(true);
+    expect(trialBalance.body.totals.difference).toBe(0);
 
     const persistedPurchase = await purchases.findById(purchase.body._id).lean();
     expect(persistedPurchase?.paidAmount).toBe(100);

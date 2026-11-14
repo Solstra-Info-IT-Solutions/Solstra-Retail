@@ -49,6 +49,12 @@ export class SalesController {
     );
   }
 
+  @Permissions('sales.create')
+  @Get('available-serials')
+  listAvailableSerials(@Req() req: AuthenticatedRequest, @Query('warehouseId') warehouseId: string, @Query('productId') productId?: string) {
+    return this.salesService.listAvailableSerials(req.user.tenantId, warehouseId, productId);
+  }
+
   @Permissions('sales.view')
   @Get()
   findAll(

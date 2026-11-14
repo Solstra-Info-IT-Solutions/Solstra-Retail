@@ -129,8 +129,8 @@ export class PlatformController {
 
   @Roles('owner', 'admin')
   @Patch('communications/providers/:id')
-  updateCommunicationProvider(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body('enabled') enabled: boolean) {
-    return this.platform.updateCommunicationProvider(req.user.tenantId, id, enabled);
+  updateCommunicationProvider(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: UpdateWebhookDto) {
+    return this.platform.updateCommunicationProvider(req.user.tenantId, id, dto.enabled);
   }
 
   @Roles('owner', 'admin')

@@ -19,6 +19,7 @@ import { AddSalePaymentDto } from './dto/add-sale-payment.dto';
 import { CreateCreditNoteDto } from './dto/create-credit-note.dto';
 import { AddCreditNoteRefundDto } from './dto/add-credit-note-refund.dto';
 import { CreatePromotionDto } from './dto/create-promotion.dto';
+import { CreatePriceRuleDto } from './dto/create-price-rule.dto';
 import { UpdatePromotionStatusDto } from './dto/update-promotion-status.dto';
 import { CreateWarrantyClaimDto, ReviewWarrantyClaimDto } from './dto/warranty-claim.dto';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -103,6 +104,24 @@ export class SalesController {
       dto,
     );
   }
+  @Roles('owner', 'admin')
+  @Post('price-rules')
+  createPriceRule(@Req() req: AuthenticatedRequest, @Body() dto: CreatePriceRuleDto) {
+    return this.salesService.createPriceRule(req.user.tenantId, req.user.userId, dto);
+  }
+
+  @Permissions('sales.view')
+  @Get('price-rules')
+  listPriceRules(@Req() req: AuthenticatedRequest) {
+    return this.salesService.listPriceRules(req.user.tenantId);
+  }
+
+  @Roles('owner', 'admin')
+  @Patch('price-rules/:id/status')
+  updatePriceRuleStatus(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: UpdatePromotionStatusDto) {
+    return this.salesService.updatePriceRuleStatus(req.user.tenantId, id, dto.status);
+  }
+
   @Roles('owner', 'admin')
   @Post('promotions')
   createPromotion(@Req() req: AuthenticatedRequest, @Body() dto: CreatePromotionDto) {

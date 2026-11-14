@@ -164,6 +164,9 @@ export class CommunicationDelivery {
   @Prop({ type: Number, default: 0 }) attempts!: number;
   @Prop({ type: Date, default: Date.now, index: true }) nextAttemptAt!: Date;
   @Prop({ type: String, default: '', maxlength: 500 }) lastError!: string;
+  @Prop({ type: String, default: '', maxlength: 160, index: true }) providerMessageId!: string;
+  @Prop({ type: Date, default: null }) deliveredAt?: Date | null;
+  @Prop({ type: Date, default: null }) failedAt?: Date | null;
   @Prop({ type: Types.ObjectId, ref: 'User', required: true }) requestedBy!: Types.ObjectId;
 }
 export type CommunicationDeliveryDocument = HydratedDocument<CommunicationDelivery>;
@@ -204,3 +207,19 @@ export class BackupReplicationEvent {
 export type BackupReplicationEventDocument = HydratedDocument<BackupReplicationEvent>;
 export const BackupReplicationEventSchema = SchemaFactory.createForClass(BackupReplicationEvent);
 BackupReplicationEventSchema.index({ tenantId: 1, artifactId: 1, createdAt: -1 });
+
+
+@Schema({ timestamps: true, collection: 'backup_restore_drills', versionKey: false })
+export class BackupRestoreDrill {
+  @Prop(tenantRef) tenantId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'BackupArtifact', required: true, index: true }) artifactId!: Types.ObjectId;
+  @Prop({ type: String, required: true, enum: ['PASSED', 'FAILED'], index: true }) status!: string;
+  @Prop({ type: String, default: '', maxlength: 500 }) message!: string;
+  @Prop({ type: Number, default: 0 }) collectionCount!: number;
+  @Prop({ type: Number, default: 0 }) documentCount!: number;
+  @Prop({ type: String, required: true, maxlength: 64 }) checksumSha256!: string;
+  @Prop({ type: Date, default: Date.now }) testedAt!: Date;
+}
+export type BackupRestoreDrillDocument = HydratedDocument<BackupRestoreDrill>;
+export const BackupRestoreDrillSchema = SchemaFactory.createForClass(BackupRestoreDrill);
+BackupRestoreDrillSchema.index({ tenantId: 1, artifactId: 1, createdAt: -1 });

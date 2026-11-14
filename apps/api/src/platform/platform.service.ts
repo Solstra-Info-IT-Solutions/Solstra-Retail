@@ -1,10 +1,11 @@
 import {
   BadRequestException, ConflictException, ForbiddenException, Injectable,
-  NotFoundException, ServiceUnavailableException,
+  NotFoundException, ServiceUnavailableException, OnModuleInit, OnModuleDestroy,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
+import { GridFSBucket } from 'mongodb';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'crypto';
 import { gzipSync, gunzipSync } from 'zlib';
 import { lookup } from 'dns/promises';
@@ -19,7 +20,7 @@ import { User } from '../auth/schemas/user.schema';
 import { Product } from '../products/schemas/product.schema';
 import { WarehouseStock } from '../inventory/schemas/warehouse-stock.schema';
 import {
-  AutomationRule, BackupPolicy, OfflineSyncRecord, PlatformNotification,
+  AutomationRule, BackupArtifact, BackupPolicy, OfflineSyncRecord, PlatformNotification,
   WebhookDelivery, WebhookIntegration,
 } from './schemas/platform.schema';
 import {
@@ -32,11 +33,21 @@ const EVENT_TYPES = ['MANUAL', 'SALE_CREATED', 'LOW_STOCK', 'EXPENSE_PENDING_APP
 const MAX_BACKUP_DOCUMENTS = 100000;
 const EXCLUDED_BACKUP_COLLECTIONS = new Set([
   'automation_rules', 'platform_notifications', 'webhook_integrations',
-  'webhook_deliveries', 'offline_sync_records', 'backup_policies',
+  'webhook_deliveries', 'offline_sync_records', 'backup_policies', 'backup_artifacts',
 ]);
 
 @Injectable()
-export class PlatformService {
+export class PlatformService implements OnModuleInit, OnModuleDestroy {
+  private backupTimer?: NodeJS.Timeout;
+
+  onModuleInit() {
+    this.backupTimer = setInterval(() => { void this.runScheduledBackupJobs().catch(() => undefined); }, 60_000);
+    void this.runScheduledBackupJobs().catch(() => undefined);
+  }
+
+  onModuleDestroy() {
+    if (this.backupTimer) clearInterval(this.backupTimer);
+  }
   constructor(
     @InjectConnection() private readonly connection: Connection,
     @InjectModel(AutomationRule.name) private readonly rules: Model<any>,
@@ -45,6 +56,7 @@ export class PlatformService {
     @InjectModel(WebhookDelivery.name) private readonly deliveries: Model<any>,
     @InjectModel(OfflineSyncRecord.name) private readonly syncRecords: Model<any>,
     @InjectModel(BackupPolicy.name) private readonly backupPolicies: Model<any>,
+    @InjectModel(BackupArtifact.name) private readonly backupArtifacts: Model<any>,
     @InjectModel(Tenant.name) private readonly tenants: Model<any>,
     @InjectModel(User.name) private readonly users: Model<any>,
     @InjectModel(Product.name) private readonly products: Model<any>,
@@ -357,6 +369,85 @@ export class PlatformService {
     const checksum = createHash('sha256').update(compressed).digest('hex');
     await this.backupPolicies.updateOne(tenantFilter(tenantId, {}), { $set: { lastRunAt: new Date(), lastStatus: 'EXPORTED' } }, { upsert: true });
     return { fileName: `solstra-retail-backup-${new Date().toISOString().slice(0, 10)}.json.gz`, contentType: 'application/gzip', checksumSha256: checksum, documentCount: count, compressedBytes: compressed.length, archiveBase64: compressed.toString('base64'), note: 'Download and store this encrypted-at-rest database export in a separate cloud account or offline vault. This API does not retain a second copy in the same MongoDB cluster.' };
+  }
+
+  private gridFsBucket() {
+    if (!this.connection.db) throw new ServiceUnavailableException('Database connection is unavailable');
+    return new GridFSBucket(this.connection.db, { bucketName: 'solstra_tenant_backups' });
+  }
+
+  private async storeBackupArtifact(tenantId: string, archive: any, retentionDays: number) {
+    const bytes = Buffer.from(archive.archiveBase64, 'base64');
+    const bucket = this.gridFsBucket();
+    const gridFsId = await new Promise<Types.ObjectId>((resolve, reject) => {
+      const stream = bucket.openUploadStream(archive.fileName, { metadata: { tenantId, checksumSha256: archive.checksumSha256 } });
+      stream.once('finish', () => resolve(stream.id as Types.ObjectId));
+      stream.once('error', reject);
+      stream.end(bytes);
+    });
+    const expiresAt = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000);
+    const [artifact] = await this.backupArtifacts.create([{
+      tenantId: new Types.ObjectId(tenantId), gridFsId, fileName: archive.fileName,
+      checksumSha256: archive.checksumSha256, documentCount: archive.documentCount,
+      compressedBytes: archive.compressedBytes, expiresAt,
+    }]);
+    return artifact;
+  }
+
+  async listBackupArtifacts(tenantId: string) {
+    this.identity(tenantId);
+    return this.backupArtifacts.find(tenantFilter(tenantId, { expiresAt: { $gt: new Date() } }))
+      .select('-gridFsId').sort({ createdAt: -1 }).limit(50).lean();
+  }
+
+  async downloadBackupArtifact(tenantId: string, id: string) {
+    this.identity(tenantId);
+    if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid backup ID');
+    const artifact = await this.backupArtifacts.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(id), expiresAt: { $gt: new Date() } })).lean();
+    if (!artifact) throw new NotFoundException('Backup artifact not found or expired');
+    const bucket = this.gridFsBucket();
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      const stream = bucket.openDownloadStream(artifact.gridFsId);
+      stream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      stream.once('end', resolve);
+      stream.once('error', reject);
+    });
+    const bytes = Buffer.concat(chunks);
+    const checksum = createHash('sha256').update(bytes).digest('hex');
+    if (checksum !== artifact.checksumSha256) throw new ConflictException('Stored backup checksum verification failed');
+    return { fileName: artifact.fileName, checksumSha256: checksum, archiveBase64: bytes.toString('base64') };
+  }
+
+  async runScheduledBackupJobs() {
+    if (!this.connection.db) return { processed: 0 };
+    const due = await this.backupPolicies.find({ enabled: true, nextRunAt: { $lte: new Date() } }).limit(10).lean();
+    let processed = 0;
+    for (const policy of due) {
+      const nextRunAt = this.nextBackupDate(policy.frequency);
+      const claimed = await this.backupPolicies.findOneAndUpdate(
+        { _id: policy._id, tenantId: policy.tenantId, enabled: true, nextRunAt: { $lte: new Date() } },
+        { $set: { nextRunAt, lastStatus: 'RUNNING' } },
+        { new: true },
+      ).lean();
+      if (!claimed) continue;
+      const tenantId = String(policy.tenantId);
+      try {
+        const archive = await this.exportTenantBackup(tenantId);
+        await this.storeBackupArtifact(tenantId, archive, Number(policy.retentionDays || 30));
+        await this.backupPolicies.updateOne({ _id: policy._id, tenantId: policy.tenantId }, { $set: { lastRunAt: new Date(), lastStatus: 'STORED_IN_CLUSTER' } });
+        processed += 1;
+      } catch (error: any) {
+        await this.backupPolicies.updateOne({ _id: policy._id, tenantId: policy.tenantId }, { $set: { lastStatus: 'FAILED', nextRunAt: new Date(Date.now() + 15 * 60 * 1000) } });
+      }
+    }
+    const expired = await this.backupArtifacts.find({ expiresAt: { $lte: new Date() } }).limit(100).lean();
+    const bucket = this.gridFsBucket();
+    for (const artifact of expired) {
+      try { await bucket.delete(artifact.gridFsId); } catch { /* A missing GridFS file is already effectively expired. */ }
+      await this.backupArtifacts.deleteOne({ _id: artifact._id });
+    }
+    return { processed, expiredRemoved: expired.length };
   }
 
   async verifyBackup(tenantId: string, dto: VerifyBackupDto) {

@@ -219,9 +219,9 @@ The Advanced Inventory workspace exposes batch receipts and expiry lists, serial
 
 ## API request rate limiting
 
-- The API applies a process-local fixed-window rate limit before authentication: 10 requests per 15 minutes per client IP for login/register/refresh routes, and 300 requests per minute per client IP for other HTTP methods. Health checks are excluded.
+- The API uses atomic fixed-window counters in shared MongoDB: 10 authentication requests per 15 minutes per client IP and 300 general requests per minute per client IP. Health checks are excluded.
 - Responses expose `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` and `Retry-After` headers.
-- This in-memory limiter protects a single API process. Multi-instance deployments must add a shared Redis/API-gateway limiter and configure trusted proxy handling at the ingress; this guard is not a distributed quota or DDoS mitigation service.
+- This is a shared application-level quota, not a DDoS mitigation service. Configure trusted proxy handling at ingress and use an edge WAF/API gateway for volumetric attacks.
 
 
 ## Controlled historical master-data import
@@ -295,3 +295,18 @@ The Advanced Inventory workspace exposes batch receipts and expiry lists, serial
 - A sale that conflicts with current stock is rejected and remains available for operator review; device sequence replay and per-invoice idempotency prevent duplicate creation. Do not automatically retry a stock-conflicted invoice with a new idempotency key.
 - This release does not reserve inventory for disconnected devices or provide an automatic conflict-resolution UI for choosing substitute warehouse/quantities. Until a reservation/merge workflow is deployed, use one active offline-selling device per warehouse or keep high-risk stock-controlled sales online.
 
+
+
+## Historical transaction archive import and control-total reconciliation
+
+- Owner/admin endpoints: `POST /api/v1/reports/migration/historical/preview`, `POST /api/v1/reports/migration/historical/commit`, `GET /api/v1/reports/migration/historical/runs?page=1`, and `GET /api/v1/reports/migration/historical/reconciliation/:runKey`.
+- Supports SALES and PURCHASES source document headers in batches of 1–200. Each row requires a unique source ID, source document number, valid source date and non-negative total; taxable/tax amounts are stored in integer paise. Only INR is accepted.
+- Preview detects duplicate source IDs within the batch and previously imported source records. Optional expected document count and expected total amount are checked before commit.
+- A tenant/source-system/entity/source-ID unique index protects retries. Run keys are bound to SHA-256 payload fingerprints. Exact retries of completed runs replay the result; incomplete runs can resume missing records.
+- Imported rows are sanitized archive metadata for migration evidence and reconciliation. They are **not** native operational invoices or purchases and do not post stock, customer/supplier balances, payments, GST submissions or journals. Reconcile the archive against source control totals, then use approved opening stock/balance workflows and accountant sign-off for cutover. Full native transaction reconstruction remains a separate controlled migration project.
+
+## Scheduled recurring expense execution
+
+- The platform worker now discovers due recurring-expense schedules across tenants and invokes the existing idempotent per-tenant runner automatically.
+- Generated expenses, their accounting journals and schedule advancement remain in a MongoDB transaction. The worker caps processing at 50 due schedules per tenant invocation and 100 tenants per worker cycle; remaining due schedules are picked up by subsequent cycles.
+- Journal attribution uses the schedule creator rather than a synthetic system user. Configure the API worker to remain available and monitor recurring expense generation through expense records and accounting journals.

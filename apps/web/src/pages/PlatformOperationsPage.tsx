@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Activity, Bell, Bot, CloudDownload, PlugZap, RefreshCw, ShieldCheck, Wifi, Workflow } from 'lucide-react';
 import { api } from '../api/client';
+import { useAuth } from '../auth/AuthContext';
 import { listQueuedOfflineSales } from '../api/offlineSales';
 import './PlatformOperationsPage.css';
 
@@ -15,6 +16,8 @@ const events = ['MANUAL','SALE_CREATED','LOW_STOCK','EXPENSE_PENDING_APPROVAL'];
 const eventLabel = (value:string) => value.replace(/_/g,' ').toLowerCase().replace(/^./,v=>v.toUpperCase());
 const makeEventKey = () => { const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join(''); };
 export default function PlatformOperationsPage() {
+  const { user } = useAuth();
+  const offlineScope = user?.tenantId && user?.id ? user.tenantId + ':' + user.id : '';
   const [rules,setRules]=useState<Rule[]>([]),[notices,setNotices]=useState<Notice[]>([]),[hooks,setHooks]=useState<Hook[]>([]);
   const [policy,setPolicy]=useState<Policy>({enabled:false,frequency:'DAILY',retentionDays:30});
   const [valuation,setValuation]=useState<Valuation|null>(null),[pendingOffline,setPendingOffline]=useState(0),[backups,setBackups]=useState<Backup[]>([]),[saasTenants,setSaasTenants]=useState<SaaSTenant[]>([]),[saasAudit,setSaasAudit]=useState<any[]>([]),[saasUsage,setSaasUsage]=useState<any|null>(null);
@@ -31,7 +34,7 @@ export default function PlatformOperationsPage() {
         api.get<Hook[]>('/platform/integrations/webhooks'),
         api.get<Policy>('/platform/backups/policy'),
         api.get<Valuation>('/platform/inventory/valuation-reconciliation'),
-        listQueuedOfflineSales(),
+        listQueuedOfflineSales(offlineScope),
         api.get<Backup[]>('/platform/backups'),
       ]);
       setRules(r.data);setNotices(n.data.items||[]);setHooks(h.data);setPolicy(p.data);setValuation(v.data);setPendingOffline(q.length);setBackups(bk.data||[]);

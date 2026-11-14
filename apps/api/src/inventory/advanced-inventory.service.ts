@@ -164,8 +164,11 @@ export class AdvancedInventoryService {
             const unitCost = stock?.averageCost ?? product.averageCost ?? 0;
             if (stock) { stock.quantity = line.countedQty; stock.inventoryValue = Math.round(line.countedQty * unitCost * 100) / 100; await stock.save({ session }); }
             else await this.warehouseStocks.create([{ tenantId: take.tenantId, warehouseId: take.warehouseId, productId: line.productId, quantity: line.countedQty, averageCost: unitCost, inventoryValue: Math.round(line.countedQty * unitCost * 100) / 100 }], { session });
-            product.stockQty = Math.max(0, (product.stockQty || 0) + delta);
-            product.inventoryValue = Math.max(0, Math.round(((product.inventoryValue || 0) + delta * unitCost) * 100) / 100);
+            const nextGlobalQty = (product.stockQty || 0) + delta;
+            const nextGlobalValuePaise = Math.round(((product.inventoryValue || 0) + delta * unitCost) * 100);
+            if (nextGlobalQty < 0 || nextGlobalValuePaise < 0) throw new ConflictException('Stocktake would create negative aggregate stock or valuation; reconcile warehouse allocations first');
+            product.stockQty = nextGlobalQty;
+            product.inventoryValue = nextGlobalValuePaise / 100;
             if (product.stockQty === 0) product.inventoryValue = 0;
             else product.averageCost = product.inventoryValue / product.stockQty;
             await product.save({ session });

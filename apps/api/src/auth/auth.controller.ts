@@ -49,7 +49,7 @@ export class AuthController {
     @Param('id') id: string,
     @Body() dto: UpdateUserPermissionsDto,
   ) {
-    return this.auth.updateUserPermissions(req.user.tenantId, id, dto);
+    return this.auth.updateUserPermissions(req.user.tenantId, req.user.userId, id, dto);
   }
 
   @SkipTrial()

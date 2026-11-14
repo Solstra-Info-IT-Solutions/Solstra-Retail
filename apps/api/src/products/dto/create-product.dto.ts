@@ -9,6 +9,7 @@ import {
   IsString,
   Length,
   MaxLength,
+  Max,
   Min,
 } from 'class-validator';
 

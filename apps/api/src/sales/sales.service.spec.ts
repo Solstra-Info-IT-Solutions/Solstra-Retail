@@ -10,7 +10,7 @@ describe('SalesService createSale idempotency', () => {
 
   const createDto = () => ({
     idempotencyKey: '550e8400-e29b-41d4-a716-446655440000',
-    items: [{ productId, quantity: 2, discountAmount: 0, serialNumbers: [] }],
+    items: [{ productId, quantity: 2, discountAmount: 0, serialNumbers: [] as string[] }],
     customerName: 'Test Customer',
     customerPhone: '9876543210',
     placeOfSupplyStateCode: '09',

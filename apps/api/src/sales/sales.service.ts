@@ -307,6 +307,7 @@ export class SalesService {
         productId: item.productId,
         quantity: item.quantity,
         discountAmount: item.discountAmount ?? 0,
+        serialNumbers: [...(item.serialNumbers || [])].map(value => value.trim().toUpperCase()).sort(),
       })),
       customerId: dto.customerId ?? null,
       customerName: dto.customerName ?? '',
@@ -444,6 +445,22 @@ export class SalesService {
             id,
             (requestedQuantities.get(id) || 0) + item.quantity,
           );
+        }
+
+        const allSerialNumbers = dto.items.flatMap(item => item.serialNumbers || []).map(value => value.trim().toUpperCase());
+        if (new Set(allSerialNumbers).size !== allSerialNumbers.length) throw new BadRequestException('A serial number can be assigned only once per invoice');
+        const serialCollection = this.connection.db?.collection('inventory_serials');
+        for (const item of dto.items) {
+          const serialNumbers = (item.serialNumbers || []).map(value => value.trim().toUpperCase());
+          if (!serialNumbers.length) continue;
+          if (!dto.warehouseId) throw new BadRequestException('Select a warehouse when selling serialized products');
+          if (serialNumbers.length !== item.quantity) throw new BadRequestException('The number of selected serials must equal the invoice line quantity');
+          if (!serialCollection) throw new ConflictException('Serial registry is unavailable');
+          const registered = await serialCollection.find({
+            tenantId: new Types.ObjectId(tenantId), productId: new Types.ObjectId(item.productId),
+            warehouseId: new Types.ObjectId(dto.warehouseId), serialNumber: { $in: serialNumbers }, status: 'IN_STOCK',
+          }).session(session).toArray();
+          if (registered.length !== serialNumbers.length) throw new ConflictException('One or more serials are not available for this product in the selected warehouse');
         }
 
         for (const productId of requestedQuantities.keys()) {
@@ -646,6 +663,7 @@ export class SalesService {
             igstAmount: this.fromPaise(igstPaise),
             totalTax: this.fromPaise(taxPaise),
             lineTotal: this.fromPaise(lineTotalPaise),
+            serialNumbers: (item.serialNumbers || []).map(value => value.trim().toUpperCase()),
           });
         }
 
@@ -824,6 +842,16 @@ export class SalesService {
         });
 
         await invoice.save({ session });
+        for (const item of dto.items) {
+          const serialNumbers = (item.serialNumbers || []).map(value => value.trim().toUpperCase());
+          if (!serialNumbers.length) continue;
+          const updatedSerials = await this.connection.db!.collection('inventory_serials').updateMany(
+            { tenantId: new Types.ObjectId(tenantId), productId: new Types.ObjectId(item.productId), warehouseId: new Types.ObjectId(dto.warehouseId!), serialNumber: { $in: serialNumbers }, status: 'IN_STOCK' },
+            { $set: { status: 'SOLD', saleInvoiceId: invoice._id, soldAt: now } },
+            { session },
+          );
+          if (updatedSerials.modifiedCount !== serialNumbers.length) throw new ConflictException('Serial availability changed during checkout; please retry the sale');
+        }
         if (promotion) {
           const usageFilter: any = { _id: promotion._id, tenantId: new Types.ObjectId(tenantId), status: 'ACTIVE', startsAt: { $lte: saleDate }, endsAt: { $gt: saleDate } };
           if (promotion.usageLimit != null) usageFilter.usageCount = { $lt: promotion.usageLimit };

@@ -436,6 +436,12 @@ export class PurchasesService {
           if (!product) throw new NotFoundException(`Product not found: ${line.name}`);
 
           if (product.trackStock) {
+            if (!selectedWarehouse) {
+              const existingWarehouseAllocation = await this.warehouseStocks.findOne(tenantFilter(tenantId, {
+                productId: product._id,
+              })).session(session).lean();
+              if (existingWarehouseAllocation) throw new BadRequestException('Select a receiving warehouse because this product already has warehouse-level stock allocations.');
+            }
             const previousQty = product.stockQty;
             const newQty = previousQty + quantity;
             if (previousQty > 0 && !product.valuationInitialized) {

@@ -272,6 +272,18 @@ export class PlatformController {
   }
 
   @Roles('owner', 'admin')
+  @Post('operations/alerts/dispatch')
+  dispatchOperationalAlerts(@Req() req: AuthenticatedRequest) {
+    return this.platform.dispatchOperationalAlerts(req.user.tenantId);
+  }
+
+  @Roles('owner', 'admin')
+  @Get('integrations/provider-readiness')
+  integrationProviderReadiness(@Req() req: AuthenticatedRequest) {
+    return this.platform.integrationProviderReadiness(req.user.tenantId);
+  }
+
+  @Roles('owner', 'admin')
   @Get('operations/metrics')
   operationsMetrics(@Req() req: AuthenticatedRequest) {
     return this.platform.operationsMetrics(req.user.tenantId);

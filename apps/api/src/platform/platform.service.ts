@@ -5,7 +5,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
-import { GridFSBucket } from 'mongodb';
+import { GridFSBucket, MongoClient } from 'mongodb';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { gzipSync, gunzipSync } from 'zlib';
 import { lookup } from 'dns/promises';
@@ -1239,6 +1239,48 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     } finally { clearTimeout(timeout); }
   }
 
+  private async restoreArchiveIntoIsolatedDatabase(archive: any) {
+    const restoreUri = this.config.get<string>('DR_RESTORE_MONGO_URI') || '';
+    const productionUri = this.config.get<string>('MONGODB_URI') || this.config.get<string>('MONGO_URI') || '';
+    if (!restoreUri) return { status: 'NOT_CONFIGURED', message: 'Set DR_RESTORE_MONGO_URI to a separately managed MongoDB deployment to run an isolated restore rehearsal.' };
+    let restoreHost = '';
+    let productionHost = '';
+    try { restoreHost = new URL(restoreUri).hostname.toLowerCase(); productionHost = productionUri ? new URL(productionUri).hostname.toLowerCase() : ''; }
+    catch { throw new BadRequestException('Disaster-recovery restore URI is invalid'); }
+    if (!restoreHost || (productionHost && restoreHost === productionHost)) {
+      throw new BadRequestException('DR_RESTORE_MONGO_URI must target a separate MongoDB host from the production database');
+    }
+    const client = new MongoClient(restoreUri, { serverSelectionTimeoutMS: 10000, connectTimeoutMS: 10000 });
+    const databaseName = 'solstra_drill_' + randomBytes(12).toString('hex');
+    let database: any;
+    try {
+      await client.connect();
+      database = client.db(databaseName);
+      let restoredDocuments = 0;
+      let restoredCollections = 0;
+      for (const [name, rows] of Object.entries(archive.collections as Record<string, any[]>)) {
+        if (!/^[a-zA-Z0-9_]+$/.test(name) || !Array.isArray(rows)) throw new Error('Archive contains an invalid collection entry');
+        if (!rows.length) continue;
+        await database.collection(name).insertMany(rows, { ordered: true });
+        const actual = await database.collection(name).countDocuments({});
+        if (actual !== rows.length) throw new Error('Isolated restore count mismatch for collection ' + name);
+        restoredCollections += 1;
+        restoredDocuments += actual;
+      }
+      const tenantRows = await database.collection('tenants').countDocuments({ _id: archive.tenant?._id });
+      if (tenantRows !== 1) throw new Error('Isolated restore did not reproduce the workspace tenant record');
+      return {
+        status: 'PASSED', databaseName, restoredCollections, restoredDocuments,
+        message: 'Archive restored into a temporary database on a separate MongoDB host; collection counts and workspace identity verified.',
+      };
+    } finally {
+      if (database) {
+        try { await database.dropDatabase(); } catch { /* preserve the original drill outcome */ }
+      }
+      await client.close().catch(() => undefined);
+    }
+  }
+
   async runBackupRestoreDrill(tenantId: string, artifactId: string) {
     this.identity(tenantId);
     if (!Types.ObjectId.isValid(artifactId)) throw new BadRequestException('Invalid backup artifact ID');
@@ -1273,8 +1315,16 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
           documentCount += 1;
         }
       }
-      status = 'PASSED';
-      message = 'Checksum, gzip, archive format, tenant identity, collection structure and document ownership checks passed. No live database records were changed.';
+      const isolated = await this.restoreArchiveIntoIsolatedDatabase(archive);
+      if (isolated.status === 'PASSED') {
+        status = 'PASSED';
+        message = String(isolated.message);
+        collectionCount = Number(isolated.restoredCollections || collectionCount);
+        documentCount = Number(isolated.restoredDocuments || documentCount);
+      } else {
+        status = 'VALIDATED_ONLY';
+        message = 'Archive checksum, gzip, tenant identity and document structure passed local validation. ' + isolated.message + ' No isolated restore was performed.';
+      }
     } catch (error: any) {
       message = String(error?.message || message).slice(0, 500);
     }
@@ -1322,6 +1372,75 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       checks,
       limitations: ['Configuration presence is checked; secret strength, rotation age and external provider connectivity are not penetration-tested.', 'This posture report is an operational checklist, not a security certification or vulnerability scan.'],
     };
+  }
+
+  async integrationProviderReadiness(tenantId: string) {
+    this.identity(tenantId);
+    const configured = (...keys: string[]) => keys.every(key => Boolean(String(this.config.get<string>(key) || '').trim()));
+    const [emailProviders, smsProviders, whatsappProviders] = await Promise.all([
+      this.communicationProviders.countDocuments(tenantFilter(tenantId, { channel: 'EMAIL', enabled: true })),
+      this.communicationProviders.countDocuments(tenantFilter(tenantId, { channel: 'SMS', enabled: true })),
+      this.communicationProviders.countDocuments(tenantFilter(tenantId, { channel: 'WHATSAPP', enabled: true })),
+    ]);
+    return {
+      generatedAt: new Date(),
+      payment: {
+        razorpay: { configured: configured('RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET', 'RAZORPAY_WEBHOOK_SECRET'), mode: 'LIVE_OR_TEST_KEYS_FROM_DEPLOYMENT_SECRET_STORE' },
+      },
+      accounting: {
+        tallyPrime: { configured: true, mode: 'XML_INTERCHANGE_ONLY', note: 'Export/import file workflow; no live Tally connector.' },
+        zohoBooks: { configured: configured('ZOHO_BOOKS_CLIENT_ID', 'ZOHO_BOOKS_CLIENT_SECRET', 'ZOHO_BOOKS_REDIRECT_URI'), mode: 'OAUTH_CREDENTIALS_ONLY' },
+        quickBooks: { configured: configured('QUICKBOOKS_CLIENT_ID', 'QUICKBOOKS_CLIENT_SECRET', 'QUICKBOOKS_REDIRECT_URI'), mode: 'OAUTH_CREDENTIALS_ONLY' },
+      },
+      commerce: {
+        shopify: { configured: configured('SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET'), mode: 'OAUTH_CREDENTIALS_ONLY' },
+        wooCommerce: { configured: configured('WOOCOMMERCE_CONSUMER_KEY', 'WOOCOMMERCE_CONSUMER_SECRET', 'WOOCOMMERCE_STORE_URL'), mode: 'API_CREDENTIALS_ONLY' },
+      },
+      communications: {
+        email: { configuredProviders: emailProviders, ready: emailProviders > 0 },
+        sms: { configuredProviders: smsProviders, ready: smsProviders > 0 },
+        whatsapp: { configuredProviders: whatsappProviders, ready: whatsappProviders > 0 },
+        deliveryAdapter: 'TENANT_CONFIGURED_HTTPS_WEBHOOK',
+      },
+      disasterRecovery: {
+        offsiteReplication: configured('BACKUP_REPLICATION_ENDPOINT', 'BACKUP_REPLICATION_TOKEN'),
+        isolatedRestore: configured('DR_RESTORE_MONGO_URI'),
+      },
+      monitoring: {
+        alertWebhook: configured('OPERATIONS_ALERT_WEBHOOK_URL', 'OPERATIONS_ALERT_WEBHOOK_TOKEN'),
+      },
+      note: 'Credential presence is not OAuth authorization, provider connectivity, sandbox certification, or successful production delivery. Never expose credential values through this endpoint.',
+    };
+  }
+
+  async dispatchOperationalAlerts(tenantId: string) {
+    this.identity(tenantId);
+    const endpoint = this.config.get<string>('OPERATIONS_ALERT_WEBHOOK_URL') || '';
+    const token = this.config.get<string>('OPERATIONS_ALERT_WEBHOOK_TOKEN') || '';
+    if (!endpoint || !token) throw new ServiceUnavailableException('Configure OPERATIONS_ALERT_WEBHOOK_URL and OPERATIONS_ALERT_WEBHOOK_TOKEN in the deployment secret store');
+    await this.validateWebhookUrl(endpoint);
+    const metrics = await this.operationsMetrics(tenantId);
+    if (!metrics.alerts.length) return { dispatched: false, reason: 'NO_ACTIVE_ALERTS', alertCount: 0 };
+    const payload = JSON.stringify({
+      contract: 'SOLSTRA_RETAIL_OPERATIONAL_ALERTS_V1',
+      tenantId, generatedAt: new Date().toISOString(),
+      alerts: metrics.alerts,
+      service: metrics.service, queues: metrics.queues, backups: metrics.backups,
+    });
+    const signature = createHmac('sha256', token).update(payload).digest('hex');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST', redirect: 'manual', signal: controller.signal,
+        headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', 'x-solstra-alert-signature': signature },
+        body: payload,
+      });
+      if (!response.ok) throw new Error('Monitoring alert receiver returned HTTP ' + response.status);
+      return { dispatched: true, alertCount: metrics.alerts.length, receiverStatus: response.status };
+    } catch {
+      throw new ServiceUnavailableException('Operational alert receiver did not acknowledge delivery');
+    } finally { clearTimeout(timeout); }
   }
 
   async operationsMetrics(tenantId: string) {

@@ -100,6 +100,32 @@ describe('PlatformService security boundaries', () => {
       .rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it('marks archive validation separately when no isolated DR target is configured', async () => {
+    const service: any = createService();
+    service.config = { get: jest.fn((key: string) => key === 'DR_RESTORE_MONGO_URI' ? '' : '') };
+    await expect(service.restoreArchiveIntoIsolatedDatabase({ collections: {} }))
+      .resolves.toMatchObject({ status: 'NOT_CONFIGURED' });
+  });
+
+  it('refuses to run a restore drill against the production MongoDB host', async () => {
+    const service: any = createService();
+    service.config = { get: jest.fn((key: string) => key === 'DR_RESTORE_MONGO_URI'
+      ? 'mongodb://restore-user:secret@prod.example.com:27017/dr'
+      : 'mongodb://app:secret@prod.example.com:27017/solstra') };
+    await expect(service.restoreArchiveIntoIsolatedDatabase({ collections: {} }))
+      .rejects.toThrow('separate MongoDB host');
+  });
+
+  it('never exposes provider credentials in the readiness response', async () => {
+    const service: any = createService();
+    service.config = { get: jest.fn((key: string) => key.startsWith('ZOHO_BOOKS_') ? 'configured-secret' : '') };
+    service.communicationProviders = { countDocuments: jest.fn().mockResolvedValue(0) };
+    const result = await service.integrationProviderReadiness(tenantId);
+    expect(JSON.stringify(result)).not.toContain('configured-secret');
+    expect(result.accounting.zohoBooks.configured).toBe(true);
+    expect(result.accounting.zohoBooks.mode).toBe('OAUTH_CREDENTIALS_ONLY');
+  });
+
   it('rejects invalid tenant context before operational metrics queries', async () => {
     const service = createService();
     await expect(service.operationsMetrics('invalid-tenant')).rejects.toBeInstanceOf(BadRequestException);

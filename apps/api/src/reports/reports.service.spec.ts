@@ -8,7 +8,7 @@ describe('ReportsService validation', () => {
     const purchases = { find: jest.fn() };
     const journals = { find: jest.fn() };
     const gstSubmissions = { findOne: jest.fn(), findOneAndUpdate: jest.fn(), countDocuments: jest.fn() };
-    const migrationImportRuns = { create: jest.fn(), findOne: jest.fn(() => ({ lean: async () => null })), updateOne: jest.fn(), find: jest.fn(), countDocuments: jest.fn() };
+    const migrationImportRuns = { create: jest.fn(), findOne: jest.fn(() => ({ lean: async (): Promise<any> => null })), updateOne: jest.fn(), find: jest.fn(), countDocuments: jest.fn() };
 
     const service = new ReportsService(
       invoices as any,

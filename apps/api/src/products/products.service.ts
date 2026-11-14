@@ -34,6 +34,65 @@ export class ProductsService {
     @InjectModel(Tenant.name) private readonly tenants: Model<any>,
   ) {}
 
+  async previewProductImport(tenantId: string, rows: unknown[]) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    if (!Array.isArray(rows) || rows.length < 1 || rows.length > 200) throw new BadRequestException('Import must contain between 1 and 200 product rows');
+    const seen = new Set<string>();
+    const results = await Promise.all(rows.map(async (raw: any, index) => {
+      const rowNumber = index + 1;
+      const errors: string[] = [];
+      const name = String(raw?.name || '').trim();
+      const sku = String(raw?.sku || '').trim();
+      const purchasePrice = Number(raw?.purchasePrice);
+      const sellingPrice = Number(raw?.sellingPrice);
+      const mrp = Number(raw?.mrp);
+      const gstRate = raw?.gstRate === undefined || raw?.gstRate === '' ? 0 : Number(raw.gstRate);
+      if (name.length < 2 || name.length > 150) errors.push('Name must contain 2–150 characters');
+      for (const [field, value] of [['purchasePrice', purchasePrice], ['sellingPrice', sellingPrice], ['mrp', mrp]] as const) {
+        if (!Number.isFinite(value) || value < 0 || Math.round(value * 100) !== value * 100) errors.push(field + ' must be a non-negative amount with at most 2 decimals');
+      }
+      if (![0, 5, 12, 18, 28].includes(gstRate)) errors.push('GST rate must be 0, 5, 12, 18 or 28');
+      if (sku.length > 60) errors.push('SKU must not exceed 60 characters');
+      const normalizedSku = sku.toLowerCase();
+      if (normalizedSku && seen.has(normalizedSku)) errors.push('SKU is duplicated within this import file');
+      if (normalizedSku) seen.add(normalizedSku);
+      if (normalizedSku) {
+        const existing = await this.products.findOne(tenantFilter(tenantId, { sku: sku, isDeleted: false })).select('_id').lean();
+        if (existing) errors.push('SKU already exists in this workspace');
+      }
+      const normalized = {
+        name, description: String(raw?.description || '').slice(0, 1000),
+        sku: sku || undefined, barcode: String(raw?.barcode || '').slice(0, 100) || undefined,
+        purchasePrice, sellingPrice, mrp, gstRate,
+        hsnCode: String(raw?.hsnCode || '').slice(0, 20) || undefined,
+        unit: String(raw?.unit || 'pcs').slice(0, 30),
+        trackStock: raw?.trackStock === false ? false : true,
+      };
+      return { rowNumber, valid: errors.length === 0, errors, product: normalized };
+    }));
+    return { totalRows: results.length, validRows: results.filter(x => x.valid).length, invalidRows: results.filter(x => !x.valid).length, rows: results, note: 'Catalogue-only import. Opening quantities and historical valuation are deliberately excluded; migrate stock through the verified opening valuation workflow.' };
+  }
+
+  async commitProductImport(tenantId: string, userId: string, rows: unknown[]) {
+    const preview = await this.previewProductImport(tenantId, rows);
+    const created: any[] = [];
+    const failed: any[] = [];
+    for (const row of preview.rows) {
+      if (!row.valid) { failed.push({ rowNumber: row.rowNumber, errors: row.errors }); continue; }
+      try {
+        const product = await this.create(tenantId, userId, {
+          ...row.product,
+          stockQty: 0,
+          lowStockThreshold: 0,
+        } as CreateProductDto);
+        created.push({ rowNumber: row.rowNumber, productId: String((product as any)._id), name: (product as any).name });
+      } catch (error: any) {
+        failed.push({ rowNumber: row.rowNumber, errors: [String(error?.message || 'Product creation failed').slice(0, 200)] });
+      }
+    }
+    return { totalRows: preview.totalRows, createdCount: created.length, failedCount: failed.length, created, failed, partialCommit: failed.length > 0, note: 'Each valid product is committed independently. Failed rows can be corrected and re-imported; SKU uniqueness prevents duplicate retries.' };
+  }
+
   async create(
   tenantId: string,
   userId: string,

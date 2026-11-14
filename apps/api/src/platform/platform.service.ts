@@ -645,4 +645,208 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     ]);
     return { tenantsBySubscriptionStatus: tenants, totalUsers: users, totalProducts: products, generatedAt: new Date() };
   }
+
+  async listCommunicationProviders(tenantId: string) {
+    this.identity(tenantId);
+    return this.communicationProviders.find(tenantFilter(tenantId, {})).select('-encryptedSecret -secretIv -secretTag').sort({ createdAt: -1 }).lean();
+  }
+
+  async createCommunicationProvider(tenantId: string, dto: CreateCommunicationProviderDto) {
+    this.identity(tenantId);
+    await this.validateWebhookUrl(dto.endpointUrl);
+    const encrypted = this.encryptSecret(dto.apiToken, await this.encryptionKey());
+    const row = await this.communicationProviders.create({
+      tenantId: new Types.ObjectId(tenantId), name: dto.name.trim(), channel: dto.channel,
+      endpointUrl: dto.endpointUrl, ...encrypted, enabled: true,
+    });
+    return { _id: row._id, name: row.name, channel: row.channel, endpointUrl: row.endpointUrl, enabled: row.enabled };
+  }
+
+  async updateCommunicationProvider(tenantId: string, id: string, enabled: boolean) {
+    this.identity(tenantId);
+    if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid communication provider ID');
+    const row = await this.communicationProviders.findOneAndUpdate(
+      tenantFilter(tenantId, { _id: new Types.ObjectId(id) }), { $set: { enabled } }, { new: true },
+    ).select('-encryptedSecret -secretIv -secretTag').lean();
+    if (!row) throw new NotFoundException('Communication provider not found');
+    return row;
+  }
+
+  async queueCommunication(tenantId: string, userId: string, dto: SendCommunicationDto) {
+    this.identity(tenantId, userId);
+    const provider = await this.communicationProviders.findOne(tenantFilter(tenantId, { channel: dto.channel, enabled: true })).sort({ createdAt: -1 }).lean();
+    if (!provider) throw new ConflictException('Configure an enabled provider for this communication channel first');
+    if (dto.channel === 'EMAIL' && !dto.recipient.includes('@')) throw new BadRequestException('Enter a valid email recipient');
+    if (dto.channel !== 'EMAIL' && !/^\+?[0-9]{8,15}$/.test(dto.recipient.replace(/[\s()-]/g, ''))) throw new BadRequestException('Enter a valid international phone number');
+    const row = await this.communicationDeliveries.create({
+      tenantId: new Types.ObjectId(tenantId), providerId: provider._id, channel: dto.channel,
+      recipient: dto.recipient.trim(), subject: dto.subject?.trim() || '', message: dto.message.trim(),
+      status: 'PENDING', requestedBy: new Types.ObjectId(userId), nextAttemptAt: new Date(),
+    });
+    return { id: row._id, status: row.status, channel: row.channel, recipient: row.recipient, queuedAt: row.createdAt };
+  }
+
+  async listCommunicationDeliveries(tenantId: string, page = 1) {
+    this.identity(tenantId);
+    const safePage = Number.isInteger(page) && page > 0 ? Math.min(page, 10000) : 1;
+    const filter = tenantFilter(tenantId, {});
+    const [items, total] = await Promise.all([
+      this.communicationDeliveries.find(filter).sort({ createdAt: -1 }).skip((safePage - 1) * 20).limit(20).select('-message').populate('providerId', 'name channel').lean(),
+      this.communicationDeliveries.countDocuments(filter),
+    ]);
+    return { items, pagination: { page: safePage, limit: 20, total, totalPages: Math.ceil(total / 20) } };
+  }
+
+  async runCommunicationDeliveries(tenantId: string, limit = 20) {
+    this.identity(tenantId);
+    const safeLimit = Math.min(50, Math.max(1, Math.floor(limit) || 20));
+    const stale = new Date(Date.now() - 5 * 60 * 1000);
+    await this.communicationDeliveries.updateMany(tenantFilter(tenantId, { status: 'DELIVERING', updatedAt: { $lte: stale } }), { $set: { status: 'PENDING', nextAttemptAt: new Date() } });
+    const due = await this.communicationDeliveries.find(tenantFilter(tenantId, { status: 'PENDING', nextAttemptAt: { $lte: new Date() } })).sort({ nextAttemptAt: 1 }).limit(safeLimit).lean();
+    const key = await this.encryptionKey();
+    const results: any[] = [];
+    for (const delivery of due) {
+      const locked = await this.communicationDeliveries.findOneAndUpdate(tenantFilter(tenantId, { _id: delivery._id, status: 'PENDING' }), { $set: { status: 'DELIVERING' } }, { new: true });
+      if (!locked) continue;
+      try {
+        const provider: any = await this.communicationProviders.findOne(tenantFilter(tenantId, { _id: delivery.providerId, enabled: true })).select('+encryptedSecret +secretIv +secretTag').lean();
+        if (!provider) throw new Error('Communication provider is disabled or unavailable');
+        await this.validateWebhookUrl(provider.endpointUrl);
+        const token = this.decryptSecret(provider, key);
+        const body = JSON.stringify({ channel: delivery.channel, to: delivery.recipient, subject: delivery.subject, message: delivery.message, metadata: { deliveryId: String(delivery._id), tenantId } });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        let response: Response;
+        try {
+          response = await fetch(provider.endpointUrl, { method: 'POST', redirect: 'manual', signal: controller.signal, headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', 'x-solstra-channel': delivery.channel, 'x-solstra-delivery': String(delivery._id) }, body });
+        } finally { clearTimeout(timeout); }
+        if (!response.ok) throw new Error('Provider returned HTTP ' + response.status);
+        await this.communicationDeliveries.updateOne(tenantFilter(tenantId, { _id: delivery._id }), { $set: { status: 'DELIVERED', lastError: '' }, $inc: { attempts: 1 } });
+        await this.communicationProviders.updateOne(tenantFilter(tenantId, { _id: provider._id }), { $set: { lastDeliveredAt: new Date() } });
+        results.push({ id: String(delivery._id), status: 'DELIVERED' });
+      } catch (error: any) {
+        const attempts = Number(delivery.attempts || 0) + 1;
+        const dead = attempts >= 5;
+        await this.communicationDeliveries.updateOne(tenantFilter(tenantId, { _id: delivery._id }), { $set: { status: dead ? 'DEAD' : 'PENDING', attempts, lastError: String(error?.message || 'Provider delivery failed').slice(0, 500), nextAttemptAt: new Date(Date.now() + Math.min(60, 2 ** attempts) * 60000) } });
+        results.push({ id: String(delivery._id), status: dead ? 'DEAD' : 'RETRY_SCHEDULED' });
+      }
+    }
+    return { processed: results.length, results };
+  }
+
+  private subscriptionPlanPricePaise(plan: string) {
+    const prices: Record<string, number> = { starter: 49900, growth: 149900, business: 399900 };
+    return prices[plan] ?? 0;
+  }
+
+  async listSubscriptionInvoices(tenantId: string) {
+    this.identity(tenantId);
+    return this.subscriptionInvoices.find(tenantFilter(tenantId, {})).sort({ createdAt: -1 }).limit(50).lean();
+  }
+
+  async requestSubscriptionInvoice(tenantId: string, userId: string) {
+    this.identity(tenantId, userId);
+    const tenant: any = await this.tenants.findById(new Types.ObjectId(tenantId)).lean();
+    if (!tenant) throw new NotFoundException('Workspace not found');
+    const outstanding = await this.subscriptionInvoices.findOne(tenantFilter(tenantId, { status: 'DUE' })).lean();
+    if (outstanding) throw new ConflictException('Settle the existing subscription invoice before requesting another');
+    const amountPaise = this.subscriptionPlanPricePaise(tenant.subscriptionPlan || 'starter');
+    if (!amountPaise) throw new ConflictException('Enterprise subscription pricing requires a platform quotation');
+    const periodStart = tenant.subscriptionPeriodEnd && new Date(tenant.subscriptionPeriodEnd) > new Date() ? new Date(tenant.subscriptionPeriodEnd) : new Date();
+    const periodEnd = new Date(periodStart);
+    periodEnd.setUTCMonth(periodEnd.getUTCMonth() + 1);
+    const invoiceNumber = 'SRS-' + periodStart.toISOString().slice(0, 7).replace('-', '') + '-' + randomBytes(4).toString('hex').toUpperCase();
+    const invoice = await this.subscriptionInvoices.create({
+      tenantId: new Types.ObjectId(tenantId), invoiceNumber, plan: tenant.subscriptionPlan || 'starter',
+      amountPaise, currency: 'INR', periodStart, periodEnd,
+      dueAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), status: 'DUE', requestedBy: new Types.ObjectId(userId),
+    });
+    await this.tenants.updateOne({ _id: new Types.ObjectId(tenantId) }, { $set: { billingStatus: 'PAST_DUE' } });
+    return invoice.toObject();
+  }
+
+  async listPlatformSubscriptionInvoices(userId: string) {
+    this.assertPlatformAdmin(userId);
+    return this.subscriptionInvoices.find({}).populate('tenantId', 'name slug subscriptionPlan').sort({ createdAt: -1 }).limit(200).lean();
+  }
+
+  async recordSubscriptionPayment(userId: string, invoiceId: string, dto: RecordSubscriptionPaymentDto) {
+    this.assertPlatformAdmin(userId);
+    if (!Types.ObjectId.isValid(invoiceId)) throw new BadRequestException('Invalid subscription invoice ID');
+    const session = await this.connection.startSession();
+    try {
+      let invoice: any;
+      await session.withTransaction(async () => {
+        invoice = await this.subscriptionInvoices.findOneAndUpdate(
+          { _id: new Types.ObjectId(invoiceId), status: 'DUE' },
+          { $set: { status: 'PAID', paidAt: new Date(), paymentReference: dto.paymentReference.trim(), recordedBy: new Types.ObjectId(userId) } },
+          { new: true, session },
+        ).lean();
+        if (!invoice) throw new ConflictException('Subscription invoice is already settled or unavailable');
+        await this.tenants.updateOne(
+          { _id: invoice.tenantId },
+          { $set: { subscriptionPlan: invoice.plan, subscriptionStatus: 'active', billingStatus: 'CURRENT', subscriptionPeriodStart: invoice.periodStart, subscriptionPeriodEnd: invoice.periodEnd } },
+          { session },
+        );
+        await this.saasAudit.create([{
+          tenantId: invoice.tenantId, actorId: new Types.ObjectId(userId),
+          previousValues: { billingStatus: 'PAST_DUE' }, newValues: { billingStatus: 'CURRENT', subscriptionPlan: invoice.plan, subscriptionPeriodEnd: invoice.periodEnd },
+          reason: 'Subscription payment recorded: ' + dto.paymentReference.trim(),
+        }], { session });
+      });
+      return invoice;
+    } finally { await session.endSession(); }
+  }
+
+  async listPlatformSubscriptionPlans() {
+    return [
+      { plan: 'starter', monthlyAmount: 499, currency: 'INR', maxUsers: 3, maxProducts: 1000, maxBranches: 1 },
+      { plan: 'growth', monthlyAmount: 1499, currency: 'INR', maxUsers: 10, maxProducts: 5000, maxBranches: 3 },
+      { plan: 'business', monthlyAmount: 3999, currency: 'INR', maxUsers: 25, maxProducts: 25000, maxBranches: 10 },
+      { plan: 'enterprise', monthlyAmount: null, currency: 'INR', maxUsers: 1000, maxProducts: 1000000, maxBranches: 1000, note: 'Custom quotation' },
+    ];
+  }
+
+  async replicateBackupArtifact(tenantId: string, artifactId: string) {
+    this.identity(tenantId);
+    if (!Types.ObjectId.isValid(artifactId)) throw new BadRequestException('Invalid backup artifact ID');
+    const endpoint = this.config.get<string>('BACKUP_REPLICATION_ENDPOINT') || '';
+    const token = this.config.get<string>('BACKUP_REPLICATION_TOKEN') || '';
+    if (!endpoint || !token) {
+      await this.backupReplicationEvents.create({ tenantId: new Types.ObjectId(tenantId), artifactId: new Types.ObjectId(artifactId), status: 'NOT_CONFIGURED', message: 'Configure BACKUP_REPLICATION_ENDPOINT and BACKUP_REPLICATION_TOKEN to enable off-site replication.' });
+      return { status: 'NOT_CONFIGURED' };
+    }
+    await this.validateWebhookUrl(endpoint);
+    const artifact: any = await this.backupArtifacts.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(artifactId), expiresAt: { $gt: new Date() } })).lean();
+    if (!artifact) throw new NotFoundException('Backup artifact not found or expired');
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      const stream = this.gridFsBucket().openDownloadStream(artifact.gridFsId);
+      stream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      stream.once('end', resolve);
+      stream.once('error', reject);
+    });
+    const bytes = Buffer.concat(chunks);
+    const checksum = createHash('sha256').update(bytes).digest('hex');
+    if (checksum !== artifact.checksumSha256) throw new ConflictException('Backup checksum verification failed before replication');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    try {
+      const response = await fetch(endpoint, { method: 'POST', redirect: 'manual', signal: controller.signal, headers: { authorization: 'Bearer ' + token, 'content-type': 'application/gzip', 'x-solstra-backup-file': artifact.fileName, 'x-solstra-backup-sha256': checksum, 'x-solstra-tenant-id': tenantId }, body: new Uint8Array(bytes) });
+      if (!response.ok) throw new Error('Replication target returned HTTP ' + response.status);
+      await this.backupReplicationEvents.create({ tenantId: new Types.ObjectId(tenantId), artifactId: artifact._id, status: 'SUCCEEDED', message: 'Off-site backup replication acknowledged by configured target.', replicatedAt: new Date() });
+      return { status: 'SUCCEEDED', checksumSha256: checksum };
+    } catch (error: any) {
+      await this.backupReplicationEvents.create({ tenantId: new Types.ObjectId(tenantId), artifactId: artifact._id, status: 'FAILED', message: String(error?.message || 'Replication failed').slice(0, 500) });
+      throw new ServiceUnavailableException('Off-site backup replication failed; the in-cluster backup remains available for retry');
+    } finally { clearTimeout(timeout); }
+  }
+
+  async listBackupReplicationEvents(tenantId: string, artifactId?: string) {
+    this.identity(tenantId);
+    const filter: any = tenantFilter(tenantId, {});
+    if (artifactId) { if (!Types.ObjectId.isValid(artifactId)) throw new BadRequestException('Invalid backup artifact ID'); filter.artifactId = new Types.ObjectId(artifactId); }
+    return this.backupReplicationEvents.find(filter).sort({ createdAt: -1 }).limit(100).lean();
+  }
+
 }

@@ -157,6 +157,21 @@ export class ReportsController {
     return this.reportsService.demandForecast(req.user.tenantId, parsed);
   }
 
+  @Roles('owner', 'admin')
+  @Get('reports/migration/export')
+  exportMigrationRecords(
+    @Req() req: AuthenticatedRequest,
+    @Query('entity') entity = '',
+    @Query('cursor') cursor = '',
+    @Query('limit') limit = '250',
+  ) {
+    const parsedLimit = Number(limit);
+    if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 500) {
+      throw new BadRequestException('Migration export limit must be between 1 and 500');
+    }
+    return this.reportsService.exportMigrationRecords(req.user.tenantId, entity, cursor, parsedLimit);
+  }
+
   @Permissions('reports.view')
   @Get('reports/analytics/overview')
   advancedAnalytics(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto) {

@@ -20,13 +20,13 @@ import { User } from '../auth/schemas/user.schema';
 import { Product } from '../products/schemas/product.schema';
 import { WarehouseStock } from '../inventory/schemas/warehouse-stock.schema';
 import {
-  AutomationExecution, AutomationRule, BackupArtifact, BackupPolicy, BackupRestoreDrill, OfflineSyncRecord, PlatformNotification, SaasAdminAudit,
+  AutomationExecution, AutomationRule, BackupArtifact, BackupPolicy, BackupRestoreDrill, OfflineDevice, OfflineSyncRecord, PlatformNotification, SaasAdminAudit,
   WebhookDelivery, WebhookIntegration, CommunicationProvider, CommunicationDelivery, SubscriptionInvoice, BackupReplicationEvent,
 } from './schemas/platform.schema';
 import {
   BackupPolicyDto, CreateAutomationRuleDto, CreateWebhookDto, OfflineSyncBatchDto,
   TriggerAutomationDto, UpdateAutomationRuleDto, UpdateSaasTenantDto,
-  UpdateWebhookDto, VerifyBackupDto, CreateCommunicationProviderDto, SendCommunicationDto, RecordSubscriptionPaymentDto,
+  UpdateWebhookDto, VerifyBackupDto, RegisterOfflineDeviceDto, CreateCommunicationProviderDto, SendCommunicationDto, RecordSubscriptionPaymentDto,
 } from './dto/platform.dto';
 
 const EVENT_TYPES = ['MANUAL', 'SALE_CREATED', 'LOW_STOCK', 'EXPENSE_PENDING_APPROVAL'];
@@ -56,6 +56,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     @InjectModel(WebhookIntegration.name) private readonly integrations: Model<any>,
     @InjectModel(WebhookDelivery.name) private readonly deliveries: Model<any>,
     @InjectModel(OfflineSyncRecord.name) private readonly syncRecords: Model<any>,
+    @InjectModel(OfflineDevice.name) private readonly offlineDevices: Model<any>,
     @InjectModel(BackupPolicy.name) private readonly backupPolicies: Model<any>,
     @InjectModel(BackupArtifact.name) private readonly backupArtifacts: Model<any>,
     @InjectModel(SaasAdminAudit.name) private readonly saasAudit: Model<any>,
@@ -295,6 +296,50 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     return this.integrations.find(tenantFilter(tenantId, {})).select('-encryptedSecret -secretIv -secretTag').sort({ createdAt: -1 }).lean();
   }
 
+  async rotateWebhookSecret(tenantId: string, id: string) {
+    this.identity(tenantId);
+    if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid integration ID');
+    const key = await this.encryptionKey();
+    const secret = randomBytes(32).toString('base64url');
+    const encrypted = this.encryptSecret(secret, key);
+    const row = await this.integrations.findOneAndUpdate(
+      tenantFilter(tenantId, { _id: new Types.ObjectId(id) }),
+      { $set: encrypted }, { new: true },
+    ).select('-encryptedSecret -secretIv -secretTag').lean();
+    if (!row) throw new NotFoundException('Integration not found');
+    return { integration: row, secret, warning: 'The previous signing secret is invalid immediately. Update the receiving endpoint before sending new deliveries.' };
+  }
+
+  async listWebhookDeliveries(tenantId: string, integrationId?: string, page = 1) {
+    this.identity(tenantId);
+    const safePage = Number.isInteger(page) && page > 0 ? Math.min(page, 10000) : 1;
+    const query: Record<string, any> = {};
+    if (integrationId) {
+      if (!Types.ObjectId.isValid(integrationId)) throw new BadRequestException('Invalid integration ID');
+      query.integrationId = new Types.ObjectId(integrationId);
+    }
+    const filter = tenantFilter(tenantId, query);
+    const [items, total, counts] = await Promise.all([
+      this.deliveries.find(filter).sort({ createdAt: -1 }).skip((safePage - 1) * 25).limit(25)
+        .select('-payload').populate('integrationId', 'name endpointUrl').lean(),
+      this.deliveries.countDocuments(filter),
+      this.deliveries.aggregate([{ $match: filter }, { $group: { _id: '$status', count: { $sum: 1 } } }]),
+    ]);
+    return { items, counts: Object.fromEntries(counts.map((row: any) => [row._id, row.count])), pagination: { page: safePage, limit: 25, total, totalPages: Math.ceil(total / 25) } };
+  }
+
+  async retryWebhookDelivery(tenantId: string, id: string) {
+    this.identity(tenantId);
+    if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid delivery ID');
+    const row: any = await this.deliveries.findOneAndUpdate(
+      tenantFilter(tenantId, { _id: new Types.ObjectId(id), status: { $in: ['FAILED', 'DEAD'] } }),
+      { $set: { status: 'PENDING', attempts: 0, lastError: '', nextAttemptAt: new Date() } },
+      { new: true },
+    ).select('-payload').lean();
+    if (!row) throw new ConflictException('Only failed or dead-letter deliveries can be manually retried');
+    return { id: String(row._id), status: row.status, queuedAt: row.nextAttemptAt };
+  }
+
   async updateWebhook(tenantId: string, id: string, dto: UpdateWebhookDto) {
     this.identity(tenantId);
     if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid integration ID');
@@ -361,8 +406,50 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     return { processed: results.length, results };
   }
 
+  async registerOfflineDevice(tenantId: string, userId: string, dto: RegisterOfflineDeviceDto) {
+    this.identity(tenantId, userId);
+    const filter = tenantFilter(tenantId, { userId: new Types.ObjectId(userId), deviceId: dto.deviceId });
+    const existing: any = await this.offlineDevices.findOne(filter).lean();
+    if (existing?.revokedAt) throw new ForbiddenException('This device was revoked. Clear its local device registration and enroll it as a new device.');
+    let row: any;
+    if (existing) {
+      row = await this.offlineDevices.findOneAndUpdate(filter, { $set: { label: dto.label.trim(), lastSeenAt: new Date() } }, { new: true, runValidators: true }).lean();
+    } else {
+      try {
+        row = await this.offlineDevices.create({ tenantId: new Types.ObjectId(tenantId), userId: new Types.ObjectId(userId), deviceId: dto.deviceId, label: dto.label.trim(), lastSeenAt: new Date() });
+      } catch (error: any) {
+        if (error?.code === 11000) throw new ConflictException('Device enrollment raced with another request; retry');
+        throw error;
+      }
+    }
+    return { deviceId: row.deviceId, label: row.label, lastSeenAt: row.lastSeenAt, revokedAt: row.revokedAt };
+  }
+
+  async listOfflineDevices(tenantId: string, userId: string) {
+    this.identity(tenantId, userId);
+    return this.offlineDevices.find(tenantFilter(tenantId, { userId: new Types.ObjectId(userId) }))
+      .select('deviceId label lastSeenAt revokedAt createdAt').sort({ lastSeenAt: -1 }).lean();
+  }
+
+  async revokeOfflineDevice(tenantId: string, deviceId: string) {
+    this.identity(tenantId);
+    const row: any = await this.offlineDevices.findOneAndUpdate(
+      tenantFilter(tenantId, { deviceId, revokedAt: null }),
+      { $set: { revokedAt: new Date() } }, { new: true },
+    ).select('deviceId label revokedAt').lean();
+    if (!row) throw new NotFoundException('Active offline device not found in this workspace');
+    return { deviceId: row.deviceId, label: row.label, revokedAt: row.revokedAt, status: 'REVOKED' };
+  }
+
   async syncOfflineSales(tenantId: string, userId: string, dto: OfflineSyncBatchDto) {
     this.identity(tenantId, userId);
+    if (dto.deviceId) {
+      const device: any = await this.offlineDevices.findOneAndUpdate(
+        tenantFilter(tenantId, { userId: new Types.ObjectId(userId), deviceId: dto.deviceId, revokedAt: null }),
+        { $set: { lastSeenAt: new Date() } }, { new: true },
+      ).lean();
+      if (!device) throw new ForbiddenException('This offline device is not registered or has been revoked. Register the device again before syncing invoices.');
+    }
     const results: any[] = [];
     for (const operation of dto.operations) {
       const payloadSha256 = createHash('sha256').update(JSON.stringify(operation.payload)).digest('hex');
@@ -1090,6 +1177,35 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       filter.artifactId = new Types.ObjectId(artifactId);
     }
     return this.backupRestoreDrills.find(filter).sort({ createdAt: -1 }).limit(100).lean();
+  }
+
+  async platformSecurityPosture(tenantId: string) {
+    this.identity(tenantId);
+    const configured = (key: string) => Boolean(String(this.config.get<string>(key) || '').trim());
+    let replicaSet = false;
+    let databaseReachable = this.connection.readyState === 1;
+    if (databaseReachable && this.connection.db) {
+      try {
+        const hello: any = await this.connection.db.admin().command({ hello: 1 });
+        replicaSet = Boolean(hello.setName);
+      } catch { databaseReachable = false; }
+    }
+    const checks = [
+      { key: 'DATABASE_CONNECTION', status: databaseReachable ? 'PASS' : 'FAIL', detail: databaseReachable ? 'Database connection is active' : 'Database connection is unavailable' },
+      { key: 'DATABASE_REPLICA_SET', status: replicaSet ? 'PASS' : 'REVIEW', detail: replicaSet ? 'Replica-set topology detected; transaction support is available' : 'Replica-set topology was not confirmed; transaction-dependent workflows may fail' },
+      { key: 'WEBHOOK_SECRET_ENCRYPTION', status: /^[a-fA-F0-9]{64}$/.test(this.config.get<string>('WEBHOOK_SECRET_ENCRYPTION_KEY') || '') ? 'PASS' : 'FAIL', detail: 'Webhook and communication credentials require a dedicated 32-byte encryption key' },
+      { key: 'JWT_SIGNING_SECRET', status: configured('JWT_ACCESS_SECRET') || configured('JWT_SECRET') ? 'PASS' : 'REVIEW', detail: 'Confirm a strong, private JWT signing secret is configured' },
+      { key: 'OFFSITE_BACKUP_RECEIVER', status: configured('OFFSITE_BACKUP_RECEIVER_URL') && configured('OFFSITE_BACKUP_RECEIVER_TOKEN') ? 'PASS' : 'REVIEW', detail: 'Off-site replication requires a receiver URL and authentication token' },
+      { key: 'GST_GSP_ADAPTER', status: configured('GST_GSP_ADAPTER_URL') && configured('GST_GSP_ADAPTER_TOKEN') ? 'PASS' : 'REVIEW', detail: 'Live GST provider submission requires a certified provider adapter and credentials' },
+      { key: 'RAZORPAY_WEBHOOK', status: configured('RAZORPAY_WEBHOOK_SECRET') ? 'PASS' : 'REVIEW', detail: 'Payment callback authenticity requires the gateway webhook signing secret' },
+    ];
+    return {
+      generatedAt: new Date(),
+      score: Math.round((checks.filter(item => item.status === 'PASS').length / checks.length) * 100),
+      summary: { passed: checks.filter(item => item.status === 'PASS').length, review: checks.filter(item => item.status === 'REVIEW').length, failed: checks.filter(item => item.status === 'FAIL').length },
+      checks,
+      limitations: ['Configuration presence is checked; secret strength, rotation age and external provider connectivity are not penetration-tested.', 'This posture report is an operational checklist, not a security certification or vulnerability scan.'],
+    };
   }
 
   async operationsMetrics(tenantId: string) {

@@ -17,6 +17,21 @@ const DB_NAME = 'solstra-retail-offline';
 const STORE = 'sales_v3';
 const PRODUCT_STORE = 'products_v3';
 
+function createDeviceUuid(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+  return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
+}
+
+function offlineDeviceId(scope: string): string {
+  const key = 'solstra_offline_device_' + scope;
+  let id = localStorage.getItem(key);
+  if (!id) { id = createDeviceUuid(); localStorage.setItem(key, id); }
+  return id;
+}
+
 function database(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 3);
@@ -83,6 +98,8 @@ export async function listQueuedOfflineSales(scope: string): Promise<QueuedOffli
 
 export async function syncQueuedOfflineSales(scope: string) {
   let remaining = await listQueuedOfflineSales(scope);
+  const deviceId = offlineDeviceId(scope);
+  await api.post('/platform/offline/devices/register', { deviceId, label: 'Browser POS device' });
   let synced = 0;
   const maxBatches = Math.ceil(remaining.length / 100);
   for (let batchIndex = 0; batchIndex < maxBatches && remaining.length; batchIndex += 1) {
@@ -90,6 +107,7 @@ export async function syncQueuedOfflineSales(scope: string) {
     const batch = remaining.filter(item => !item.blocked && (!item.nextAttemptAt || new Date(item.nextAttemptAt).getTime() <= now)).slice(0, 100);
     if (!batch.length) break;
     const response = await api.post<{ results: Array<{ idempotencyKey: string; status: string; error?: string }> }>('/platform/offline/sync', {
+      deviceId,
       operations: batch.map(item => ({ type: 'SALE', idempotencyKey: item.idempotencyKey, payload: item.payload })),
     });
     const results = response.data.results || [];

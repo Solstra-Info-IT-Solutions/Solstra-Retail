@@ -67,6 +67,19 @@ export type WebhookDeliveryDocument = HydratedDocument<WebhookDelivery>;
 export const WebhookDeliverySchema = SchemaFactory.createForClass(WebhookDelivery);
 WebhookDeliverySchema.index({ tenantId: 1, integrationId: 1, eventType: 1, eventKey: 1 }, { unique: true });
 
+@Schema({ timestamps: true, collection: 'offline_devices', versionKey: false })
+export class OfflineDevice {
+  @Prop(tenantRef) tenantId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true }) userId!: Types.ObjectId;
+  @Prop({ type: String, required: true, maxlength: 64 }) deviceId!: string;
+  @Prop({ type: String, required: true, trim: true, maxlength: 100 }) label!: string;
+  @Prop({ type: Date, default: Date.now }) lastSeenAt!: Date;
+  @Prop({ type: Date, default: null, index: true }) revokedAt?: Date | null;
+}
+export type OfflineDeviceDocument = HydratedDocument<OfflineDevice>;
+export const OfflineDeviceSchema = SchemaFactory.createForClass(OfflineDevice);
+OfflineDeviceSchema.index({ tenantId: 1, userId: 1, deviceId: 1 }, { unique: true });
+
 @Schema({ timestamps: true, collection: 'offline_sync_records', versionKey: false })
 export class OfflineSyncRecord {
   @Prop(tenantRef) tenantId!: Types.ObjectId;

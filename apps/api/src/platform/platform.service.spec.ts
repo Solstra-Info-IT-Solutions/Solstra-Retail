@@ -7,7 +7,7 @@ describe('PlatformService security boundaries', () => {
   const userId = '507f1f77bcf86cd799439012';
   const createService = (allowedUsers = '') => new PlatformService(
     {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
-    {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
     {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
     { get: jest.fn().mockReturnValue(allowedUsers) } as any,
   );
@@ -17,9 +17,35 @@ describe('PlatformService security boundaries', () => {
     await expect(service.listAutomationRules('not-an-object-id')).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('rejects invalid offline device identity before database access', async () => {
+    const service = createService();
+    await expect(service.registerOfflineDevice('bad-tenant', userId, { deviceId: 'bad', label: 'Counter PC' } as any))
+      .rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.revokeOfflineDevice('bad-tenant', 'device-id'))
+      .rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('rejects invalid notification identity before querying notifications', async () => {
     const service = createService();
     await expect(service.listNotifications('bad-tenant', userId)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects offline invoice sync from an unregistered or revoked device', async () => {
+    const service: any = createService();
+    service.offlineDevices = { findOneAndUpdate: jest.fn(() => ({ lean: async () => null })) };
+    await expect(service.syncOfflineSales(tenantId, userId, {
+      deviceId: 'b5f6a4c2-1d4e-4b2a-9f0c-123456789abc',
+      operations: [],
+    } as any)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(service.offlineDevices.findOneAndUpdate).toHaveBeenCalled();
+  });
+
+  it('does not reactivate an offline device that was explicitly revoked', async () => {
+    const service: any = createService();
+    service.offlineDevices = { findOne: jest.fn(() => ({ lean: async () => ({ revokedAt: new Date() }) })) };
+    await expect(service.registerOfflineDevice(tenantId, userId, {
+      deviceId: 'b5f6a4c2-1d4e-4b2a-9f0c-123456789abc', label: 'Counter PC',
+    })).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('blocks reuse of an offline idempotency key with a different payload', async () => {

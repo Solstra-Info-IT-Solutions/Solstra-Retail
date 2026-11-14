@@ -134,3 +134,71 @@ export class AutomationExecution {
 export type AutomationExecutionDocument = HydratedDocument<AutomationExecution>;
 export const AutomationExecutionSchema = SchemaFactory.createForClass(AutomationExecution);
 AutomationExecutionSchema.index({ tenantId: 1, ruleId: 1, eventKey: 1 }, { unique: true });
+
+
+@Schema({ timestamps: true, collection: 'communication_providers', versionKey: false })
+export class CommunicationProvider {
+  @Prop(tenantRef) tenantId!: Types.ObjectId;
+  @Prop({ type: String, required: true, trim: true, maxlength: 100 }) name!: string;
+  @Prop({ type: String, required: true, enum: ['EMAIL', 'SMS', 'WHATSAPP'] }) channel!: 'EMAIL' | 'SMS' | 'WHATSAPP';
+  @Prop({ type: String, required: true, trim: true, maxlength: 2048 }) endpointUrl!: string;
+  @Prop({ type: String, required: true, select: false }) encryptedSecret!: string;
+  @Prop({ type: String, required: true, select: false }) secretIv!: string;
+  @Prop({ type: String, required: true, select: false }) secretTag!: string;
+  @Prop({ type: Boolean, default: true, index: true }) enabled!: boolean;
+  @Prop({ type: Date, default: null }) lastDeliveredAt?: Date | null;
+}
+export type CommunicationProviderDocument = HydratedDocument<CommunicationProvider>;
+export const CommunicationProviderSchema = SchemaFactory.createForClass(CommunicationProvider);
+CommunicationProviderSchema.index({ tenantId: 1, channel: 1, enabled: 1 });
+
+@Schema({ timestamps: true, collection: 'communication_deliveries', versionKey: false })
+export class CommunicationDelivery {
+  @Prop(tenantRef) tenantId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'CommunicationProvider', required: true, index: true }) providerId!: Types.ObjectId;
+  @Prop({ type: String, required: true, enum: ['EMAIL', 'SMS', 'WHATSAPP'] }) channel!: string;
+  @Prop({ type: String, required: true, maxlength: 320 }) recipient!: string;
+  @Prop({ type: String, required: true, maxlength: 160 }) subject!: string;
+  @Prop({ type: String, required: true, maxlength: 10000 }) message!: string;
+  @Prop({ type: String, required: true, enum: ['PENDING', 'DELIVERING', 'DELIVERED', 'FAILED', 'DEAD'], default: 'PENDING', index: true }) status!: string;
+  @Prop({ type: Number, default: 0 }) attempts!: number;
+  @Prop({ type: Date, default: Date.now, index: true }) nextAttemptAt!: Date;
+  @Prop({ type: String, default: '', maxlength: 500 }) lastError!: string;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true }) requestedBy!: Types.ObjectId;
+}
+export type CommunicationDeliveryDocument = HydratedDocument<CommunicationDelivery>;
+export const CommunicationDeliverySchema = SchemaFactory.createForClass(CommunicationDelivery);
+CommunicationDeliverySchema.index({ tenantId: 1, status: 1, nextAttemptAt: 1 });
+
+@Schema({ timestamps: true, collection: 'subscription_invoices', versionKey: false })
+export class SubscriptionInvoice {
+  @Prop(tenantRef) tenantId!: Types.ObjectId;
+  @Prop({ type: String, required: true, unique: true, maxlength: 50 }) invoiceNumber!: string;
+  @Prop({ type: String, required: true, enum: ['starter', 'growth', 'business', 'enterprise'] }) plan!: string;
+  @Prop({ type: Number, required: true, min: 0 }) amountPaise!: number;
+  @Prop({ type: String, required: true, default: 'INR' }) currency!: string;
+  @Prop({ type: Date, required: true }) periodStart!: Date;
+  @Prop({ type: Date, required: true }) periodEnd!: Date;
+  @Prop({ type: Date, required: true }) dueAt!: Date;
+  @Prop({ type: String, required: true, enum: ['DUE', 'PAID', 'VOID'], default: 'DUE', index: true }) status!: string;
+  @Prop({ type: Date, default: null }) paidAt?: Date | null;
+  @Prop({ type: String, default: '', maxlength: 120 }) paymentReference!: string;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true }) requestedBy!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null }) recordedBy?: Types.ObjectId | null;
+}
+export type SubscriptionInvoiceDocument = HydratedDocument<SubscriptionInvoice>;
+export const SubscriptionInvoiceSchema = SchemaFactory.createForClass(SubscriptionInvoice);
+SubscriptionInvoiceSchema.index({ tenantId: 1, status: 1, dueAt: 1 });
+SubscriptionInvoiceSchema.index({ tenantId: 1, periodStart: 1, periodEnd: 1, status: 1 });
+
+@Schema({ timestamps: true, collection: 'backup_replication_events', versionKey: false })
+export class BackupReplicationEvent {
+  @Prop(tenantRef) tenantId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'BackupArtifact', required: true, index: true }) artifactId!: Types.ObjectId;
+  @Prop({ type: String, required: true, enum: ['SUCCEEDED', 'FAILED', 'NOT_CONFIGURED'] }) status!: string;
+  @Prop({ type: String, default: '', maxlength: 500 }) message!: string;
+  @Prop({ type: Date, default: null }) replicatedAt?: Date | null;
+}
+export type BackupReplicationEventDocument = HydratedDocument<BackupReplicationEvent>;
+export const BackupReplicationEventSchema = SchemaFactory.createForClass(BackupReplicationEvent);
+BackupReplicationEventSchema.index({ tenantId: 1, artifactId: 1, createdAt: -1 });

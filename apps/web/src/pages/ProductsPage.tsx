@@ -12,13 +12,14 @@ type Product = {
   _id: string; name: string; description?: string; category?: string; sku?: string;
   barcode?: string; purchasePrice: number; sellingPrice: number; mrp: number;
   priceIncludesTax?: boolean; gstRate: number; hsnCode?: string; unit?: string;
-  stockQty: number; lowStockThreshold: number; trackStock: boolean; createdAt?: string;
+  stockQty: number; lowStockThreshold: number; trackStock: boolean; valuationInitialized?: boolean; averageCost?: number; inventoryValue?: number; createdAt?: string;
 };
 type ProductList = {
   items: Product[];
   pagination: { total: number; page: number; limit: number; totalPages: number };
 };
 type LowStockList = { items: Product[]; total: number };
+type ValuationStatus = { summary: { trackedProducts: number; initializedProducts: number; pendingProducts: number; pendingStockUnits: number; completionPercentage: number }; items: Product[]; pagination: { total: number } };
 type ProductForm = {
   name: string; description: string; category: string; sku: string; barcode: string;
   purchasePrice: string; sellingPrice: string; mrp: string; gstRate: string;
@@ -51,22 +52,28 @@ export default function ProductsPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [selected, setSelected] = useState<Product | null>(null);
+  const [valuation, setValuation] = useState<ValuationStatus | null>(null);
+  const [valuationCosts, setValuationCosts] = useState<Record<string, string>>({});
+  const [valuationReasons, setValuationReasons] = useState<Record<string, string>>({});
+  const [valuationSaving, setValuationSaving] = useState('');
 
   const loadProducts = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [productsResponse, lowStockResponse] = await Promise.all([
+      const [productsResponse, lowStockResponse, valuationResponse] = await Promise.all([
         api.get<ProductList>('/products', {
           params: { page, limit: 20, ...(search.trim() ? { search: search.trim() } : {}) },
         }),
         api.get<LowStockList>('/products/low-stock'),
+        canManage ? api.get<ValuationStatus>('/products/valuation-status', { params: { page: 1, limit: 50 } }) : Promise.resolve({ data: null } as { data: null }),
       ]);
       setData(productsResponse.data);
       setLowStockCount(lowStockResponse.data.total);
+      setValuation(valuationResponse.data);
     } catch {
       setError('Product records could not be loaded. Please refresh and try again.');
     } finally { setLoading(false); }
-  }, [page, search]);
+  }, [page, search, canManage]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadProducts(), 250);
@@ -111,6 +118,25 @@ export default function ProductsPage() {
         .response?.data?.message;
       setFormError(Array.isArray(message) ? message.join(', ') : message || 'Product could not be saved. Check SKU/barcode uniqueness and field values.');
     } finally { setSaving(false); }
+  }
+
+  async function initializeValuation(product: Product) {
+    const unitCost = Number(valuationCosts[product._id]);
+    const reason = (valuationReasons[product._id] || '').trim();
+    if (!Number.isFinite(unitCost) || unitCost < 0 || !reason || reason.length < 3) {
+      setError('Enter a verified non-negative unit cost and a reconciliation reason (at least 3 characters).');
+      return;
+    }
+    setValuationSaving(product._id); setError('');
+    try {
+      await api.post('/products/' + product._id + '/initialize-valuation', { unitCost, reason });
+      setValuationCosts(old => ({ ...old, [product._id]: '' }));
+      setValuationReasons(old => ({ ...old, [product._id]: '' }));
+      await loadProducts();
+    } catch (requestError: unknown) {
+      const message = (requestError as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      setError(Array.isArray(message) ? message.join(', ') : message || 'Valuation could not be initialized.');
+    } finally { setValuationSaving(''); }
   }
 
   const products = data?.items ?? [];
@@ -185,6 +211,15 @@ export default function ProductsPage() {
           <span>Page {data?.pagination.page ?? page} of {Math.max(data?.pagination.totalPages ?? 1, 1)}</span>
           <button disabled={!data || page >= data.pagination.totalPages || loading} onClick={() => setPage((v) => v + 1)}>Next <ChevronRight size={16} /></button></div>
       </div></div>
+
+      {canManage && valuation && <section className="valuation-panel">
+        <div className="valuation-heading"><div><span className="products-eyebrow">INVENTORY ACCOUNTING CONTROL</span><h2>Opening valuation reconciliation</h2><p>Verify the physical quantity and source unit cost before recognizing opening inventory value.</p></div><strong>{valuation.summary.completionPercentage}% complete</strong></div>
+        <div className="valuation-stats"><span>Tracked products <b>{valuation.summary.trackedProducts}</b></span><span>Initialized <b>{valuation.summary.initializedProducts}</b></span><span>Pending <b>{valuation.summary.pendingProducts}</b></span><span>Pending units <b>{valuation.summary.pendingStockUnits}</b></span></div>
+        {valuation.items.length ? <div className="valuation-table-wrap"><table className="valuation-table"><thead><tr><th>PRODUCT</th><th>PHYSICAL STOCK</th><th>VERIFIED UNIT COST (₹)</th><th>RECONCILIATION REASON</th><th></th></tr></thead><tbody>
+          {valuation.items.map(product=><tr key={product._id}><td><strong>{product.name}</strong><small>{product.sku||'No SKU'}</small></td><td>{product.stockQty} {product.unit||'pcs'}</td><td><input aria-label={'Verified unit cost for '+product.name} type="number" min="0" step=".01" value={valuationCosts[product._id]||''} onChange={e=>setValuationCosts(old=>({...old,[product._id]:e.target.value}))} placeholder="0.00"/></td><td><input aria-label={'Reconciliation reason for '+product.name} value={valuationReasons[product._id]||''} onChange={e=>setValuationReasons(old=>({...old,[product._id]:e.target.value}))} minLength={3} maxLength={250} placeholder="Physical count / supplier invoice reference"/></td><td><button disabled={valuationSaving===product._id} onClick={()=>void initializeValuation(product)}>{valuationSaving===product._id?'Saving...':'Verify & initialize'}</button></td></tr>)}
+        </tbody></table></div> : <p className="valuation-clear">{valuation.summary.pendingProducts===0?'All stock-tracked products have initialized valuation.':'No pending valuation items on this page.'}</p>}
+        <small className="valuation-note">This action is one-time per product and posts the opening inventory journal. Confirm the physical stock and cost evidence before submission.</small>
+      </section>}
 
       {formOpen && <div className="products-backdrop" onClick={() => !saving && setFormOpen(false)}>
         <section className="products-form-modal" onClick={(event) => event.stopPropagation()}>

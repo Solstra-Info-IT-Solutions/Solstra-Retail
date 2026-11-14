@@ -11,6 +11,7 @@ export class HistoricalTransactionImportRun {
   @Prop({ type: String, required: true, enum: ['COMMITTING', 'COMPLETED', 'PARTIAL', 'FAILED'], index: true }) status!: string;
   @Prop({ type: Number, default: 0 }) expectedDocumentCount!: number;
   @Prop({ type: Number, default: 0 }) expectedTotalPaise!: number;
+  @Prop({ type: Boolean, default: false }) expectedTotalProvided!: boolean;
   @Prop({ type: Number, default: 0 }) importedCount!: number;
   @Prop({ type: Number, default: 0 }) importedTotalPaise!: number;
   @Prop({ type: [Object], default: [] }) errors!: Array<{ row: number; message: string }>;

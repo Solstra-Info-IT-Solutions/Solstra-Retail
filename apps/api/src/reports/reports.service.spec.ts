@@ -86,7 +86,8 @@ describe('ReportsService validation', () => {
     const result = await service.demandForecast('507f1f77bcf86cd799439011', 30);
     expect(result.model).toContain('WEIGHTED_30_60_DAY');
     expect(result.forecasts).toHaveLength(1);
-    expect(result.forecasts[0].suggestedReorderQty).toBeGreaterThan(0);
+    const forecast: any = result.forecasts[0];
+    expect(forecast.suggestedReorderQty).toBeGreaterThan(0);
     expect(invoices.aggregate).toHaveBeenCalledWith(expect.arrayContaining([
       expect.objectContaining({ $match: expect.objectContaining({ tenantId: expect.anything() }) }),
     ]));

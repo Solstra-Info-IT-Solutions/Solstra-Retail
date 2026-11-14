@@ -82,6 +82,10 @@ export class AuthService {
 
   async createStaffUser(tenantId: string, dto: CreateStaffUserDto) {
     if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    const tenant = await this.tenants.findById(tenantId).select('maxUsers').lean();
+    if (!tenant) throw new NotFoundException('Workspace not found');
+    const userCount = await this.users.countDocuments({ tenantId: new Types.ObjectId(tenantId) });
+    if (userCount >= Number(tenant.maxUsers || 3)) throw new ConflictException('Workspace user limit reached for the current subscription plan');
     const email = dto.email.toLowerCase().trim();
     const passwordHash = await bcrypt.hash(dto.password, 12);
     try {

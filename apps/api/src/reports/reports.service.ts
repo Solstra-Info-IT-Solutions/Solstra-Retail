@@ -494,7 +494,7 @@ export class ReportsService {
       });
     } catch (error: any) {
       if (error?.code !== 11000) throw error;
-      const existing = await this.migrationImportRuns.findOne(tenantFilter(tenantId, { runKey: dto.runKey })).lean();
+      const existing: any = await this.migrationImportRuns.findOne(tenantFilter(tenantId, { runKey: dto.runKey })).lean();
       if (!existing) throw error;
       if (existing.payloadSha256 !== payloadSha256 || existing.entity !== dto.entity) {
         throw new BadRequestException('Import run key was already used with a different payload');

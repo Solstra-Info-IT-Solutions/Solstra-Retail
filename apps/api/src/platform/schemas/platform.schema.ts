@@ -65,7 +65,7 @@ export class WebhookDelivery {
 }
 export type WebhookDeliveryDocument = HydratedDocument<WebhookDelivery>;
 export const WebhookDeliverySchema = SchemaFactory.createForClass(WebhookDelivery);
-WebhookDeliverySchema.index({ tenantId: 1, integrationId: 1, eventKey: 1 }, { unique: true });
+WebhookDeliverySchema.index({ tenantId: 1, integrationId: 1, eventType: 1, eventKey: 1 }, { unique: true });
 
 @Schema({ timestamps: true, collection: 'offline_sync_records', versionKey: false })
 export class OfflineSyncRecord {

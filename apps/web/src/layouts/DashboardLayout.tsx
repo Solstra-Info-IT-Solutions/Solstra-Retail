@@ -2,7 +2,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingCart, Package, Users, Warehouse,
-  Truck, ClipboardList, BarChart3, Settings, ReceiptText, Building2,
+  Truck, ClipboardList, BarChart3, ReceiptText, Building2,
   Menu, X, LogOut, Search, Languages, ShieldCheck, History, Receipt, type LucideIcon
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';

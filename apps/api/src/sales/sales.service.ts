@@ -452,10 +452,18 @@ export class SalesService {
         const serialCollection = this.connection.db?.collection('inventory_serials');
         for (const item of dto.items) {
           const serialNumbers = (item.serialNumbers || []).map(value => value.trim().toUpperCase());
-          if (!serialNumbers.length) continue;
-          if (!dto.warehouseId) throw new BadRequestException('Select a warehouse when selling serialized products');
-          if (serialNumbers.length !== item.quantity) throw new BadRequestException('The number of selected serials must equal the invoice line quantity');
+          if (!dto.warehouseId) {
+            if (serialNumbers.length) throw new BadRequestException('Select a warehouse when selling serialized products');
+            continue;
+          }
           if (!serialCollection) throw new ConflictException('Serial registry is unavailable');
+          const registeredCount = await serialCollection.countDocuments({
+            tenantId: new Types.ObjectId(tenantId), productId: new Types.ObjectId(item.productId),
+            warehouseId: new Types.ObjectId(dto.warehouseId), status: 'IN_STOCK',
+          }, { session });
+          if (registeredCount > 0 && serialNumbers.length !== item.quantity) throw new BadRequestException(`Select exactly ${item.quantity} serial number(s) for ${productMap.get(item.productId)?.name || 'this product'}.`);
+          if (!serialNumbers.length) continue;
+          if (serialNumbers.length !== item.quantity) throw new BadRequestException('The number of selected serials must equal the invoice line quantity');
           const registered = await serialCollection.find({
             tenantId: new Types.ObjectId(tenantId), productId: new Types.ObjectId(item.productId),
             warehouseId: new Types.ObjectId(dto.warehouseId), serialNumber: { $in: serialNumbers }, status: 'IN_STOCK',

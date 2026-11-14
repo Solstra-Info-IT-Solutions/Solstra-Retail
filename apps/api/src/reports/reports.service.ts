@@ -434,11 +434,18 @@ export class ReportsService {
     else if (entity === 'sales') { model = this.invoices; projection = '-__v'; scoped.status = 'ISSUED'; }
     else if (entity === 'purchases') { model = this.purchases; projection = '-__v'; scoped.status = { $ne: 'CANCELLED' }; }
     else { model = this.journals; projection = '-__v'; }
-    const rows = await model.find(scoped).select(projection).sort({ _id: 1 }).limit(safeLimit + 1).lean();
+    const baseFilter = { ...scoped };
+    if (cursor) delete baseFilter._id;
+    const [rows, totalMatching] = await Promise.all([
+      model.find(scoped).select(projection).sort({ _id: 1 }).limit(safeLimit + 1).lean(),
+      model.countDocuments(baseFilter),
+    ]);
     const hasMore = rows.length > safeLimit;
     const items = rows.slice(0, safeLimit);
+    const pageSha256 = createHash('sha256').update(JSON.stringify(items)).digest('hex');
     return {
-      entity, items, exportedCount: items.length,
+      entity, items, exportedCount: items.length, totalMatching,
+      pageSha256, integrityAlgorithm: 'SHA-256',
       nextCursor: hasMore && items.length ? String(items[items.length - 1]._id) : null,
       hasMore, limit: safeLimit, generatedAt: new Date(),
       disclaimer: 'Tenant-scoped source-data export for migration and reconciliation. This does not post opening balances, recreate historical payment side effects, or certify external accounting/GST data.',

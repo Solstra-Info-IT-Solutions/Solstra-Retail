@@ -1556,7 +1556,7 @@ if (existingPayment) {
           const earned = await this.loyaltyLedger.findOne(tenantFilter(tenantId, {
             customerId: invoice.customerId, sourceType: 'SALE', sourceId: invoice._id.toString(), eventType: 'SALE_EARN',
           })).session(session).lean();
-          if (earned?.points > 0) {
+          if (earned && Number(earned.points || 0) > 0) {
             const previousCreditNoteIds = previousNotes.map((note: any) => note._id);
             const previousClawbacks = previousCreditNoteIds.length
               ? await this.loyaltyLedger.find(tenantFilter(tenantId, {
@@ -1564,7 +1564,7 @@ if (existingPayment) {
                   sourceId: { $in: previousCreditNoteIds.map((id: any) => String(id)) },
                 })).session(session).lean()
               : [];
-            const previouslyClawedBack = previousClawbacks.reduce((sum: number, row: any) => sum + row.points, 0);
+            const earnedPoints = Number(earned.points || 0);\n            const previouslyClawedBack = previousClawbacks.reduce((sum: number, row: any) => sum + row.points, 0);
             const cumulativeReturnedTaxablePaise = previousNotes.reduce((sum: number, note: any) => sum + this.toPaise(note.taxableValue || 0), 0) + taxableTotalPaise;
             const originalTaxablePaise = this.toPaise(invoice.taxableValue);
             const targetClawback = Math.min(earned.points, cumulativeReturnedTaxablePaise >= originalTaxablePaise

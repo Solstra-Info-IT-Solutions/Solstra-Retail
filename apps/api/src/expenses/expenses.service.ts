@@ -6,6 +6,7 @@ import { AccountingService } from '../accounting/accounting.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { AddExpensePaymentDto } from './dto/add-expense-payment.dto';
 import { ListExpensesDto } from './dto/list-expenses.dto';
+import { ReviewExpenseDto } from './dto/review-expense.dto';
 import { Expense, ExpenseDocument } from './schemas/expense.schema';
 
 @Injectable()
@@ -15,7 +16,7 @@ export class ExpensesService {
     private readonly accounting: AccountingService,
   ) {}
 
-  async create(tenantId: string, userId: string, dto: CreateExpenseDto) {
+  async create(tenantId: string, userId: string, role: string, dto: CreateExpenseDto) {
     this.validateIdentity(tenantId, userId);
     const title = dto.title?.trim();
     const category = dto.category?.trim();
@@ -35,17 +36,20 @@ export class ExpensesService {
           amount: amountPaise / 100, expenseDate,
           payee: dto.payee?.trim() || '', reference: dto.reference?.trim() || '',
           attachmentUrl: dto.attachmentUrl?.trim() || '',
-          status: 'UNPAID', paidAmount: 0, dueAmount: amountPaise / 100, payments: [],
+          status: 'UNPAID', approvalStatus: role === 'staff' ? 'PENDING_APPROVAL' : 'APPROVED',
+          approvalHistory: [], paidAmount: 0, dueAmount: amountPaise / 100, payments: [],
         }], { session });
-        await this.accounting.postOperationalJournal({
-          tenantId, userId, postingDate: expenseDate,
-          narration: `Expense: ${title}`, sourceType: 'EXPENSE', sourceId: expense._id.toString(),
-          lines: [
-            { accountCode: '5200', debit: amountPaise / 100, credit: 0, description: category },
-            { accountCode: '2000', debit: 0, credit: amountPaise / 100, description: dto.payee?.trim() || title },
-          ],
-          session,
-        });
+        if (expense.approvalStatus === 'APPROVED') {
+          await this.accounting.postOperationalJournal({
+            tenantId, userId, postingDate: expenseDate,
+            narration: `Expense: ${title}`, sourceType: 'EXPENSE', sourceId: expense._id.toString(),
+            lines: [
+              { accountCode: '5200', debit: amountPaise / 100, credit: 0, description: category },
+              { accountCode: '2000', debit: 0, credit: amountPaise / 100, description: dto.payee?.trim() || title },
+            ],
+            session,
+          });
+        }
         created = expense;
       });
     } finally {
@@ -53,6 +57,53 @@ export class ExpensesService {
     }
     if (!created) throw new Error('Expense could not be created');
     return created;
+  }
+
+  async review(tenantId: string, userId: string, id: string, dto: ReviewExpenseDto) {
+    this.validateIdentity(tenantId, userId);
+    if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid expense ID');
+    const reason = dto.reason?.trim();
+    if (!['APPROVED', 'REJECTED'].includes(dto.decision) || !reason || reason.length < 5 || reason.length > 500) {
+      throw new BadRequestException('A valid decision and review reason are required');
+    }
+    const session = await this.expenses.db.startSession();
+    let result: ExpenseDocument | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const expense = await this.expenses.findOne(
+          tenantFilter(tenantId, { _id: new Types.ObjectId(id) }),
+        ).session(session);
+        if (!expense) throw new NotFoundException('Expense not found');
+        if (expense.approvalStatus !== 'PENDING_APPROVAL') {
+          throw new BadRequestException('Only pending expenses can be reviewed');
+        }
+        if (expense.createdBy.toString() === userId) {
+          throw new BadRequestException('Expense creators cannot approve or reject their own submissions');
+        }
+        const reviewedAt = new Date();
+        expense.approvalStatus = dto.decision;
+        expense.approvalHistory.push({
+          decision: dto.decision, reason, reviewedBy: new Types.ObjectId(userId), reviewedAt,
+        } as any);
+        await expense.save({ session });
+        if (dto.decision === 'APPROVED') {
+          await this.accounting.postOperationalJournal({
+            tenantId, userId, postingDate: expense.expenseDate,
+            narration: `Expense: ${expense.title}`, sourceType: 'EXPENSE', sourceId: expense._id.toString(),
+            lines: [
+              { accountCode: '5200', debit: expense.amount, credit: 0, description: expense.category },
+              { accountCode: '2000', debit: 0, credit: expense.amount, description: expense.payee || expense.title },
+            ],
+            session,
+          });
+        }
+        result = expense;
+      });
+    } finally {
+      await session.endSession();
+    }
+    if (!result) throw new Error('Expense review could not be recorded');
+    return result;
   }
 
   async addPayment(tenantId: string, userId: string, id: string, dto: AddExpensePaymentDto) {
@@ -71,6 +122,7 @@ export class ExpensesService {
           tenantFilter(tenantId, { _id: new Types.ObjectId(id) }),
         ).session(session);
         if (!expense) throw new NotFoundException('Expense not found');
+        if (expense.approvalStatus !== 'APPROVED') throw new BadRequestException('Only approved expenses can be paid');
         if (expense.payments.some((payment) => payment.idempotencyKey === key)) {
           result = expense;
           return;

@@ -58,6 +58,18 @@ export class TrialGuard implements CanActivate {
 
     const now = Date.now();
 
+    if (tenant.subscriptionStatus === 'expired') {
+      throw new HttpException(
+        {
+          code: 'SUBSCRIPTION_EXPIRED',
+          message: 'Your subscription has expired. Renew your plan to restore workspace access.',
+          subscriptionPeriodEnd: tenant.subscriptionPeriodEnd ?? null,
+          billingStatus: tenant.billingStatus || 'PAST_DUE',
+        },
+        HttpStatus.PAYMENT_REQUIRED,
+      );
+    }
+
     // Paid access is valid only through the explicitly paid subscription period.
     // Older active tenants without a period end remain compatible until migrated.
     if (tenant.subscriptionStatus === 'active') {

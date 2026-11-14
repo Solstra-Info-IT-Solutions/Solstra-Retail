@@ -10,6 +10,7 @@ import { api } from '../api/client';
 
 export interface AuthUser {
   id: string;
+  tenantId?: string;
   name: string;
   email: string;
   role: string;

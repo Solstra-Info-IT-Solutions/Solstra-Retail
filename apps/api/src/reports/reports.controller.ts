@@ -14,6 +14,7 @@ import { Request, Response } from 'express';
 import { ReportsService } from './reports.service';
 import { ReportDateRangeDto } from './dto/report-date-range.dto';
 import { BusinessQuestionDto } from './dto/business-question.dto';
+import { MigrationImportDto } from './dto/migration-import.dto';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 
@@ -115,6 +116,24 @@ export class ReportsController {
   @Post('reports/gst/submissions/:type/:reference')
   submitGstCompliance(@Req() req: AuthenticatedRequest, @Param('type') type: string, @Param('reference') reference: string) {
     return this.reportsService.submitGstCompliance(req.user.tenantId, type.toUpperCase(), reference);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('reports/migration/import/preview')
+  previewMasterDataImport(@Req() req: AuthenticatedRequest, @Body() dto: MigrationImportDto) {
+    return this.reportsService.previewMasterDataImport(req.user.tenantId, dto);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('reports/migration/import/commit')
+  commitMasterDataImport(@Req() req: AuthenticatedRequest, @Body() dto: MigrationImportDto) {
+    return this.reportsService.commitMasterDataImport(req.user.tenantId, dto);
+  }
+
+  @Roles('owner', 'admin')
+  @Get('reports/migration/import/runs')
+  masterDataImportRuns(@Req() req: AuthenticatedRequest, @Query('page') page = '1') {
+    return this.reportsService.getMasterDataImportRuns(req.user.tenantId, Number(page));
   }
 
   @Roles('owner', 'admin')

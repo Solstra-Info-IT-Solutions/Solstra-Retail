@@ -828,7 +828,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     const matched = rows.filter(row => row.status === 'MATCHED');
     const discrepancies = [...overAllocated, ...underAllocated];
     return {
-      summary: { products: rows.length, valuationPending: pending.length, overAllocated: overAllocated.length, underAllocated: underAllocated.length, matched: matched.length, discrepancyCount: discrepancies.length },
+      summary: { products: rows.length, valuationPending: pending.length, overAllocated: overAllocated.length, underAllocated: underAllocated.length, matched: matched.length, withinAggregateTotals: matched.length, discrepancyCount: discrepancies.length },
       pending: pending.slice(0, 100), discrepancies: discrepancies.slice(0, 100),
       overAllocated: overAllocated.slice(0, 100), underAllocated: underAllocated.slice(0, 100), review: matched.slice(0, 100),
       note: 'Unallocated aggregate stock is allowed. Both positive and negative warehouse allocation differences are reported; a one-paise valuation tolerance avoids floating-point noise. This report never revalues stock or alters historical journals.',

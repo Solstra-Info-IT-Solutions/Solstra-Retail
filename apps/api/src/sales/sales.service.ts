@@ -1147,6 +1147,7 @@ if (existingPayment) {
           lineIndex: item.lineIndex,
           quantity: item.quantity,
           restock: item.restock !== false,
+          serialNumbers: [...(item.serialNumbers || [])].map(value => value.trim().toUpperCase()).sort(),
         }))
         .sort((a, b) => a.lineIndex - b.lineIndex),
     };
@@ -1293,6 +1294,20 @@ if (existingPayment) {
             );
           }
 
+          const originalSerials = (original.serialNumbers || []).map((value: string) => value.toUpperCase());
+          const returnedSerials = previousNotes.flatMap((note: any) => note.items
+            .filter((line: any) => line.lineIndex === requested.lineIndex)
+            .flatMap((line: any) => line.serialNumbers || []));
+          const requestedSerials = (requested.serialNumbers || []).map(value => value.trim().toUpperCase());
+          if (originalSerials.length) {
+            if (requestedSerials.length !== requested.quantity) throw new BadRequestException(`Select exactly ${requested.quantity} sold serial number(s) for "${original.name}".`);
+            if (new Set(requestedSerials).size !== requestedSerials.length || requestedSerials.some(value => !originalSerials.includes(value) || returnedSerials.includes(value))) {
+              throw new ConflictException(`One or more selected serials for "${original.name}" were not sold on this invoice or were already returned.`);
+            }
+          } else if (requestedSerials.length) {
+            throw new BadRequestException(`This invoice line for "${original.name}" does not contain serialized units.`);
+          }
+
           const previousLineReturns = previousNotes.flatMap((note) =>
             note.items.filter(
               (line: any) => line.lineIndex === requested.lineIndex,
@@ -1385,6 +1400,7 @@ if (existingPayment) {
             totalTax: this.fromPaise(taxPaise),
             lineTotal: this.fromPaise(lineTotalPaise),
             restocked,
+            serialNumbers: requestedSerials,
           });
 
           discountTotalPaise += discountPaise;

@@ -622,6 +622,88 @@ describe('Authentication HTTP E2E', () => {
     ).toBe(1);
   });
 
+  it('records a partial sale payment once and rejects an overpayment through HTTP', async () => {
+    const registration = await registerAccount();
+    expect(registration.status).toBe(201);
+
+    const headers = {
+      Authorization: `Bearer ${registration.body.accessToken}`,
+    };
+
+    const product = await request(app.getHttpServer())
+      .post('/api/v1/products')
+      .set(headers)
+      .send({
+        name: 'E2E Partial Payment Product',
+        purchasePrice: 50,
+        sellingPrice: 100,
+        mrp: 100,
+        gstRate: 0,
+        stockQty: 5,
+      });
+
+    expect(product.status).toBe(201);
+
+    await tenants.updateOne(
+      { _id: registration.body.tenant.id },
+      { $set: { stateCode: '09' } },
+    );
+
+    const sale = await request(app.getHttpServer())
+      .post('/api/v1/sales')
+      .set(headers)
+      .send({
+        idempotencyKey: randomUUID(),
+        items: [{ productId: product.body._id, quantity: 2 }],
+        placeOfSupplyStateCode: '09',
+      });
+
+    expect(sale.status).toBe(201);
+    expect(sale.body.dueAmount).toBe(200);
+
+    const paymentPayload = {
+      idempotencyKey: randomUUID(),
+      method: 'CASH',
+      amount: 50,
+      reference: 'E2E partial payment',
+    };
+
+    const firstPayment = await request(app.getHttpServer())
+      .post(`/api/v1/sales/${sale.body._id}/payments`)
+      .set(headers)
+      .send(paymentPayload);
+
+    expect(firstPayment.status).toBe(201);
+    expect(firstPayment.body.paidAmount).toBe(50);
+    expect(firstPayment.body.dueAmount).toBe(150);
+    expect(firstPayment.body.paymentStatus).toBe('PARTIALLY_PAID');
+
+    const retry = await request(app.getHttpServer())
+      .post(`/api/v1/sales/${sale.body._id}/payments`)
+      .set(headers)
+      .send(paymentPayload);
+
+    expect(retry.status).toBe(201);
+    expect(retry.body.paidAmount).toBe(50);
+    expect(retry.body.payments).toHaveLength(1);
+
+    const overpayment = await request(app.getHttpServer())
+      .post(`/api/v1/sales/${sale.body._id}/payments`)
+      .set(headers)
+      .send({
+        idempotencyKey: randomUUID(),
+        method: 'UPI',
+        amount: 151,
+      });
+
+    expect(overpayment.status).toBe(400);
+
+    const storedInvoice = await invoices.findById(sale.body._id).lean();
+    expect(storedInvoice?.paidAmount).toBe(50);
+    expect(storedInvoice?.dueAmount).toBe(150);
+    expect(storedInvoice?.payments).toHaveLength(1);
+  });
+
   it('creates, lists, updates and soft-deletes customers with tenant isolation', async () => {
     const ownerA = await registerAccount();
     const ownerB = await registerAccount();

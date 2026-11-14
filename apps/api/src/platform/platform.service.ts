@@ -20,7 +20,7 @@ import { User } from '../auth/schemas/user.schema';
 import { Product } from '../products/schemas/product.schema';
 import { WarehouseStock } from '../inventory/schemas/warehouse-stock.schema';
 import {
-  AutomationExecution, AutomationRule, BackupArtifact, BackupPolicy, OfflineSyncRecord, PlatformNotification, SaasAdminAudit,
+  AutomationExecution, AutomationRule, BackupArtifact, BackupPolicy, BackupRestoreDrill, OfflineSyncRecord, PlatformNotification, SaasAdminAudit,
   WebhookDelivery, WebhookIntegration, CommunicationProvider, CommunicationDelivery, SubscriptionInvoice, BackupReplicationEvent,
 } from './schemas/platform.schema';
 import {
@@ -67,6 +67,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     @InjectModel(CommunicationDelivery.name) private readonly communicationDeliveries: Model<any>,
     @InjectModel(SubscriptionInvoice.name) private readonly subscriptionInvoices: Model<any>,
     @InjectModel(BackupReplicationEvent.name) private readonly backupReplicationEvents: Model<any>,
+    @InjectModel(BackupRestoreDrill.name) private readonly backupRestoreDrills: Model<any>,
     private readonly sales: SalesService,
     private readonly config: ConfigService,
   ) {}
@@ -987,6 +988,62 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       await this.backupReplicationEvents.create({ tenantId: new Types.ObjectId(tenantId), artifactId: artifact._id, status: 'FAILED', message: String(error?.message || 'Replication failed').slice(0, 500) });
       throw new ServiceUnavailableException('Off-site backup replication failed; the in-cluster backup remains available for retry');
     } finally { clearTimeout(timeout); }
+  }
+
+  async runBackupRestoreDrill(tenantId: string, artifactId: string) {
+    this.identity(tenantId);
+    if (!Types.ObjectId.isValid(artifactId)) throw new BadRequestException('Invalid backup artifact ID');
+    const artifact: any = await this.backupArtifacts.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(artifactId) })).lean();
+    if (!artifact) throw new NotFoundException('Backup artifact not found in this workspace');
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      const stream = this.gridFsBucket().openDownloadStream(artifact.gridFsId);
+      stream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      stream.once('end', resolve);
+      stream.once('error', reject);
+    });
+    const compressed = Buffer.concat(chunks);
+    const checksum = createHash('sha256').update(compressed).digest('hex');
+    let status = 'FAILED';
+    let message = 'Backup restore drill failed validation';
+    let collectionCount = 0;
+    let documentCount = 0;
+    try {
+      if (checksum !== artifact.checksumSha256) throw new Error('Stored archive checksum does not match artifact metadata');
+      const archive: any = JSON.parse(gunzipSync(compressed).toString('utf8'));
+      if (archive?.format !== 'SOLSTRA_RETAIL_TENANT_BACKUP_V1' || String(archive?.tenantId) !== tenantId || !archive?.collections || typeof archive.collections !== 'object') {
+        throw new Error('Archive format or tenant identity validation failed');
+      }
+      const collections = Object.entries(archive.collections);
+      collectionCount = collections.length;
+      for (const [name, rows] of collections) {
+        if (!/^[a-zA-Z0-9_]+$/.test(name) || !Array.isArray(rows)) throw new Error('Archive contains an invalid collection entry');
+        for (const row of rows as any[]) {
+          if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('Archive contains a malformed document');
+          if (row.tenantId && String(row.tenantId) !== tenantId) throw new Error('Archive contains a document from another workspace');
+          documentCount += 1;
+        }
+      }
+      status = 'PASSED';
+      message = 'Checksum, gzip, archive format, tenant identity, collection structure and document ownership checks passed. No live database records were changed.';
+    } catch (error: any) {
+      message = String(error?.message || message).slice(0, 500);
+    }
+    const drill = await this.backupRestoreDrills.create({
+      tenantId: new Types.ObjectId(tenantId), artifactId: artifact._id, status, message,
+      collectionCount, documentCount, checksumSha256: checksum,
+    });
+    return { id: String(drill._id), artifactId, status, message, collectionCount, documentCount, checksumSha256: checksum, testedAt: drill.createdAt };
+  }
+
+  async listBackupRestoreDrills(tenantId: string, artifactId?: string) {
+    this.identity(tenantId);
+    const filter: any = tenantFilter(tenantId, {});
+    if (artifactId) {
+      if (!Types.ObjectId.isValid(artifactId)) throw new BadRequestException('Invalid backup artifact ID');
+      filter.artifactId = new Types.ObjectId(artifactId);
+    }
+    return this.backupRestoreDrills.find(filter).sort({ createdAt: -1 }).limit(100).lean();
   }
 
   async listBackupReplicationEvents(tenantId: string, artifactId?: string) {

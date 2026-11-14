@@ -8,7 +8,7 @@ describe('PlatformService security boundaries', () => {
   const createService = (allowedUsers = '') => new PlatformService(
     {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
     {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
-    {} as any, {} as any, {} as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
     { get: jest.fn().mockReturnValue(allowedUsers) } as any,
   );
 

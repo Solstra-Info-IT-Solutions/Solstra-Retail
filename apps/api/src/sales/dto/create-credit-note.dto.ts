@@ -1,6 +1,7 @@
 ﻿import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayUnique,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -30,6 +31,8 @@ export class CreateCreditNoteItemDto {
   @IsOptional()
   @IsBoolean()
   restock?: boolean;
+
+  @IsOptional() @IsArray() @ArrayUnique() @ArrayMaxSize(100) @IsString({ each: true }) @MaxLength(100, { each: true }) serialNumbers?: string[];
 }
 
 export class CreateCreditNoteDto {

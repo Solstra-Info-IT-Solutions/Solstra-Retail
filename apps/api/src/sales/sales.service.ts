@@ -307,6 +307,7 @@ export class SalesService {
         productId: item.productId,
         quantity: item.quantity,
         discountAmount: item.discountAmount ?? 0,
+        serialNumbers: [...(item.serialNumbers || [])].map(value => value.trim().toUpperCase()).sort(),
       })),
       customerId: dto.customerId ?? null,
       customerName: dto.customerName ?? '',
@@ -435,6 +436,7 @@ export class SalesService {
         }
 
         const productMap = new Map<string, any>();
+        const batchAllocationsByProduct = new Map<string, Array<{ batchId: Types.ObjectId; quantity: number }>>();
         const requestedQuantities = new Map<string, number>();
 
         for (const item of dto.items) {
@@ -444,6 +446,29 @@ export class SalesService {
             id,
             (requestedQuantities.get(id) || 0) + item.quantity,
           );
+        }
+
+        const allSerialNumbers = dto.items.flatMap(item => item.serialNumbers || []).map(value => value.trim().toUpperCase());
+        if (new Set(allSerialNumbers).size !== allSerialNumbers.length) throw new BadRequestException('A serial number can be assigned only once per invoice');
+        const serialCollection = this.connection.db?.collection('inventory_serials');
+        for (const item of dto.items) {
+          const serialNumbers = (item.serialNumbers || []).map(value => value.trim().toUpperCase());
+          if (!serialCollection) throw new ConflictException('Serial registry is unavailable');
+          const registeredCount = await serialCollection.countDocuments({
+            tenantId: new Types.ObjectId(tenantId), productId: new Types.ObjectId(item.productId),
+          }, { session });
+          if (!dto.warehouseId) {
+            if (serialNumbers.length || registeredCount > 0) throw new BadRequestException('Select a warehouse and the exact serial numbers when selling serialized products');
+            continue;
+          }
+          if (registeredCount > 0 && serialNumbers.length !== item.quantity) throw new BadRequestException(`Select exactly ${item.quantity} serial number(s) for ${productMap.get(item.productId)?.name || 'this product'}.`);
+          if (!serialNumbers.length) continue;
+          if (serialNumbers.length !== item.quantity) throw new BadRequestException('The number of selected serials must equal the invoice line quantity');
+          const registered = await serialCollection.find({
+            tenantId: new Types.ObjectId(tenantId), productId: new Types.ObjectId(item.productId),
+            warehouseId: new Types.ObjectId(dto.warehouseId), serialNumber: { $in: serialNumbers }, status: 'IN_STOCK',
+          }, { session }).toArray();
+          if (registered.length !== serialNumbers.length) throw new ConflictException('One or more serials are not available for this product in the selected warehouse');
         }
 
         for (const productId of requestedQuantities.keys()) {
@@ -646,6 +671,7 @@ export class SalesService {
             igstAmount: this.fromPaise(igstPaise),
             totalTax: this.fromPaise(taxPaise),
             lineTotal: this.fromPaise(lineTotalPaise),
+            serialNumbers: (item.serialNumbers || []).map(value => value.trim().toUpperCase()),
           });
         }
 
@@ -770,6 +796,55 @@ export class SalesService {
             ],
             { session },
           );
+
+          const batchCollection = this.connection.db?.collection('inventory_batches');
+          if (!batchCollection) throw new ConflictException('Inventory batch registry is unavailable');
+          const batchScope: any = { tenantId: new Types.ObjectId(tenantId), productId: product._id };
+          if (dto.warehouseId) batchScope.warehouseId = new Types.ObjectId(dto.warehouseId);
+          const batchCount = await batchCollection.countDocuments(batchScope, { session });
+          if (batchCount > 0) {
+            if (!dto.warehouseId) throw new BadRequestException(`Select a warehouse to consume batches for ${product.name}.`);
+            const availableBatches = await batchCollection.find({
+              ...batchScope, status: 'ACTIVE', expiresAt: { $gt: now }, quantity: { $gt: 0 },
+            }, { session }).sort({ expiresAt: 1, createdAt: 1 }).toArray();
+            const availableBatchQty = availableBatches.reduce((sum: number, row: any) => sum + Number(row.quantity || 0), 0);
+            if (availableBatchQty < quantity) throw new ConflictException(`Insufficient unexpired batch quantity for ${product.name}. Available batch units: ${availableBatchQty}.`);
+            let remaining = quantity;
+            const allocations: Array<{ batchId: Types.ObjectId; quantity: number }> = [];
+            for (const batchRow of availableBatches) {
+              if (remaining <= 0) break;
+              const take = Math.min(remaining, Number(batchRow.quantity));
+              const nextQuantity = Number(batchRow.quantity) - take;
+              const consumed = await batchCollection.updateOne(
+                { _id: batchRow._id, tenantId: new Types.ObjectId(tenantId), quantity: batchRow.quantity, status: 'ACTIVE' },
+                { $set: { quantity: nextQuantity, status: nextQuantity === 0 ? 'DEPLETED' : 'ACTIVE' } },
+                { session },
+              );
+              if (consumed.modifiedCount !== 1) throw new ConflictException('Batch stock changed during checkout; please retry');
+              allocations.push({ batchId: batchRow._id, quantity: take });
+              remaining -= take;
+            }
+            batchAllocationsByProduct.set(String(product._id), allocations);
+          }
+        }
+
+        for (const [productId, allocations] of batchAllocationsByProduct) {
+          const remainingAllocations = allocations.map(item => ({ ...item }));
+          for (const [index, item] of dto.items.entries()) {
+            if (item.productId !== productId) continue;
+            let needed = item.quantity;
+            const lineAllocations: Array<{ batchId: Types.ObjectId; quantity: number }> = [];
+            for (const allocation of remainingAllocations) {
+              if (needed <= 0) break;
+              if (allocation.quantity <= 0) continue;
+              const take = Math.min(needed, allocation.quantity);
+              lineAllocations.push({ batchId: allocation.batchId, quantity: take });
+              allocation.quantity -= take;
+              needed -= take;
+            }
+            if (needed !== 0) throw new ConflictException('Batch allocation did not cover all invoice line quantities');
+            invoiceItems[index].batchAllocations = lineAllocations;
+          }
         }
 
         const grandTotal = this.fromPaise(grandTotalPaise);
@@ -824,6 +899,16 @@ export class SalesService {
         });
 
         await invoice.save({ session });
+        for (const item of dto.items) {
+          const serialNumbers = (item.serialNumbers || []).map(value => value.trim().toUpperCase());
+          if (!serialNumbers.length) continue;
+          const updatedSerials = await this.connection.db!.collection('inventory_serials').updateMany(
+            { tenantId: new Types.ObjectId(tenantId), productId: new Types.ObjectId(item.productId), warehouseId: new Types.ObjectId(dto.warehouseId!), serialNumber: { $in: serialNumbers }, status: 'IN_STOCK' },
+            { $set: { status: 'SOLD', saleInvoiceId: invoice._id, soldAt: now } },
+            { session },
+          );
+          if (updatedSerials.modifiedCount !== serialNumbers.length) throw new ConflictException('Serial availability changed during checkout; please retry the sale');
+        }
         if (promotion) {
           const usageFilter: any = { _id: promotion._id, tenantId: new Types.ObjectId(tenantId), status: 'ACTIVE', startsAt: { $lte: saleDate }, endsAt: { $gt: saleDate } };
           if (promotion.usageLimit != null) usageFilter.usageCount = { $lt: promotion.usageLimit };
@@ -1103,6 +1188,9 @@ if (existingPayment) {
 
     const lineIndexes = dto.items.map((item) => item.lineIndex);
 
+    const requestedSerials = dto.items.flatMap(item => item.serialNumbers || []).map(value => value.trim().toUpperCase());
+    if (new Set(requestedSerials).size !== requestedSerials.length) throw new BadRequestException('A serial number can be returned only once per credit note');
+
     if (new Set(lineIndexes).size !== lineIndexes.length) {
       throw new BadRequestException(
         'A credit note cannot contain the same invoice line more than once.',
@@ -1119,6 +1207,7 @@ if (existingPayment) {
           lineIndex: item.lineIndex,
           quantity: item.quantity,
           restock: item.restock !== false,
+          serialNumbers: [...(item.serialNumbers || [])].map(value => value.trim().toUpperCase()).sort(),
         }))
         .sort((a, b) => a.lineIndex - b.lineIndex),
     };
@@ -1265,11 +1354,50 @@ if (existingPayment) {
             );
           }
 
+          const originalSerials = (original.serialNumbers || []).map((value: string) => value.toUpperCase());
+          const returnedSerials = previousNotes.flatMap((note: any) => note.items
+            .filter((line: any) => line.lineIndex === requested.lineIndex)
+            .flatMap((line: any) => line.serialNumbers || []));
+          const requestedSerials = (requested.serialNumbers || []).map(value => value.trim().toUpperCase());
+          if (originalSerials.length) {
+            if (requestedSerials.length !== requested.quantity) throw new BadRequestException(`Select exactly ${requested.quantity} sold serial number(s) for "${original.name}".`);
+            if (new Set(requestedSerials).size !== requestedSerials.length || requestedSerials.some(value => !originalSerials.includes(value) || returnedSerials.includes(value))) {
+              throw new ConflictException(`One or more selected serials for "${original.name}" were not sold on this invoice or were already returned.`);
+            }
+          } else if (requestedSerials.length) {
+            throw new BadRequestException(`This invoice line for "${original.name}" does not contain serialized units.`);
+          }
+
           const previousLineReturns = previousNotes.flatMap((note) =>
             note.items.filter(
               (line: any) => line.lineIndex === requested.lineIndex,
             ),
           );
+
+          const originalBatchAllocations = (original.batchAllocations || []).map((row: any) => ({ batchId: row.batchId, quantity: Number(row.quantity) }));
+          const batchReturnAllocations: Array<{ batchId: Types.ObjectId; quantity: number }> = [];
+          if (originalBatchAllocations.length) {
+            let batchNeeded = requested.quantity;
+            for (const allocation of originalBatchAllocations) {
+              const alreadyReturned = previousLineReturns.reduce((sum: number, line: any) =>
+                sum + (line.batchAllocations || []).filter((row: any) => String(row.batchId) === String(allocation.batchId)).reduce((value: number, row: any) => value + Number(row.quantity || 0), 0), 0);
+              const availableFromBatch = Math.max(0, allocation.quantity - alreadyReturned);
+              const take = Math.min(batchNeeded, availableFromBatch);
+              if (take <= 0) continue;
+              if (requested.restock !== false) {
+                const batchRow: any = await this.connection.db!.collection('inventory_batches').findOne({
+                  _id: allocation.batchId, tenantId: new Types.ObjectId(tenantId), productId: original.productId,
+                }, { session });
+                if (!batchRow || batchRow.status === 'EXPIRED' || new Date(batchRow.expiresAt) <= creditNoteDate) {
+                  throw new ConflictException(`The original batch for "${original.name}" has expired or is unavailable. Issue this return without restocking the units.`);
+                }
+              }
+              batchReturnAllocations.push({ batchId: allocation.batchId, quantity: take });
+              batchNeeded -= take;
+              if (batchNeeded <= 0) break;
+            }
+            if (batchNeeded > 0) throw new ConflictException(`Returned quantity for "${original.name}" exceeds its original batch allocation.`);
+          }
 
           const cumulativeQty =
             previousReturnedQty + requested.quantity;
@@ -1357,6 +1485,8 @@ if (existingPayment) {
             totalTax: this.fromPaise(taxPaise),
             lineTotal: this.fromPaise(lineTotalPaise),
             restocked,
+            serialNumbers: requestedSerials,
+            batchAllocations: batchReturnAllocations,
           });
 
           discountTotalPaise += discountPaise;
@@ -1549,6 +1679,27 @@ if (existingPayment) {
           ],
           { session },
         );
+
+        for (const line of creditLines) {
+          if (line.restocked) {
+            for (const allocation of line.batchAllocations || []) {
+              const restoredBatch = await this.connection.db!.collection('inventory_batches').updateOne(
+                { _id: allocation.batchId, tenantId: new Types.ObjectId(tenantId), productId: line.productId, status: { $in: ['ACTIVE', 'DEPLETED'] }, expiresAt: { $gt: creditNoteDate } },
+                { $inc: { quantity: allocation.quantity }, $set: { status: 'ACTIVE' } },
+                { session },
+              );
+              if (restoredBatch.modifiedCount !== 1) throw new ConflictException('Original batch changed during return; please retry');
+            }
+          }
+          const serialNumbers = line.serialNumbers || [];
+          if (!serialNumbers.length) continue;
+          const updatedSerials = await this.connection.db!.collection('inventory_serials').updateMany(
+            { tenantId: new Types.ObjectId(tenantId), productId: line.productId, saleInvoiceId: invoice._id, serialNumber: { $in: serialNumbers }, status: 'SOLD' },
+            { $set: { status: line.restocked ? 'IN_STOCK' : 'RETURNED' } },
+            { session },
+          );
+          if (updatedSerials.modifiedCount !== serialNumbers.length) throw new ConflictException('Serial status changed while processing this return; please retry');
+        }
 
         // Reverse earned loyalty points proportionally to cumulative taxable returns.
         // Already-spent points are not driven negative; the actual deduction is auditable.
@@ -1969,6 +2120,18 @@ if (existingPayment) {
 
     return result;
   }
+  async listAvailableSerials(tenantId: string, warehouseId: string, productId?: string) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(warehouseId) || (productId && !Types.ObjectId.isValid(productId))) {
+      throw new BadRequestException('Invalid workspace, warehouse or product ID');
+    }
+    const filter: any = { tenantId: new Types.ObjectId(tenantId), warehouseId: new Types.ObjectId(warehouseId), status: 'IN_STOCK' };
+    if (productId) filter.productId = new Types.ObjectId(productId);
+    if (!this.connection.db) throw new ConflictException('Serial registry is unavailable');
+    return this.connection.db.collection('inventory_serials').find(filter, {
+      projection: { serialNumber: 1, productId: 1, warehouseId: 1 },
+    }).sort({ serialNumber: 1 }).limit(500).toArray();
+  }
+
   async findAll(tenantId: string, dto: ListSalesDto) {
     const page = dto.page || 1;
     const limit = dto.limit || 20;

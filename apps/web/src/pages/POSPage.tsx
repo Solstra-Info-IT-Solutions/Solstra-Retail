@@ -36,10 +36,12 @@ interface ProductResponse {
 interface WarehouseOption { _id: string; name: string; branchName: string; }
 interface PromotionOption { _id: string; code: string; name: string; discountType: 'PERCENT' | 'FIXED'; discountValue: number; minimumSubtotal: number; maximumDiscount?: number | null; startsAt: string; endsAt: string; status: string; }
 interface WarehouseStockRow { productId: { _id: string } | string; quantity: number; }
+interface AvailableSerial { _id: string; serialNumber: string; productId: { _id: string } | string; warehouseId: { _id: string } | string; status: string; }
 interface CartItem {
   product: Product;
   quantity: number;
   discountAmount: number;
+  serialNumbers: string[];
 }
 
 const states = [
@@ -91,6 +93,7 @@ export default function POSPage() {
   const [promotions, setPromotions] = useState<PromotionOption[]>([]);
   const [promotionCode, setPromotionCode] = useState('');
   const [warehouseQuantities, setWarehouseQuantities] = useState<Record<string, number>>({});
+  const [availableSerials, setAvailableSerials] = useState<AvailableSerial[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [productError, setProductError] = useState('');
@@ -203,6 +206,15 @@ export default function POSPage() {
     return () => { active = false; };
   }, [warehouseId]);
 
+  useEffect(() => {
+    let active = true;
+    if (!warehouseId) { setAvailableSerials([]); return; }
+    api.get<AvailableSerial[]>('/sales/available-serials', { params: { warehouseId, status: 'IN_STOCK' } })
+      .then(response => { if (active) setAvailableSerials(response.data || []); })
+      .catch(() => { if (active) setAvailableSerials([]); });
+    return () => { active = false; };
+  }, [warehouseId]);
+
   function availableQty(product: Product) {
     return warehouseId ? (warehouseQuantities[product._id] || 0) : product.stockQty;
   }
@@ -253,7 +265,7 @@ export default function POSPage() {
         );
       }
 
-      return [...current, { product, quantity: 1, discountAmount: 0 }];
+      return [...current, { product, quantity: 1, discountAmount: 0, serialNumbers: [] }];
     });
   }
 
@@ -271,7 +283,7 @@ export default function POSPage() {
           return item;
         }
 
-        return { ...item, quantity: next };
+        return { ...item, quantity: next, serialNumbers: [] };
       }).filter(item => item.quantity > 0)
     );
   }
@@ -292,6 +304,17 @@ export default function POSPage() {
   async function checkout() {
     setCheckoutError('');
     setSuccessMessage('');
+    for (const item of cart) {
+      const serialOptions = availableSerials.filter(serial => {
+        const productId = typeof serial.productId === 'string' ? serial.productId : serial.productId?._id;
+        const serialWarehouse = typeof serial.warehouseId === 'string' ? serial.warehouseId : serial.warehouseId?._id;
+        return productId === item.product._id && serialWarehouse === warehouseId;
+      });
+      if (serialOptions.length > 0 && item.serialNumbers.length !== item.quantity) {
+        setCheckoutError(`Select exactly ${item.quantity} serial number(s) for ${item.product.name}.`);
+        return;
+      }
+    }
 
     if (!cart.length) {
       setCheckoutError('Add at least one product to the cart.');
@@ -329,7 +352,8 @@ export default function POSPage() {
         items: cart.map(item => ({
           productId: item.product._id,
           quantity: item.quantity,
-          discountAmount: item.discountAmount
+          discountAmount: item.discountAmount,
+          ...(item.serialNumbers.length ? { serialNumbers: item.serialNumbers } : {}),
         })),
         customerName: customerName.trim() || undefined,
         customerPhone: customerPhone.trim() || undefined,
@@ -522,6 +546,18 @@ export default function POSPage() {
                     <Trash2 size={15} />
                   </button>
                 </div>
+                {availableSerials.some(serial => {
+                  const productId = typeof serial.productId === 'string' ? serial.productId : serial.productId?._id;
+                  const serialWarehouse = typeof serial.warehouseId === 'string' ? serial.warehouseId : serial.warehouseId?._id;
+                  return productId === item.product._id && serialWarehouse === warehouseId;
+                }) && <label className="pos-serial-select">Serial numbers *<select multiple value={item.serialNumbers} onChange={event => {
+                  const serialNumbers = Array.from(event.target.selectedOptions).map(option => option.value);
+                  setCart(current => current.map(line => line.product._id === item.product._id ? { ...line, serialNumbers: serialNumbers.slice(0, line.quantity) } : line));
+                }}>{availableSerials.filter(serial => {
+                  const productId = typeof serial.productId === 'string' ? serial.productId : serial.productId?._id;
+                  const serialWarehouse = typeof serial.warehouseId === 'string' ? serial.warehouseId : serial.warehouseId?._id;
+                  return productId === item.product._id && serialWarehouse === warehouseId;
+                }).map(serial => <option key={serial._id} value={serial.serialNumber}>{serial.serialNumber}</option>)}</select><small>Select {item.quantity} available serial(s).</small></label>}
                 <div className="pos-cart-controls">
                   <div className="pos-quantity-control">
                     <button type="button" onClick={() => changeQuantity(item.product._id, -1)}>

@@ -42,3 +42,19 @@ export class UpdateSaasTenantDto {
   @IsOptional() @IsInt() @Min(1) @Max(1000) maxBranches?: number;
   @IsOptional() @IsString() @MaxLength(500) reason?: string;
 }
+
+export class CreateCommunicationProviderDto {
+  @IsString() @Length(3, 100) name!: string;
+  @IsIn(['EMAIL', 'SMS', 'WHATSAPP']) channel!: 'EMAIL' | 'SMS' | 'WHATSAPP';
+  @IsUrl({ protocols: ['https'], require_protocol: true }) @MaxLength(2048) endpointUrl!: string;
+  @IsString() @Length(12, 500) apiToken!: string;
+}
+export class SendCommunicationDto {
+  @IsIn(['EMAIL', 'SMS', 'WHATSAPP']) channel!: 'EMAIL' | 'SMS' | 'WHATSAPP';
+  @IsString() @Length(3, 320) recipient!: string;
+  @IsOptional() @IsString() @MaxLength(160) subject?: string;
+  @IsString() @Length(1, 10000) message!: string;
+}
+export class RecordSubscriptionPaymentDto {
+  @IsString() @Length(3, 120) paymentReference!: string;
+}

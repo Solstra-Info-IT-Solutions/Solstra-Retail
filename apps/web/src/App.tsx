@@ -9,6 +9,7 @@ import SalesPage from './pages/SalesPage';
 import CustomersPage from './pages/CustomersPage';
 import ProductsPage from './pages/ProductsPage';
 import InventoryPage from './pages/InventoryPage';
+import AdvancedInventoryPage from './pages/AdvancedInventoryPage';
 import SuppliersPage from './pages/SuppliersPage';
 import PurchasesPage from './pages/PurchasesPage';
 import BranchesPage from './pages/BranchesPage';
@@ -18,6 +19,7 @@ import ReportsPage from './pages/ReportsPage';
 import ExpensesPage from './pages/ExpensesPage';
 import PromotionsPage from './pages/PromotionsPage';
 import PlatformOperationsPage from './pages/PlatformOperationsPage';
+import BusinessServicesPage from './pages/BusinessServicesPage';
 
 function AppRoutes() {
   const { isAuthenticated } = useAuth();
@@ -38,6 +40,7 @@ function AppRoutes() {
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/inventory" element={<InventoryPage />} />
+          <Route path="/inventory/advanced" element={<AdvancedInventoryPage />} />
           <Route path="/suppliers" element={<SuppliersPage />} />
           <Route path="/purchases" element={<PurchasesPage />} />
           <Route path="/branches" element={<BranchesPage />} />
@@ -47,6 +50,7 @@ function AppRoutes() {
           <Route path="/expenses" element={<ExpensesPage />} />
           <Route path="/promotions" element={<PromotionsPage />} />
           <Route path="/platform" element={<PlatformOperationsPage />} />
+          <Route path="/business-services" element={<BusinessServicesPage />} />
         </Route>
       </Route>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />

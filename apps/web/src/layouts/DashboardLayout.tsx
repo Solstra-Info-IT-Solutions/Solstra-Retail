@@ -1,9 +1,9 @@
 ﻿import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
-  LayoutDashboard, ShoppingCart, Package, Users, Warehouse,
+  LayoutDashboard, ShoppingCart, Package, Users, Warehouse, Boxes,
   Truck, ClipboardList, BarChart3, ReceiptText, Building2,
-  Menu, X, LogOut, Search, Languages, ShieldCheck, History, Receipt, BadgePercent, Settings2, type LucideIcon
+  Menu, X, LogOut, Search, Languages, ShieldCheck, History, Receipt, BadgePercent, Settings2, Mail, type LucideIcon
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import './DashboardLayout.css';
@@ -15,6 +15,7 @@ const navigation: Array<{ label: string; path: string; icon: LucideIcon; permiss
   { label: 'Promotions', path: '/promotions', icon: BadgePercent, adminOnly: true },
   { label: 'Products', path: '/products', icon: Package, permission: 'products.view' },
   { label: 'Inventory', path: '/inventory', icon: Warehouse, permission: 'inventory.view' },
+  { label: 'Advanced Inventory', path: '/inventory/advanced', icon: Boxes, permission: 'inventory.view' },
   { label: 'Customers', path: '/customers', icon: Users, permission: 'customers.view' },
   { label: 'Suppliers', path: '/suppliers', icon: Truck, permission: 'suppliers.view' },
   { label: 'Purchases', path: '/purchases', icon: ClipboardList, permission: 'purchases.view' },
@@ -24,6 +25,7 @@ const navigation: Array<{ label: string; path: string; icon: LucideIcon; permiss
   { label: 'Staff & Permissions', path: '/staff', icon: ShieldCheck, adminOnly: true },
   { label: 'Audit Trail', path: '/audit', icon: History, adminOnly: true },
   { label: 'Platform Operations', path: '/platform', icon: Settings2, adminOnly: true },
+  { label: 'Business Services', path: '/business-services', icon: Mail, adminOnly: true },
 ];
 
 export default function DashboardLayout() {

@@ -2,6 +2,13 @@
 import { HydratedDocument, Types } from 'mongoose';
 
 @Schema({ _id: false })
+export class CreditNoteBatchAllocation {
+  @Prop({ type: Types.ObjectId, required: true }) batchId!: Types.ObjectId;
+  @Prop({ type: Number, required: true, min: 0.001 }) quantity!: number;
+}
+export const CreditNoteBatchAllocationSchema = SchemaFactory.createForClass(CreditNoteBatchAllocation);
+
+@Schema({ _id: false })
 export class CreditNoteLine {
   @Prop({ required: true, min: 0 })
   lineIndex!: number;
@@ -47,6 +54,12 @@ export class CreditNoteLine {
 
   @Prop({ required: true, default: false })
   restocked!: boolean;
+
+  @Prop({ type: [String], default: [] })
+  serialNumbers!: string[];
+
+  @Prop({ type: [CreditNoteBatchAllocationSchema], default: [] })
+  batchAllocations!: CreditNoteBatchAllocation[];
 }
 
 export const CreditNoteLineSchema =

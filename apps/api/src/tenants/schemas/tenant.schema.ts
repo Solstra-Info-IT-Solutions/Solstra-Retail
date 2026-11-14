@@ -106,6 +106,10 @@ export class Tenant {
 
   @Prop({ type: Number, min: 1, default: 1 })
   maxBranches!: number;
+
+  @Prop({ type: Date, default: null }) subscriptionPeriodStart?: Date | null;
+  @Prop({ type: Date, default: null }) subscriptionPeriodEnd?: Date | null;
+  @Prop({ type: String, enum: ['CURRENT', 'PAST_DUE', 'CANCELLED'], default: 'CURRENT' }) billingStatus!: 'CURRENT' | 'PAST_DUE' | 'CANCELLED';
 }
 
 export const TenantSchema = SchemaFactory.createForClass(Tenant);

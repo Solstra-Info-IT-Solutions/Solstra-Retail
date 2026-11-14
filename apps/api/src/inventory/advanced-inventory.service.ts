@@ -9,6 +9,7 @@ import { InventoryMovement } from './schemas/inventory-movement.schema';
 import { InventoryBatch } from './schemas/inventory-batch.schema';
 import { InventorySerial } from './schemas/inventory-serial.schema';
 import { Stocktake } from './schemas/stocktake.schema';
+import { AccountingService } from '../accounting/accounting.service';
 import { ReceiveBatchDto, RegisterSerialsDto, CreateStocktakeDto } from './dto/advanced-inventory.dto';
 
 @Injectable()
@@ -22,6 +23,7 @@ export class AdvancedInventoryService {
     @InjectModel(InventoryBatch.name) private readonly batches: Model<InventoryBatch>,
     @InjectModel(InventorySerial.name) private readonly serials: Model<InventorySerial>,
     @InjectModel(Stocktake.name) private readonly stocktakes: Model<Stocktake>,
+    private readonly accounting: AccountingService,
   ) {}
 
   async receiveBatch(tenantId: string, userId: string, dto: ReceiveBatchDto) {
@@ -34,6 +36,7 @@ export class AdvancedInventoryService {
       await session.withTransaction(async () => {
         const product = await this.products.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.productId), isDeleted: false, trackStock: true })).session(session);
         if (!product) throw new NotFoundException('Stock-tracked product not found');
+        if (product.stockQty > 0 && !product.valuationInitialized) throw new ConflictException('Verify opening inventory valuation before receiving additional batches for this product');
         const warehouse = await this.warehouses.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.warehouseId), isDeleted: false, isActive: true })).session(session);
         if (!warehouse) throw new NotFoundException('Active warehouse not found');
         const existing = await this.batches.findOne(tenantFilter(tenantId, { productId: product._id, warehouseId: warehouse._id, batchNumber: dto.batchNumber.trim().toUpperCase() })).session(session);
@@ -59,6 +62,16 @@ export class AdvancedInventoryService {
         await product.save({ session });
         const [batch] = await this.batches.create([{ tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouse._id, batchNumber: dto.batchNumber.trim().toUpperCase(), manufacturedAt: dto.manufacturedAt ? new Date(dto.manufacturedAt) : null, expiresAt, quantity: incomingQty, unitCost: dto.unitCost, createdBy: new Types.ObjectId(userId) }], { session });
         await this.movements.create([{ tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouse._id, type: 'IN', quantityDelta: incomingQty, previousQty: oldQty, newQty, reason: 'Batch receipt ' + batch.batchNumber, performedBy: new Types.ObjectId(userId) }], { session });
+        if (incomingValue > 0) await this.accounting.postOperationalJournal({
+          tenantId, userId, postingDate: new Date(),
+          narration: `Batch receipt ${batch.batchNumber} for ${product.name}`,
+          sourceType: 'INVENTORY', sourceId: `BATCH_RECEIPT:${batch._id.toString()}`,
+          lines: [
+            { accountCode: '1200', debit: incomingValue / 100, credit: 0, description: 'Batch inventory receipt' },
+            { accountCode: '5500', debit: 0, credit: incomingValue / 100, description: 'Uninvoiced inventory receipt adjustment' },
+          ],
+          session,
+        });
         result = batch;
       });
       return result;
@@ -70,25 +83,35 @@ export class AdvancedInventoryService {
     const filter: any = tenantFilter(tenantId, { status: 'ACTIVE', expiresAt: { $gt: new Date() } });
     if (productId) { if (!Types.ObjectId.isValid(productId)) throw new BadRequestException('Invalid product ID'); filter.productId = new Types.ObjectId(productId); }
     if (warehouseId) { if (!Types.ObjectId.isValid(warehouseId)) throw new BadRequestException('Invalid warehouse ID'); filter.warehouseId = new Types.ObjectId(warehouseId); }
-    return this.batches.find(filter).sort({ expiresAt: 1, createdAt: 1 }).populate('productId', 'name sku').populate('warehouseId', 'name code').lean();
+    return this.batches.find(filter).sort({ expiresAt: 1, createdAt: 1 }).limit(500).populate('productId', 'name sku').populate('warehouseId', 'name code').lean();
   }
 
   async registerSerials(tenantId: string, userId: string, dto: RegisterSerialsDto) {
     if (![tenantId, userId, dto.productId, dto.warehouseId].every(Types.ObjectId.isValid)) throw new BadRequestException('Invalid tenant, user, product or warehouse ID');
-    const product = await this.products.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.productId), isDeleted: false, trackStock: true })).lean();
-    if (!product) throw new NotFoundException('Stock-tracked product not found');
-    const warehouse = await this.warehouses.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.warehouseId), isDeleted: false, isActive: true })).lean();
-    if (!warehouse) throw new NotFoundException('Active warehouse not found');
     const names = dto.serials.map(x => x.serialNumber.trim().toUpperCase());
     if (new Set(names).size !== names.length) throw new BadRequestException('Duplicate serial numbers in this request');
-    const stock = await this.warehouseStocks.findOne(tenantFilter(tenantId, { productId: product._id, warehouseId: warehouse._id })).lean();
-    if (!stock || stock.quantity < names.length) throw new ConflictException('Registered serial count cannot exceed available warehouse stock');
+    const session = await this.connection.startSession();
     try {
-      return await this.serials.insertMany(names.map(serialNumber => ({ tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouse._id, serialNumber, createdBy: new Types.ObjectId(userId) })), { ordered: true });
+      let inserted: any[] = [];
+      await session.withTransaction(async () => {
+        const product = await this.products.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.productId), isDeleted: false, trackStock: true })).session(session);
+        if (!product) throw new NotFoundException('Stock-tracked product not found');
+        const warehouse = await this.warehouses.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.warehouseId), isDeleted: false, isActive: true })).session(session);
+        if (!warehouse) throw new NotFoundException('Active warehouse not found');
+        const stock = await this.warehouseStocks.findOne(tenantFilter(tenantId, { productId: product._id, warehouseId: warehouse._id })).session(session);
+        if (!stock || stock.quantity < names.length) throw new ConflictException('Registered serial count cannot exceed available warehouse stock');
+        inserted = await this.serials.insertMany(names.map(serialNumber => ({
+          tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouse._id,
+          serialNumber, createdBy: new Types.ObjectId(userId),
+        })), { ordered: true, session });
+      });
+      return inserted;
     } catch (error: any) {
-      if (error?.code === 11000) throw new ConflictException('One or more serial numbers already exist in this business');
+      if (error?.code === 11000 || error?.writeErrors?.some((item: any) => item.code === 11000)) {
+        throw new ConflictException('One or more serial numbers already exist in this business');
+      }
       throw error;
-    }
+    } finally { await session.endSession(); }
   }
 
   async listSerials(tenantId: string, productId?: string, status?: string) {
@@ -135,17 +158,40 @@ export class AdvancedInventoryService {
           if (!product) throw new ConflictException('A stocktake product no longer exists');
           const stock = await this.warehouseStocks.findOne(tenantFilter(tenantId, { warehouseId: take.warehouseId, productId: line.productId })).session(session);
           const currentQty = stock?.quantity || 0;
+          if (currentQty !== line.expectedQty) throw new ConflictException(`Stock for ${product.name} changed after this stocktake draft was created. Recount and create a new draft.`);
           const delta = line.countedQty - currentQty;
           if (delta !== 0) {
             const unitCost = stock?.averageCost ?? product.averageCost ?? 0;
             if (stock) { stock.quantity = line.countedQty; stock.inventoryValue = Math.round(line.countedQty * unitCost * 100) / 100; await stock.save({ session }); }
             else await this.warehouseStocks.create([{ tenantId: take.tenantId, warehouseId: take.warehouseId, productId: line.productId, quantity: line.countedQty, averageCost: unitCost, inventoryValue: Math.round(line.countedQty * unitCost * 100) / 100 }], { session });
-            product.stockQty = Math.max(0, (product.stockQty || 0) + delta);
-            product.inventoryValue = Math.max(0, Math.round(((product.inventoryValue || 0) + delta * unitCost) * 100) / 100);
+            const nextGlobalQty = (product.stockQty || 0) + delta;
+            const nextGlobalValuePaise = Math.round(((product.inventoryValue || 0) + delta * unitCost) * 100);
+            if (nextGlobalQty < 0 || nextGlobalValuePaise < 0) throw new ConflictException('Stocktake would create negative aggregate stock or valuation; reconcile warehouse allocations first');
+            product.stockQty = nextGlobalQty;
+            product.inventoryValue = nextGlobalValuePaise / 100;
             if (product.stockQty === 0) product.inventoryValue = 0;
             else product.averageCost = product.inventoryValue / product.stockQty;
             await product.save({ session });
             await this.movements.create([{ tenantId: take.tenantId, productId: line.productId, warehouseId: take.warehouseId, type: 'ADJUSTMENT', quantityDelta: delta, previousQty: currentQty, newQty: line.countedQty, reason: 'Stocktake ' + take.reference, performedBy: new Types.ObjectId(userId) }], { session });
+            const adjustmentValuePaise = Math.round(Math.abs(delta) * unitCost * 100);
+            if (adjustmentValuePaise > 0) {
+              const increase = delta > 0;
+              await this.accounting.postOperationalJournal({
+                tenantId, userId, postingDate: new Date(),
+                narration: `Stocktake ${take.reference} - ${product.name}`,
+                sourceType: 'INVENTORY', sourceId: `STOCKTAKE:${take._id.toString()}:${product._id.toString()}`,
+                lines: increase
+                  ? [
+                      { accountCode: '1200', debit: adjustmentValuePaise / 100, credit: 0, description: 'Stocktake inventory increase' },
+                      { accountCode: '5500', debit: 0, credit: adjustmentValuePaise / 100, description: 'Stocktake inventory gain' },
+                    ]
+                  : [
+                      { accountCode: '5400', debit: adjustmentValuePaise / 100, credit: 0, description: 'Stocktake inventory shrinkage' },
+                      { accountCode: '1200', debit: 0, credit: adjustmentValuePaise / 100, description: 'Stocktake inventory decrease' },
+                    ],
+                session,
+              });
+            }
           }
         }
         take.status = 'COMPLETED'; take.completedBy = new Types.ObjectId(userId); take.completedAt = new Date();

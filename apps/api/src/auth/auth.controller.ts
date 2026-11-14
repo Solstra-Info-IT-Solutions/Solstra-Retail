@@ -8,6 +8,7 @@ import { SkipTrial } from '../common/decorators/skip-trial.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { PERMISSION_CATALOG } from '../common/decorators/permissions.decorator';
 import { UpdateUserPermissionsDto } from './dto/update-user-permissions.dto';
+import { CreateStaffUserDto } from './dto/create-staff-user.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -27,6 +28,12 @@ export class AuthController {
   @Get('permissions')
   listPermissions() {
     return PERMISSION_CATALOG.map((key) => ({ key }));
+  }
+
+  @Roles('owner', 'admin')
+  @Post('users')
+  createStaffUser(@Req() req: Request & { user: any }, @Body() dto: CreateStaffUserDto) {
+    return this.auth.createStaffUser(req.user.tenantId, dto);
   }
 
   @Roles('owner', 'admin')

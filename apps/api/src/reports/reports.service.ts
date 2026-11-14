@@ -27,6 +27,7 @@ import { Account, AccountDocument } from '../accounting/schemas/account.schema';
 import { JournalEntry, JournalEntryDocument } from '../accounting/schemas/journal-entry.schema';
 import { Purchase, PurchaseDocument } from '../purchases/schemas/purchase.schema';
 import { Tenant } from '../tenants/schemas/tenant.schema';
+import { GstEInvoiceSubmission } from './schemas/gst-einvoice-submission.schema';
 
 type DateRange = {
   start: Date;
@@ -59,6 +60,9 @@ export class ReportsService {
 
     @InjectModel(Tenant.name)
     private readonly tenants: Model<Tenant>,
+
+    @InjectModel(GstEInvoiceSubmission.name)
+    private readonly gstSubmissions: Model<any>,
   ) {}
 
   private resolveRange(dto: ReportDateRangeDto): DateRange {
@@ -146,6 +150,89 @@ export class ReportsService {
     ]);
 
     return result[0]?.total ?? 0;
+  }
+
+  async submitGstEInvoice(tenantId: string, invoiceId: string) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(invoiceId)) {
+      throw new BadRequestException('Invalid tenant or invoice ID');
+    }
+    const invoice: any = await this.invoices.findOne(tenantFilter(tenantId, {
+      _id: new Types.ObjectId(invoiceId), status: 'ISSUED',
+      customerGstin: { $type: 'string', $ne: '' },
+    })).lean();
+    if (!invoice) throw new BadRequestException('Issued B2B invoice not found in this workspace');
+    const date = new Date(invoice.invoiceDate);
+    const preflight = await this.gstEinvoiceReadiness(tenantId, {
+      from: date.toISOString().slice(0, 10), to: date.toISOString().slice(0, 10),
+    });
+    const check = preflight.invoices.find((row: any) => String(row.invoiceId) === String(invoice._id));
+    if (!check || check.status === 'NEEDS_CORRECTION') {
+      throw new BadRequestException({
+        message: 'Invoice failed GST e-invoice data-quality preflight',
+        issues: check?.issues || ['Invoice is outside the preflight result window; review the invoice and retry'],
+      });
+    }
+    const endpoint = process.env.GST_GSP_ADAPTER_URL || '';
+    const token = process.env.GST_GSP_ADAPTER_TOKEN || '';
+    if (!endpoint || !token) throw new BadRequestException('GST GSP adapter is not configured');
+    let url: URL;
+    try { url = new URL(endpoint); } catch { throw new BadRequestException('GST GSP adapter URL is invalid'); }
+    if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443') ||
+      ['localhost', '127.0.0.1', '::1'].includes(url.hostname.toLowerCase()) ||
+      url.hostname.endsWith('.local') || url.hostname.endsWith('.internal')) {
+      throw new BadRequestException('GST GSP adapter must be a public HTTPS endpoint on port 443');
+    }
+    const existing: any = await this.gstSubmissions.findOne(tenantFilter(tenantId, { invoiceId: invoice._id })).lean();
+    if (existing?.status === 'SUBMITTED') {
+      return { status: 'SUBMITTED', irn: existing.irn, acknowledgementNumber: existing.acknowledgementNumber, submittedAt: existing.submittedAt, duplicate: true };
+    }
+    const submission: any = await this.gstSubmissions.findOneAndUpdate(
+      tenantFilter(tenantId, { invoiceId: invoice._id }),
+      { $set: { invoiceNumber: invoice.invoiceNumber, status: 'PENDING', lastError: '' }, $inc: { attempts: 1 } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    ).lean();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST', redirect: 'error', signal: controller.signal,
+        headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', 'idempotency-key': String(submission._id) },
+        body: JSON.stringify({
+          contract: 'SOLSTRA_GST_EINVOICE_V1',
+          invoice: {
+            invoiceNumber: invoice.invoiceNumber, invoiceDate: invoice.invoiceDate,
+            seller: { name: invoice.sellerName, gstin: invoice.sellerGstin, stateCode: invoice.sellerStateCode, address: invoice.sellerAddress },
+            recipient: { name: invoice.customerName, gstin: invoice.customerGstin, stateCode: invoice.placeOfSupplyStateCode },
+            items: invoice.items, taxableValue: invoice.taxableValue, totalTax: invoice.totalTax,
+            cgstTotal: invoice.cgstTotal, sgstTotal: invoice.sgstTotal, igstTotal: invoice.igstTotal, grandTotal: invoice.grandTotal,
+          },
+        }),
+      });
+      const result: any = await response.json().catch(() => ({}));
+      if (!response.ok || !result.irn || !result.ackNo) {
+        const message = String(result.message || result.error || 'GSP adapter did not return IRN and acknowledgement details').slice(0, 500);
+        await this.gstSubmissions.updateOne(tenantFilter(tenantId, { _id: submission._id }), { $set: { status: 'FAILED', lastError: message } });
+        throw new BadRequestException(message);
+      }
+      const ackDate = result.ackDt ? new Date(result.ackDt) : null;
+      await this.gstSubmissions.updateOne(tenantFilter(tenantId, { _id: submission._id }), {
+        $set: {
+          status: 'SUBMITTED', providerReference: String(result.referenceId || '').slice(0, 120),
+          irn: String(result.irn).slice(0, 120), acknowledgementNumber: String(result.ackNo).slice(0, 120),
+          acknowledgementDate: ackDate && !Number.isNaN(ackDate.getTime()) ? ackDate : null,
+          submittedAt: new Date(), lastError: '',
+        },
+      });
+      return { status: 'SUBMITTED', irn: result.irn, acknowledgementNumber: result.ackNo, acknowledgementDate: ackDate, duplicate: false };
+    } catch (error: any) {
+      if (!(error instanceof BadRequestException)) {
+        await this.gstSubmissions.updateOne(tenantFilter(tenantId, { _id: submission._id }), {
+          $set: { status: 'FAILED', lastError: String(error?.message || 'GSP adapter request failed').slice(0, 500) },
+        });
+        throw new BadRequestException('GST GSP adapter request failed; submission can be retried after checking provider status');
+      }
+      throw error;
+    } finally { clearTimeout(timeout); }
   }
 
   async migrationReadiness(tenantId: string) {

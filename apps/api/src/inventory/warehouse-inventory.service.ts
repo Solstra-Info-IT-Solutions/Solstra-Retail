@@ -7,6 +7,7 @@ import { Warehouse } from '../branches/schemas/warehouse.schema';
 import { Branch } from '../branches/schemas/branch.schema';
 import { WarehouseStock, WarehouseStockDocument } from './schemas/warehouse-stock.schema';
 import { WarehouseTransfer, WarehouseTransferDocument } from './schemas/warehouse-transfer.schema';
+import { InventoryMovement, InventoryMovementDocument } from './schemas/inventory-movement.schema';
 import { WarehouseOpeningStockDto } from './dto/warehouse-opening-stock.dto';
 import { CreateWarehouseTransferDto } from './dto/create-warehouse-transfer.dto';
 
@@ -19,6 +20,7 @@ export class WarehouseInventoryService {
     @InjectModel(Branch.name) private readonly branches: Model<any>,
     @InjectModel(WarehouseStock.name) private readonly stocks: Model<WarehouseStockDocument>,
     @InjectModel(WarehouseTransfer.name) private readonly transfers: Model<WarehouseTransferDocument>,
+    @InjectModel(InventoryMovement.name) private readonly movements: Model<InventoryMovementDocument>,
   ) {}
 
   async initializeOpeningStock(tenantId: string, userId: string, warehouseId: string, dto: WarehouseOpeningStockDto) {
@@ -34,15 +36,29 @@ export class WarehouseInventoryService {
         if (!branch) throw new ConflictException('Warehouse branch is not active');
         const product = await this.products.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.productId), isDeleted: false, trackStock: true })).session(session);
         if (!product) throw new NotFoundException('Stock-tracked product not found');
-        const existing = await this.stocks.findOne(tenantFilter(tenantId, { productId: product._id })).session(session);
-        if (existing) throw new ConflictException('Warehouse stock is already initialized for this product; use a transfer or a controlled stock adjustment');
-        if (dto.quantity !== product.stockQty) throw new ConflictException('Opening quantity must exactly match the product total stock quantity');
+        const existing = await this.stocks.findOne(tenantFilter(tenantId, { warehouseId: warehouse._id, productId: product._id })).session(session);
+        if (existing) throw new ConflictException('Opening stock is already initialized for this product in this warehouse');
         if (dto.quantity > 0 && !product.valuationInitialized) throw new ConflictException('Initialize product inventory valuation before assigning warehouse stock');
-        const valuePaise = Math.round(((product.inventoryValue || 0) + Number.EPSILON) * 100);
+        const allocations = await this.stocks.find(tenantFilter(tenantId, { productId: product._id })).session(session).lean();
+        const allocatedQuantity = allocations.reduce((sum: number, item: any) => sum + item.quantity, 0);
+        const allocatedValuePaise = allocations.reduce((sum: number, item: any) => sum + Math.round(((item.inventoryValue || 0) + Number.EPSILON) * 100), 0);
+        if (allocatedQuantity + dto.quantity > product.stockQty) throw new ConflictException('Warehouse allocations cannot exceed the product total stock quantity');
+        const productValuePaise = Math.round(((product.inventoryValue || 0) + Number.EPSILON) * 100);
+        if (allocatedValuePaise > productValuePaise) throw new ConflictException('Existing warehouse valuation exceeds the product inventory value');
+        const remainingQuantity = product.stockQty - allocatedQuantity;
+        const remainingValuePaise = productValuePaise - allocatedValuePaise;
+        const valuePaise = dto.quantity === remainingQuantity
+          ? remainingValuePaise
+          : Math.min(remainingValuePaise, Math.round(dto.quantity * ((product.averageCost || 0) + Number.EPSILON) * 100));
         const [created] = await this.stocks.create([{
           tenantId: new Types.ObjectId(tenantId), warehouseId: warehouse._id, productId: product._id,
           quantity: dto.quantity, inventoryValue: valuePaise / 100,
-          averageCost: product.averageCost || 0,
+          averageCost: dto.quantity ? Math.round(valuePaise / dto.quantity) / 100 : 0,
+        }], { session });
+        await this.movements.create([{
+          tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouse._id,
+          type: 'OPENING', quantityDelta: dto.quantity, previousQty: 0, newQty: dto.quantity,
+          reason: dto.reason.trim(), performedBy: new Types.ObjectId(userId),
         }], { session });
         result = created;
       });
@@ -103,6 +119,20 @@ export class WarehouseInventoryService {
           quantity: dto.quantity, unitCost: source.averageCost || 0, inventoryValue: valuePaise / 100,
           reason: dto.reason.trim(), performedBy: new Types.ObjectId(userId),
         }], { session });
+        await this.movements.create([
+          {
+            tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouseIds[0],
+            transferId: transfer._id, type: 'TRANSFER_OUT', quantityDelta: -dto.quantity,
+            previousQty: source.quantity, newQty: sourceNewQty,
+            reason: dto.reason.trim(), performedBy: new Types.ObjectId(userId),
+          },
+          {
+            tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouseIds[1],
+            transferId: transfer._id, type: 'TRANSFER_IN', quantityDelta: dto.quantity,
+            previousQty: destination?.quantity || 0, newQty: (destination?.quantity || 0) + dto.quantity,
+            reason: dto.reason.trim(), performedBy: new Types.ObjectId(userId),
+          },
+        ], { session });
         result = transfer;
       });
     } finally { await session.endSession(); }

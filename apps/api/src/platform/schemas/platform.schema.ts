@@ -71,6 +71,7 @@ WebhookDeliverySchema.index({ tenantId: 1, integrationId: 1, eventType: 1, event
 export class OfflineSyncRecord {
   @Prop(tenantRef) tenantId!: Types.ObjectId;
   @Prop({ type: String, required: true, maxlength: 100 }) idempotencyKey!: string;
+  @Prop({ type: String, default: '', maxlength: 64 }) payloadSha256!: string;
   @Prop({ type: String, required: true, enum: ['PROCESSING', 'SUCCEEDED', 'FAILED'] }) status!: string;
   @Prop({ type: Types.ObjectId, ref: 'User', required: true }) createdBy!: Types.ObjectId;
   @Prop({ type: Types.ObjectId, ref: 'SalesInvoice', default: null }) invoiceId?: Types.ObjectId | null;

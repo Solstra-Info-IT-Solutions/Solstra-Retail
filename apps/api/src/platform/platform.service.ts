@@ -481,6 +481,9 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
           throw new ConflictException('The matching offline batch is still processing. Retry after it is acknowledged.');
         }
       } else {
+        if (dto.batchSequence !== currentSequence + 1) {
+          throw new ConflictException(`Offline sync sequence must be the next consecutive value (${currentSequence + 1}). Refresh the device sync state and submit missing batches in order.`);
+        }
         const claim: any = await this.offlineDevices.updateOne(
           tenantFilter(tenantId, {
             _id: syncDevice._id, revokedAt: null,
@@ -813,12 +816,23 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       const allocation: any = byProduct.get(String(product._id)) || { quantity: 0, inventoryValue: 0, warehouses: 0 };
       const qtyDelta = Number(allocation.quantity || 0) - Number(product.stockQty || 0);
       const valueDeltaPaise = Math.round((Number(allocation.inventoryValue || 0) - Number(product.inventoryValue || 0)) * 100);
-      return { productId: product._id, name: product.name, sku: product.sku, stockQty: product.stockQty, allocatedQty: allocation.quantity, quantityDelta: qtyDelta, inventoryValue: product.inventoryValue, allocatedValue: allocation.inventoryValue, valueDelta: valueDeltaPaise / 100, warehouseCount: allocation.warehouses, valuationInitialized: Boolean(product.valuationInitialized), status: !product.valuationInitialized ? 'VALUATION_PENDING' : qtyDelta > 0 || valueDeltaPaise > 1 ? 'OVER_ALLOCATED' : 'REVIEW' };
+      const status = !product.valuationInitialized ? 'VALUATION_PENDING'
+        : qtyDelta > 0 || valueDeltaPaise > 1 ? 'OVER_ALLOCATED'
+        : qtyDelta < 0 || valueDeltaPaise < -1 ? 'UNDER_ALLOCATED'
+        : 'MATCHED';
+      return { productId: product._id, name: product.name, sku: product.sku, stockQty: product.stockQty, allocatedQty: allocation.quantity, quantityDelta: qtyDelta, inventoryValue: product.inventoryValue, allocatedValue: allocation.inventoryValue, valueDelta: valueDeltaPaise / 100, warehouseCount: allocation.warehouses, valuationInitialized: Boolean(product.valuationInitialized), status };
     });
     const pending = rows.filter(row => row.status === 'VALUATION_PENDING');
     const overAllocated = rows.filter(row => row.status === 'OVER_ALLOCATED');
-    const review = rows.filter(row => row.status === 'REVIEW');
-    return { summary: { products: rows.length, valuationPending: pending.length, overAllocated: overAllocated.length, withinAggregateTotals: review.length }, pending: pending.slice(0, 100), discrepancies: overAllocated.slice(0, 100), review: review.slice(0, 100), note: 'Unallocated aggregate stock is allowed. This reconciliation flags warehouse allocations exceeding aggregate quantity or valuation; it does not silently revalue stock or alter historical journals.' };
+    const underAllocated = rows.filter(row => row.status === 'UNDER_ALLOCATED');
+    const matched = rows.filter(row => row.status === 'MATCHED');
+    const discrepancies = [...overAllocated, ...underAllocated];
+    return {
+      summary: { products: rows.length, valuationPending: pending.length, overAllocated: overAllocated.length, underAllocated: underAllocated.length, matched: matched.length, withinAggregateTotals: matched.length, discrepancyCount: discrepancies.length },
+      pending: pending.slice(0, 100), discrepancies: discrepancies.slice(0, 100),
+      overAllocated: overAllocated.slice(0, 100), underAllocated: underAllocated.slice(0, 100), review: matched.slice(0, 100),
+      note: 'Unallocated aggregate stock is allowed. Both positive and negative warehouse allocation differences are reported; a one-paise valuation tolerance avoids floating-point noise. This report never revalues stock or alters historical journals.',
+    };
   }
 
   private assertPlatformAdmin(userId: string) {
@@ -982,6 +996,18 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     ).select('_id status providerMessageId deliveredAt failedAt').lean();
     if (!updated) throw new ConflictException('Communication delivery is no longer eligible for receipt updates');
     return updated;
+  }
+
+  async retryCommunicationDelivery(tenantId: string, id: string) {
+    this.identity(tenantId);
+    if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid communication delivery ID');
+    const row: any = await this.communicationDeliveries.findOneAndUpdate(
+      tenantFilter(tenantId, { _id: new Types.ObjectId(id), status: { $in: ['FAILED', 'DEAD'] } }),
+      { $set: { status: 'PENDING', attempts: 0, lastError: '', nextAttemptAt: new Date(), failedAt: null } },
+      { new: true },
+    ).select('_id status nextAttemptAt channel recipient').lean();
+    if (!row) throw new ConflictException('Only failed or dead-letter communication deliveries can be manually retried');
+    return { id: String(row._id), status: row.status, channel: row.channel, recipient: row.recipient, queuedAt: row.nextAttemptAt };
   }
 
   async runCommunicationDeliveries(tenantId: string, limit = 20) {

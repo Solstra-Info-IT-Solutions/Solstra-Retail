@@ -49,7 +49,7 @@ export default function BranchesPage() {
 
   useEffect(() => { void load(); }, [load]);
   const activeBranch = branches.find(b => b._id === selected);
-  const allWarehouses = branches.flatMap(b => (b.warehouses || []).map(w => ({ ...w, branchName: b.name, branchId: b._id })));
+  const allWarehouses = branches.flatMap(b => (b.warehouses || []).filter(w => w.isActive).map(w => ({ ...w, branchName: b.name, branchId: b._id })));
   const selectedWarehouses = activeBranch?.warehouses || [];
 
   async function submitBranch(e: FormEvent) {

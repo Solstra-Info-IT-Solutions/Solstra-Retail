@@ -144,6 +144,15 @@ export class SalesInvoice {
   @Prop({ type: Number, min: 0, default: 0 })
   loyaltyVoucherDiscount!: number;
 
+  @Prop({ type: String, default: null, trim: true, uppercase: true })
+  promotionCode?: string | null;
+
+  @Prop({ type: String, default: null, trim: true })
+  promotionName?: string | null;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  promotionDiscount!: number;
+
   @Prop({ default: '' })
   customerName!: string;
 

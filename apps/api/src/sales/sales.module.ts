@@ -34,6 +34,9 @@ import {
 
 import { SalesController } from './sales.controller';
 import { SalesService } from './sales.service';
+import { Promotion, PromotionSchema } from './schemas/promotion.schema';
+import { Warranty, WarrantySchema } from './schemas/warranty.schema';
+import { WarrantyClaim, WarrantyClaimSchema } from './schemas/warranty-claim.schema';
 
 @Module({
   imports: [
@@ -52,6 +55,9 @@ import { SalesService } from './sales.service';
       { name: InvoiceCounter.name, schema: InvoiceCounterSchema },
       { name: CreditNote.name, schema: CreditNoteSchema },
       { name: CreditNoteCounter.name, schema: CreditNoteCounterSchema },
+      { name: Promotion.name, schema: PromotionSchema },
+      { name: Warranty.name, schema: WarrantySchema },
+      { name: WarrantyClaim.name, schema: WarrantyClaimSchema },
     ]),
   ],
   controllers: [SalesController],

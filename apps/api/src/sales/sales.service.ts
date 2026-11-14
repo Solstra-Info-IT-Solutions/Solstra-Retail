@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import {
   BadRequestException,
   ConflictException,
@@ -30,6 +30,12 @@ import { AddSalePaymentDto } from './dto/add-sale-payment.dto';
 import { AddCreditNoteRefundDto } from './dto/add-credit-note-refund.dto';
 import { AccountingService } from '../accounting/accounting.service';
 import { TaxPeriodsService } from '../accounting/tax-periods.service';
+import { Promotion, PromotionDocument } from './schemas/promotion.schema';
+import { Warranty, WarrantyDocument } from './schemas/warranty.schema';
+import { WarrantyClaim, WarrantyClaimDocument } from './schemas/warranty-claim.schema';
+import { CreatePromotionDto } from './dto/create-promotion.dto';
+import { UpdatePromotionStatusDto } from './dto/update-promotion-status.dto';
+import { CreateWarrantyClaimDto, ReviewWarrantyClaimDto } from './dto/warranty-claim.dto';
 
 @Injectable()
 export class SalesService {
@@ -68,6 +74,9 @@ export class SalesService {
     @InjectModel(WarehouseStock.name) private readonly warehouseStocks: Model<WarehouseStockDocument>,
     @InjectModel(LoyaltyLedger.name) private readonly loyaltyLedger: Model<LoyaltyLedgerDocument>,
     @InjectModel(LoyaltyRewardVoucher.name) private readonly loyaltyVouchers: Model<LoyaltyRewardVoucherDocument>,
+    @InjectModel(Promotion.name) private readonly promotions: Model<PromotionDocument>,
+    @InjectModel(Warranty.name) private readonly warranties: Model<WarrantyDocument>,
+    @InjectModel(WarrantyClaim.name) private readonly warrantyClaims: Model<WarrantyClaimDocument>,
   ) {}
 
   private loyaltyTier(points: number): 'BRONZE' | 'SILVER' | 'GOLD' | 'PLATINUM' {
@@ -209,6 +218,45 @@ export class SalesService {
 
     return `CN/${financialYear}/${String(counter.sequence).padStart(6, '0')}`;
   }
+  async createPromotion(tenantId: string, userId: string, dto: CreatePromotionDto) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(userId)) throw new BadRequestException('Invalid tenant or user identity');
+    const startsAt = new Date(dto.startsAt);
+    const endsAt = new Date(dto.endsAt);
+    const code = dto.code.trim().toUpperCase();
+    if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime()) || startsAt >= endsAt) throw new BadRequestException('Promotion end date must be after its start date');
+    if (dto.discountType === 'PERCENT' && dto.discountValue > 100) throw new BadRequestException('Percentage discount cannot exceed 100%');
+    if (dto.maximumDiscount !== undefined && dto.maximumDiscount <= 0) throw new BadRequestException('Maximum discount must be positive');
+    try {
+      return await this.promotions.create({
+        tenantId: new Types.ObjectId(tenantId), code, name: dto.name.trim(),
+        description: dto.description?.trim() || '', discountType: dto.discountType,
+        discountValue: dto.discountValue, minimumSubtotal: dto.minimumSubtotal ?? 0,
+        maximumDiscount: dto.maximumDiscount ?? null, startsAt, endsAt,
+        usageLimit: dto.usageLimit ?? null, usageCount: 0, status: 'ACTIVE',
+        createdBy: new Types.ObjectId(userId),
+      });
+    } catch (error: any) {
+      if (error?.code === 11000) throw new ConflictException('A promotion with this code already exists in this business');
+      throw error;
+    }
+  }
+
+  async listPromotions(tenantId: string) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    return this.promotions.find(tenantFilter(tenantId, {})).sort({ createdAt: -1 }).lean();
+  }
+
+  async updatePromotionStatus(tenantId: string, userId: string, id: string, dto: UpdatePromotionStatusDto) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid tenant, user or promotion ID');
+    const promotion = await this.promotions.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(id) }));
+    if (!promotion) throw new NotFoundException('Promotion not found');
+    if (dto.status === 'ACTIVE' && promotion.endsAt <= new Date()) throw new ConflictException('An expired promotion cannot be reactivated');
+    promotion.status = dto.status;
+    promotion.updatedBy = new Types.ObjectId(userId);
+    await promotion.save();
+    return promotion;
+  }
+
   async createSale(
     tenantId: string,
     userId: string,
@@ -236,6 +284,7 @@ export class SalesService {
       placeOfSupplyStateCode: dto.placeOfSupplyStateCode,
       ...(dto.warehouseId ? { warehouseId: dto.warehouseId } : {}),
       ...(dto.rewardVoucherCode ? { rewardVoucherCode: dto.rewardVoucherCode.trim().toUpperCase() } : {}),
+      ...(dto.promotionCode ? { promotionCode: dto.promotionCode.trim().toUpperCase() } : {}),
       payments: (dto.payments ?? []).map((payment) => ({
         method: payment.method,
         amountPaise: this.toPaise(payment.amount),
@@ -386,6 +435,28 @@ export class SalesService {
           productMap.set(productId, product);
         }
 
+        let promotion: any = null;
+        let promotionDiscountPaise = 0;
+        if (dto.promotionCode) {
+          promotion = await this.promotions.findOne(tenantFilter(tenantId, {
+            code: dto.promotionCode.trim().toUpperCase(),
+            status: 'ACTIVE',
+            startsAt: { $lte: saleDate },
+            endsAt: { $gt: saleDate },
+            $or: [{ usageLimit: null }, { $expr: { $lt: ['$usageCount', '$usageLimit'] } }],
+          })).session(session);
+          if (!promotion) throw new BadRequestException('Promotion code is invalid, inactive, expired, or has reached its usage limit');
+          const eligibleSubtotal = dto.items.reduce((sum, item) => {
+            const product = productMap.get(item.productId);
+            return sum + Math.max(0, this.toPaise(product.sellingPrice) * item.quantity - this.toPaise(item.discountAmount || 0));
+          }, 0);
+          if (eligibleSubtotal < this.toPaise(promotion.minimumSubtotal || 0)) throw new BadRequestException('Sale does not meet the minimum subtotal for this promotion');
+          const calculated = promotion.discountType === 'PERCENT'
+            ? Math.round((eligibleSubtotal * promotion.discountValue) / 100)
+            : this.toPaise(promotion.discountValue);
+          promotionDiscountPaise = Math.min(calculated, promotion.maximumDiscount == null ? calculated : this.toPaise(promotion.maximumDiscount), eligibleSubtotal);
+        }
+
         let selectedWarehouse: any = null;
         const warehouseStockMap = new Map<string, any>();
         if (!dto.warehouseId) {
@@ -429,25 +500,27 @@ export class SalesService {
         const invoiceItems: any[] = [];
         let totalCogsPaise = 0;
 
-        let voucherAllocations = dto.items.map(() => 0);
-        if (voucherDiscountPaise > 0) {
-          const eligibleNetByLine = dto.items.map((item) => {
-            const product = productMap.get(item.productId);
-            const gross = this.toPaise(product.sellingPrice) * item.quantity;
-            return Math.max(0, gross - this.toPaise(item.discountAmount || 0));
+        const allocateDiscount = (amount: number, bases: number[]) => {
+          const allocations = bases.map(() => 0);
+          const total = bases.reduce((sum, value) => sum + value, 0);
+          if (amount <= 0 || total <= 0) return allocations;
+          let remaining = amount;
+          const eligible = bases.map((value, index) => ({ value, index })).filter((line) => line.value > 0);
+          eligible.forEach((line, position) => {
+            const allocation = position === eligible.length - 1 ? remaining : Math.min(remaining, Math.floor((amount * line.value) / total));
+            allocations[line.index] = allocation;
+            remaining -= allocation;
           });
-          const eligibleTotal = eligibleNetByLine.reduce((sum, value) => sum + value, 0);
-          if (voucherDiscountPaise > eligibleTotal) throw new BadRequestException('Reward voucher discount exceeds the sale amount after line discounts.');
-          let remainingVoucher = voucherDiscountPaise;
-          const eligibleLines = eligibleNetByLine.map((value, index) => ({ value, index })).filter((line) => line.value > 0);
-          eligibleLines.forEach((line, position) => {
-            const allocation = position === eligibleLines.length - 1
-              ? remainingVoucher
-              : Math.min(remainingVoucher, Math.floor((voucherDiscountPaise * line.value) / eligibleTotal));
-            voucherAllocations[line.index] = allocation;
-            remainingVoucher -= allocation;
-          });
-        }
+          return allocations;
+        };
+        const baseNetByLine = dto.items.map((item) => {
+          const product = productMap.get(item.productId);
+          return Math.max(0, this.toPaise(product.sellingPrice) * item.quantity - this.toPaise(item.discountAmount || 0));
+        });
+        const promotionAllocations = allocateDiscount(promotionDiscountPaise, baseNetByLine);
+        const afterPromotionBases = baseNetByLine.map((value, index) => value - promotionAllocations[index]);
+        if (voucherDiscountPaise > afterPromotionBases.reduce((sum, value) => sum + value, 0)) throw new BadRequestException('Reward voucher discount exceeds the sale amount after promotions and line discounts.');
+        const voucherAllocations = allocateDiscount(voucherDiscountPaise, afterPromotionBases);
 
         for (const [itemIndex, item] of dto.items.entries()) {
           const product = productMap.get(item.productId);
@@ -455,7 +528,7 @@ export class SalesService {
 
           const unitPricePaise = this.toPaise(product.sellingPrice);
           const grossPaise = unitPricePaise * quantity;
-          const discountPaise = this.toPaise(item.discountAmount || 0) + (voucherAllocations[itemIndex] || 0);
+          const discountPaise = this.toPaise(item.discountAmount || 0) + (promotionAllocations[itemIndex] || 0) + (voucherAllocations[itemIndex] || 0);
 
           if (discountPaise > grossPaise) {
             throw new BadRequestException(
@@ -686,6 +759,9 @@ export class SalesService {
           warehouseId: selectedWarehouse?._id ?? null,
           loyaltyVoucherCode: rewardVoucher?.code ?? null,
           loyaltyVoucherDiscount: this.fromPaise(voucherDiscountPaise),
+          promotionCode: promotion?.code ?? null,
+          promotionName: promotion?.name ?? null,
+          promotionDiscount: this.fromPaise(promotionDiscountPaise),
           customerName,
           customerPhone,
           customerGstin,
@@ -708,6 +784,27 @@ export class SalesService {
         });
 
         await invoice.save({ session });
+        if (promotion) {
+          const usageFilter: any = { _id: promotion._id, tenantId: new Types.ObjectId(tenantId), status: 'ACTIVE', startsAt: { $lte: saleDate }, endsAt: { $gt: saleDate } };
+          if (promotion.usageLimit != null) usageFilter.usageCount = { $lt: promotion.usageLimit };
+          const used = await this.promotions.findOneAndUpdate(usageFilter, { $inc: { usageCount: 1 } }, { new: true, session });
+          if (!used) throw new ConflictException('Promotion usage limit was reached while processing this sale. Please retry.');
+        }
+        const warrantyRows = invoiceItems.flatMap((line: any, lineIndex: number) => {
+          const product = productMap.get(String(line.productId));
+          const warrantyDays = Number(product?.warrantyDays || 0);
+          if (warrantyDays <= 0) return [];
+          const coverageEndsAt = new Date(now.getTime() + warrantyDays * 24 * 60 * 60 * 1000);
+          return [{
+            tenantId: new Types.ObjectId(tenantId), invoiceId: invoice._id,
+            productId: line.productId, customerId: linkedCustomer?._id ?? null,
+            lineIndex, invoiceNumber, productName: line.name, sku: line.sku || '',
+            customerName, customerPhone, quantity: line.quantity, claimedQuantity: 0,
+            warrantyDays, terms: product.warrantyTerms || '', purchaseDate: now,
+            coverageEndsAt, status: 'ACTIVE',
+          }];
+        });
+        if (warrantyRows.length) await this.warranties.create(warrantyRows, { session });
         if (rewardVoucher) {
           rewardVoucher.status = 'REDEEMED';
           rewardVoucher.redeemedInvoiceId = invoice._id;
@@ -1484,6 +1581,129 @@ if (existingPayment) {
     } finally {
       await session.endSession();
     }
+  }
+
+  async findInvoiceWarranties(tenantId: string, invoiceId: string) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(invoiceId)) throw new BadRequestException('Invalid tenant or invoice ID');
+    const invoice = await this.invoices.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(invoiceId) })).lean();
+    if (!invoice) throw new NotFoundException('Invoice not found');
+    await this.warranties.updateMany(
+      tenantFilter(tenantId, { invoiceId: invoice._id, status: 'ACTIVE', coverageEndsAt: { $lte: new Date() } }),
+      { $set: { status: 'EXPIRED' } },
+    );
+    return this.warranties.find(tenantFilter(tenantId, { invoiceId: invoice._id })).sort({ lineIndex: 1 }).lean();
+  }
+
+  async createWarrantyClaim(tenantId: string, userId: string, invoiceId: string, warrantyId: string, dto: CreateWarrantyClaimDto) {
+    if (![tenantId, userId, invoiceId, warrantyId].every(Types.ObjectId.isValid)) throw new BadRequestException('Invalid tenant, user, invoice or warranty ID');
+    if (!Number.isInteger(dto.quantity) || dto.quantity < 1 || !dto.issueDescription?.trim()) throw new BadRequestException('A valid claim quantity and issue description are required');
+    const session = await this.connection.startSession();
+    try {
+      let result: any;
+      await session.withTransaction(async () => {
+        const warranty = await this.warranties.findOne(tenantFilter(tenantId, {
+          _id: new Types.ObjectId(warrantyId), invoiceId: new Types.ObjectId(invoiceId),
+        })).session(session);
+        if (!warranty) throw new NotFoundException('Warranty registration not found for this invoice');
+        if (warranty.coverageEndsAt <= new Date()) {
+          if (warranty.status !== 'EXPIRED') { warranty.status = 'EXPIRED'; await warranty.save({ session }); }
+          throw new ConflictException('Warranty coverage has expired');
+        }
+        if (warranty.claimedQuantity + dto.quantity > warranty.quantity) throw new ConflictException('Claim quantity exceeds the unclaimed warranty quantity');
+        const previousClaimed = warranty.claimedQuantity;
+        const updated = await this.warranties.findOneAndUpdate(
+          tenantFilter(tenantId, { _id: warranty._id, claimedQuantity: previousClaimed, coverageEndsAt: { $gt: new Date() } }),
+          { $inc: { claimedQuantity: dto.quantity } },
+          { new: true, session },
+        );
+        if (!updated) throw new ConflictException('Warranty claim quantity changed concurrently. Refresh and retry.');
+        if (updated.claimedQuantity >= updated.quantity) {
+          updated.status = 'CLAIMED';
+          await updated.save({ session });
+        }
+        const [claim] = await this.warrantyClaims.create([{
+          tenantId: new Types.ObjectId(tenantId), warrantyId: warranty._id,
+          invoiceId: warranty.invoiceId, claimCode: 'WC' + randomBytes(6).toString('hex').toUpperCase(),
+          quantity: dto.quantity, issueDescription: dto.issueDescription.trim(),
+          status: 'OPEN', createdBy: new Types.ObjectId(userId),
+        }], { session });
+        result = claim;
+      });
+      return result;
+    } finally { await session.endSession(); }
+  }
+
+  async listWarrantyClaims(tenantId: string, page = 1, limit = 20, status?: string) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    const filter: any = tenantFilter(tenantId, {});
+    if (status) {
+      const normalized = status.toUpperCase();
+      if (!['OPEN', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'RESOLVED'].includes(normalized)) throw new BadRequestException('Invalid warranty claim status');
+      filter.status = normalized;
+    }
+    const [items, total] = await Promise.all([
+      this.warrantyClaims.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      this.warrantyClaims.countDocuments(filter),
+    ]);
+    return { items, pagination: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+  }
+
+  async reviewWarrantyClaim(tenantId: string, userId: string, claimId: string, dto: ReviewWarrantyClaimDto) {
+    if (![tenantId, userId, claimId].every(Types.ObjectId.isValid)) throw new BadRequestException('Invalid tenant, user or claim ID');
+    const reason = dto.reason?.trim();
+    if (!reason || reason.length < 5 || reason.length > 500) throw new BadRequestException('Review reason must contain 5 to 500 characters');
+    const session = await this.connection.startSession();
+    try {
+      let result: any;
+      await session.withTransaction(async () => {
+        const claim = await this.warrantyClaims.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(claimId) })).session(session);
+        if (!claim) throw new NotFoundException('Warranty claim not found');
+        if (claim.status === 'REJECTED' || claim.status === 'RESOLVED') throw new ConflictException('Rejected or resolved warranty claims cannot be changed');
+        if (claim.status === 'APPROVED' && dto.status !== 'RESOLVED') throw new ConflictException('An approved claim can only be marked resolved');
+        if (dto.status === 'RESOLVED' && !dto.resolutionType) throw new BadRequestException('Choose a resolution type before resolving the claim');
+        if ((dto.status === 'APPROVED' || dto.status === 'RESOLVED') && !dto.resolutionType) throw new BadRequestException('An approved claim requires a resolution type');
+        const warranty = await this.warranties.findOne(tenantFilter(tenantId, { _id: claim.warrantyId })).session(session);
+        if (!warranty) throw new NotFoundException('Warranty registration not found');
+        let creditNote: any = null;
+        let replacementInvoice: any = null;
+        if (dto.resolutionType === 'REFUND' || dto.resolutionType === 'EXCHANGE') {
+          if (!dto.creditNoteId) throw new BadRequestException('A linked credit note is required for refund or exchange resolution');
+          creditNote = await this.creditNotes.findOne(tenantFilter(tenantId, {
+            _id: new Types.ObjectId(dto.creditNoteId), invoiceId: warranty.invoiceId,
+          })).session(session).lean();
+          if (!creditNote || !creditNote.items.some((line: any) => String(line.productId) === String(warranty.productId) && line.quantity >= claim.quantity)) {
+            throw new BadRequestException('The credit note must return the claimed product and quantity from the original invoice');
+          }
+        }
+        if (dto.resolutionType === 'EXCHANGE') {
+          if (!dto.replacementInvoiceId) throw new BadRequestException('A replacement invoice is required for exchange resolution');
+          replacementInvoice = await this.invoices.findOne(tenantFilter(tenantId, {
+            _id: new Types.ObjectId(dto.replacementInvoiceId), status: 'ISSUED',
+            ...(warranty.customerId ? { customerId: warranty.customerId } : {}),
+          })).session(session).lean();
+          if (!replacementInvoice || !replacementInvoice.items.some((line: any) => String(line.productId) === String(warranty.productId) && line.quantity >= claim.quantity)) {
+            throw new BadRequestException('Replacement invoice must be issued to the same customer and contain the exchanged product quantity');
+          }
+        }
+        if (dto.status === 'REJECTED') {
+          await this.warranties.updateOne(
+            tenantFilter(tenantId, { _id: warranty._id }),
+            { $inc: { claimedQuantity: -claim.quantity }, $set: { status: warranty.coverageEndsAt > new Date() ? 'ACTIVE' : 'EXPIRED' } },
+            { session },
+          );
+        }
+        claim.status = dto.status;
+        claim.reviewReason = reason;
+        claim.reviewedBy = new Types.ObjectId(userId);
+        claim.reviewedAt = new Date();
+        if (dto.resolutionType) claim.resolutionType = dto.resolutionType;
+        if (creditNote) claim.creditNoteId = creditNote._id;
+        if (replacementInvoice) claim.replacementInvoiceId = replacementInvoice._id;
+        await claim.save({ session });
+        result = claim;
+      });
+      return result;
+    } finally { await session.endSession(); }
   }
 
   async findCreditNotes(tenantId: string, invoiceId: string) {

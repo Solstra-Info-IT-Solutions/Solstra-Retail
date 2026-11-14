@@ -12,7 +12,7 @@ type Product = {
   _id: string; name: string; description?: string; category?: string; sku?: string;
   barcode?: string; purchasePrice: number; sellingPrice: number; mrp: number;
   priceIncludesTax?: boolean; gstRate: number; hsnCode?: string; unit?: string;
-  stockQty: number; lowStockThreshold: number; trackStock: boolean; valuationInitialized?: boolean; averageCost?: number; inventoryValue?: number; createdAt?: string;
+  stockQty: number; lowStockThreshold: number; trackStock: boolean; warrantyDays?: number; warrantyTerms?: string; valuationInitialized?: boolean; averageCost?: number; inventoryValue?: number; createdAt?: string;
 };
 type ProductList = {
   items: Product[];
@@ -24,13 +24,13 @@ type ProductForm = {
   name: string; description: string; category: string; sku: string; barcode: string;
   purchasePrice: string; sellingPrice: string; mrp: string; gstRate: string;
   hsnCode: string; unit: string; stockQty: string; lowStockThreshold: string;
-  trackStock: boolean; priceIncludesTax: boolean;
+  trackStock: boolean; priceIncludesTax: boolean; warrantyDays: string; warrantyTerms: string;
 };
 const blankForm: ProductForm = {
   name: '', description: '', category: '', sku: '', barcode: '',
   purchasePrice: '0', sellingPrice: '0', mrp: '0', gstRate: '18',
   hsnCode: '', unit: 'pcs', stockQty: '0', lowStockThreshold: '5',
-  trackStock: true, priceIncludesTax: false,
+  trackStock: true, priceIncludesTax: false, warrantyDays: '0', warrantyTerms: '',
 };
 const money = (value = 0) => new Intl.NumberFormat('en-IN', {
   style: 'currency', currency: 'INR', maximumFractionDigits: 2,
@@ -94,6 +94,7 @@ export default function ProductsPage() {
       unit: product.unit || 'pcs', stockQty: String(product.stockQty ?? 0),
       lowStockThreshold: String(product.lowStockThreshold ?? 5),
       trackStock: product.trackStock !== false, priceIncludesTax: product.priceIncludesTax === true,
+      warrantyDays: String(product.warrantyDays ?? 0), warrantyTerms: product.warrantyTerms || '',
     });
     setFormError(''); setFormOpen(true);
   }
@@ -107,6 +108,7 @@ export default function ProductsPage() {
       gstRate: Number(form.gstRate), hsnCode: optional(form.hsnCode),
       unit: form.unit.trim() || 'pcs', lowStockThreshold: Number(form.lowStockThreshold),
       trackStock: form.trackStock, priceIncludesTax: form.priceIncludesTax,
+      warrantyDays: Number(form.warrantyDays), warrantyTerms: optional(form.warrantyTerms),
       ...(!editing ? { stockQty: Number(form.stockQty) } : {}),
     };
     try {
@@ -246,6 +248,11 @@ export default function ProductsPage() {
               <label className="products-field">HSN / SAC code<input maxLength={20} value={form.hsnCode} onChange={(e) => setForm({ ...form, hsnCode: e.target.value })} /></label>
               <label className="products-check"><input type="checkbox" checked={form.priceIncludesTax} onChange={(e) => setForm({ ...form, priceIncludesTax: e.target.checked })} /> Prices include GST</label>
             </div></div>
+            <div className="products-form-section"><h3>Warranty coverage</h3><div className="products-form-grid">
+              <label className="products-field">Warranty duration (days)<input type="number" min="0" max="3650" step="1" value={form.warrantyDays} onChange={e => setForm({ ...form, warrantyDays: e.target.value })}/></label>
+              <label className="products-field products-wide">Warranty terms<textarea rows={2} maxLength={1000} value={form.warrantyTerms} onChange={e => setForm({ ...form, warrantyTerms: e.target.value })} placeholder="Coverage, exclusions and service conditions (optional)"/></label>
+              <p className="products-stock-note products-wide">Set 0 for no warranty. A warranty registration is created automatically for each eligible invoice line.</p>
+            </div></div>
             <div className="products-form-section"><h3>Inventory settings</h3><div className="products-form-grid">
               {editing ? <div className="products-stock-note products-wide">Current stock: <strong>{editing.stockQty} {editing.unit}</strong>. Stock adjustments are recorded through inventory movements, not by editing the product profile.</div> :
                 <label className="products-field">Opening stock<input type="number" min="0" step="1" value={form.stockQty} onChange={(e) => setForm({ ...form, stockQty: e.target.value })} /></label>}
@@ -277,6 +284,7 @@ export default function ProductsPage() {
             <div><small>Barcode</small><strong>{selected.barcode || '—'}</strong></div>
             <div><small>HSN code</small><strong>{selected.hsnCode || '—'}</strong></div>
             <div><small>Price includes GST</small><strong>{selected.priceIncludesTax ? 'Yes' : 'No'}</strong></div>
+            <div><small>Warranty</small><strong>{selected.warrantyDays ? selected.warrantyDays + ' days' : 'No warranty'}</strong></div>
           </div>
           {selected.description && <p className="products-detail-description">{selected.description}</p>}
         </section>

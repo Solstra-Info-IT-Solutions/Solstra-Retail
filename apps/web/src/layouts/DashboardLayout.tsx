@@ -3,7 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingCart, Package, Users, Warehouse,
   Truck, ClipboardList, BarChart3, ReceiptText, Building2,
-  Menu, X, LogOut, Search, Languages, ShieldCheck, History, Receipt, type LucideIcon
+  Menu, X, LogOut, Search, Languages, ShieldCheck, History, Receipt, BadgePercent, type LucideIcon
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import './DashboardLayout.css';
@@ -12,6 +12,7 @@ const navigation: Array<{ label: string; path: string; icon: LucideIcon; permiss
   { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, permission: 'dashboard.view' },
   { label: 'POS Billing', path: '/pos', icon: ShoppingCart, permission: 'sales.create' },
   { label: 'Sales Register', path: '/sales', icon: ReceiptText, permission: 'sales.view' },
+  { label: 'Promotions', path: '/promotions', icon: BadgePercent, adminOnly: true },
   { label: 'Products', path: '/products', icon: Package, permission: 'products.view' },
   { label: 'Inventory', path: '/inventory', icon: Warehouse, permission: 'inventory.view' },
   { label: 'Customers', path: '/customers', icon: Users, permission: 'customers.view' },

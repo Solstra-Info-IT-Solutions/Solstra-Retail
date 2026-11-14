@@ -47,7 +47,7 @@ export class ProductsService {
     throw new BadRequestException('Invalid user');
   }
 
-  const tenant = await this.tenants.findById(tenantId).select('maxProducts').lean();
+  const tenant: any = await this.tenants.findById(tenantId).select('maxProducts').lean();
   if (!tenant) throw new NotFoundException('Workspace not found');
   const productCount = await this.products.countDocuments(tenantFilter(tenantId, { isDeleted: false }));
   if (productCount >= Number(tenant.maxProducts || 1000)) throw new ConflictException('Workspace product limit reached for the current subscription plan');

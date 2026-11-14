@@ -11,7 +11,7 @@ export class CreateStaffUserDto {
 
   @IsString()
   @Length(12, 72)
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).+$/, {
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/, {
     message: 'Password must include lowercase, uppercase and a number',
   })
   password!: string;

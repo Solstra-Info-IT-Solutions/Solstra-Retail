@@ -43,7 +43,7 @@ export class TrialGuard implements CanActivate {
         _id: new Types.ObjectId(user.tenantId),
         status: 'active',
       })
-      .select('trialStartedAt trialEndsAt subscriptionStatus')
+      .select('trialStartedAt trialEndsAt subscriptionStatus subscriptionPeriodEnd billingStatus')
       .lean();
 
     if (!tenant) {
@@ -56,10 +56,24 @@ export class TrialGuard implements CanActivate {
       );
     }
 
-    // Active paid subscriptions bypass trial expiry.
-    if (tenant.subscriptionStatus === 'active') return true;
-
     const now = Date.now();
+
+    // Paid access is valid only through the explicitly paid subscription period.
+    // Older active tenants without a period end remain compatible until migrated.
+    if (tenant.subscriptionStatus === 'active') {
+      if (tenant.subscriptionPeriodEnd && now >= new Date(tenant.subscriptionPeriodEnd).getTime()) {
+        throw new HttpException(
+          {
+            code: 'SUBSCRIPTION_EXPIRED',
+            message: 'Your paid subscription period has ended. Renew your plan to restore workspace access.',
+            subscriptionPeriodEnd: tenant.subscriptionPeriodEnd,
+            billingStatus: tenant.billingStatus || 'PAST_DUE',
+          },
+          HttpStatus.PAYMENT_REQUIRED,
+        );
+      }
+      return true;
+    }
 
     if (
       !tenant.trialEndsAt ||

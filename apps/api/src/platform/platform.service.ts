@@ -855,7 +855,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
 
   async listSaasTenants(userId: string) {
     this.assertPlatformAdmin(userId);
-    return this.tenants.find({}).select('name slug status subscriptionStatus subscriptionPlan maxUsers maxProducts maxBranches trialEndsAt createdAt').sort({ createdAt: -1 }).limit(500).lean();
+    return this.tenants.find({}).select('name slug status subscriptionStatus subscriptionPlan subscriptionPeriodStart subscriptionPeriodEnd billingStatus maxUsers maxProducts maxBranches trialEndsAt createdAt').sort({ createdAt: -1 }).limit(500).lean();
   }
 
   async updateSaasTenant(userId: string, tenantId: string, dto: UpdateSaasTenantDto) {

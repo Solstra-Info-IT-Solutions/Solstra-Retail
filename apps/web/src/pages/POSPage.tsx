@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
-import { listQueuedOfflineSales, queueOfflineSale, syncQueuedOfflineSales } from '../api/offlineSales';
+import { cacheOfflineProducts, getOfflineProducts, listQueuedOfflineSales, queueOfflineSale, syncQueuedOfflineSales } from '../api/offlineSales';
 import {
   Search, Plus, Minus, Trash2, ShoppingCart, ScanBarcode,
   UserRound, CreditCard, Receipt, RefreshCw, CheckCircle2
@@ -132,8 +132,14 @@ export default function POSPage() {
           params: { search: search.trim(), page: 1, limit: 50 }
         });
         if (active) setProducts(response.data.items || []);
+        await cacheOfflineProducts((response.data.items || []) as unknown as Array<Record<string, unknown>>);
       } catch {
-        if (active) setProductError('Products could not be loaded. Please retry.');
+        try {
+          const cached = await getOfflineProducts<Product>();
+          const query = search.trim().toLowerCase();
+          const filtered = query ? cached.filter(product => [product.name, product.sku, product.barcode].some(value => String(value || '').toLowerCase().includes(query))) : cached;
+          if (active) { setProducts(filtered.slice(0, 50)); setProductError(cached.length ? 'Offline catalogue: prices and stock are last-synced values. Server revalidates every invoice when synced.' : 'Products could not be loaded. Please retry.'); }
+        } catch { if (active) setProductError('Products could not be loaded and no offline catalogue is available.'); }
       } finally {
         if (active) setLoading(false);
       }

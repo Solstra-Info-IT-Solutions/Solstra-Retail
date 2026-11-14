@@ -135,6 +135,9 @@ export class SalesInvoice {
   @Prop({ type: Types.ObjectId, ref: 'Customer', default: null })
   customerId?: Types.ObjectId | null;
 
+  @Prop({ type: Types.ObjectId, ref: 'Warehouse', default: null, index: true })
+  warehouseId?: Types.ObjectId | null;
+
   @Prop({ default: '' })
   customerName!: string;
 

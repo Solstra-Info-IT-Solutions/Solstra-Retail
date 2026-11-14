@@ -1,9 +1,11 @@
 import {
   BadRequestException,
   Injectable,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { createHash } from 'crypto';
 
 import { tenantFilter } from '../common/tenant-scoped.service';
 import {

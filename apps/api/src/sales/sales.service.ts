@@ -460,7 +460,7 @@ export class SalesService {
           if (!serialCollection) throw new ConflictException('Serial registry is unavailable');
           const registeredCount = await serialCollection.countDocuments({
             tenantId: new Types.ObjectId(tenantId), productId: new Types.ObjectId(item.productId),
-            warehouseId: new Types.ObjectId(dto.warehouseId), status: 'IN_STOCK',
+            warehouseId: new Types.ObjectId(dto.warehouseId),
           }, { session });
           if (registeredCount > 0 && serialNumbers.length !== item.quantity) throw new BadRequestException(`Select exactly ${item.quantity} serial number(s) for ${productMap.get(item.productId)?.name || 'this product'}.`);
           if (!serialNumbers.length) continue;

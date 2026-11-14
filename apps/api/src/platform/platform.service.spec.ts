@@ -167,6 +167,23 @@ describe('PlatformService security boundaries', () => {
     } as any)).rejects.toThrow('Offline sync sequence is stale');
   });
 
+  it('rejects skipped offline batch sequence numbers before processing invoices', async () => {
+    const service: any = createService();
+    service.offlineDevices = {
+      findOneAndUpdate: jest.fn(() => ({ lean: async () => ({
+        _id: '507f1f77bcf86cd799439088', lastSyncSequence: 3,
+        lastSyncStatus: 'SUCCEEDED', lastSyncPayloadSha256: 'previous-hash',
+      }) })),
+    };
+    service.syncRecords = { findOne: jest.fn() };
+    await expect(service.syncOfflineSales(tenantId, userId, {
+      deviceId: 'b5f6a4c2-1d4e-4b2a-9f0c-123456789abc',
+      batchSequence: 5,
+      operations: [{ type: 'SALE', idempotencyKey: 'offline-gap-123', payload: { idempotencyKey: 'offline-gap-123' } }],
+    } as any)).rejects.toThrow('next consecutive value (4)');
+    expect(service.syncRecords.findOne).not.toHaveBeenCalled();
+  });
+
   it('replays a previously acknowledged offline batch without recreating invoices', async () => {
     const service: any = createService();
     const { createHash } = require('crypto');
@@ -238,6 +255,46 @@ describe('PlatformService security boundaries', () => {
     expect(result.billingReminders).toBe(1);
     expect(service.subscriptionInvoices.findOneAndUpdate).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(tenantId, expect.objectContaining({ category: 'BILLING', severity: 'WARNING' }));
+  });
+
+  it('allows an owner to requeue a failed communication delivery', async () => {
+    const service: any = createService();
+    const row = { _id: '507f1f77bcf86cd799439013', status: 'PENDING', channel: 'EMAIL', recipient: 'ops@example.test', nextAttemptAt: new Date() };
+    service.communicationDeliveries = {
+      findOneAndUpdate: jest.fn(() => ({ select: () => ({ lean: async () => row }) })),
+    };
+    const result = await service.retryCommunicationDelivery(tenantId, row._id);
+    expect(result).toMatchObject({ id: row._id, status: 'PENDING', channel: 'EMAIL' });
+    expect(service.communicationDeliveries.findOneAndUpdate.mock.calls[0][0]).toMatchObject({
+      tenantId: expect.anything(), status: { $in: ['FAILED', 'DEAD'] },
+    });
+  });
+
+  it('rejects communication retry for an invalid delivery ID', async () => {
+    const service: any = createService();
+    service.communicationDeliveries = { findOneAndUpdate: jest.fn() };
+    await expect(service.retryCommunicationDelivery(tenantId, 'invalid-id')).rejects.toBeInstanceOf(BadRequestException);
+    expect(service.communicationDeliveries.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('reports both over- and under-allocated warehouse stock and matches within tolerance', async () => {
+    const service: any = createService();
+    const products = [
+      { _id: '507f1f77bcf86cd799439101', name: 'Over', sku: 'OVER', stockQty: 10, inventoryValue: 100, valuationInitialized: true },
+      { _id: '507f1f77bcf86cd799439102', name: 'Under', sku: 'UNDER', stockQty: 10, inventoryValue: 100, valuationInitialized: true },
+      { _id: '507f1f77bcf86cd799439103', name: 'Matched', sku: 'MATCH', stockQty: 10, inventoryValue: 100, valuationInitialized: true },
+      { _id: '507f1f77bcf86cd799439104', name: 'Pending', sku: 'PEND', stockQty: 2, inventoryValue: 0, valuationInitialized: false },
+    ];
+    service.products = { find: () => ({ select: () => ({ lean: async () => products }) }) };
+    service.warehouseStocks = { aggregate: jest.fn().mockResolvedValue([
+      { _id: products[0]._id, quantity: 12, inventoryValue: 120, warehouses: 2 },
+      { _id: products[1]._id, quantity: 8, inventoryValue: 80, warehouses: 1 },
+      { _id: products[2]._id, quantity: 10, inventoryValue: 100.005, warehouses: 1 },
+    ]) };
+    const result = await service.valuationReconciliation(tenantId);
+    expect(result.summary).toMatchObject({ products: 4, valuationPending: 1, overAllocated: 1, underAllocated: 1, matched: 1, discrepancyCount: 2 });
+    expect(result.discrepancies.map((item: any) => item.status)).toEqual(['OVER_ALLOCATED', 'UNDER_ALLOCATED']);
+    expect(result.review[0].status).toBe('MATCHED');
   });
 
 });

@@ -12,6 +12,9 @@ import { Product } from '../products/schemas/product.schema';
 import { Customer, CustomerDocument } from '../customers/schemas/customer.schema';
 import { Tenant } from '../tenants/schemas/tenant.schema';
 import { InventoryMovement } from '../inventory/schemas/inventory-movement.schema';
+import { Warehouse } from '../branches/schemas/warehouse.schema';
+import { Branch } from '../branches/schemas/branch.schema';
+import { WarehouseStock, WarehouseStockDocument } from '../inventory/schemas/warehouse-stock.schema';
 import { tenantFilter } from '../common/tenant-scoped.service';
 
 import { SalesInvoice } from './schemas/sales-invoice.schema';
@@ -58,6 +61,9 @@ export class SalesService {
 
     private readonly accounting: AccountingService,
     private readonly taxPeriods: TaxPeriodsService,
+    @InjectModel(Warehouse.name) private readonly warehouses: Model<Warehouse>,
+    @InjectModel(Branch.name) private readonly branches: Model<Branch>,
+    @InjectModel(WarehouseStock.name) private readonly warehouseStocks: Model<WarehouseStockDocument>,
   ) {}
 
   private toPaise(value: number): number {
@@ -217,6 +223,7 @@ export class SalesService {
       customerPhone: dto.customerPhone ?? '',
       customerGstin: dto.customerGstin ?? null,
       placeOfSupplyStateCode: dto.placeOfSupplyStateCode,
+      ...(dto.warehouseId ? { warehouseId: dto.warehouseId } : {}),
       payments: (dto.payments ?? []).map((payment) => ({
         method: payment.method,
         amountPaise: this.toPaise(payment.amount),
@@ -353,6 +360,31 @@ export class SalesService {
           productMap.set(productId, product);
         }
 
+        let selectedWarehouse: any = null;
+        const warehouseStockMap = new Map<string, any>();
+        if (!dto.warehouseId) {
+          const allocatedCount = await this.warehouseStocks.countDocuments(tenantFilter(tenantId, {
+            productId: { $in: Array.from(productMap.values()).map((product: any) => product._id) },
+          })).session(session);
+          if (allocatedCount > 0) throw new BadRequestException('Select a warehouse for this sale because this product has warehouse-level stock allocations.');
+        }
+        if (dto.warehouseId) {
+          if (!Types.ObjectId.isValid(dto.warehouseId)) throw new BadRequestException('Invalid warehouse ID');
+          selectedWarehouse = await this.warehouses.findOne(tenantFilter(tenantId, {
+            _id: new Types.ObjectId(dto.warehouseId), isDeleted: false, isActive: true,
+          })).session(session).lean();
+          if (!selectedWarehouse) throw new NotFoundException('Active warehouse not found in this business');
+          const branch = await this.branches.findOne(tenantFilter(tenantId, {
+            _id: selectedWarehouse.branchId, isDeleted: false, isActive: true,
+          })).session(session).lean();
+          if (!branch) throw new ConflictException('The selected warehouse branch is inactive');
+          const stockRows = await this.warehouseStocks.find(tenantFilter(tenantId, {
+            warehouseId: selectedWarehouse._id,
+            productId: { $in: Array.from(productMap.values()).map((product: any) => product._id) },
+          })).session(session).lean();
+          for (const stock of stockRows) warehouseStockMap.set(String(stock.productId), stock);
+        }
+
         const now = saleDate;
         const invoiceNumber = await this.nextInvoiceNumber(
           tenantId,
@@ -427,7 +459,8 @@ export class SalesService {
           sgstTotalPaise += sgstPaise;
           igstTotalPaise += igstPaise;
 
-          const unitCostPaise = product.trackStock ? this.toPaise(product.averageCost || 0) : 0;
+          const warehouseStock = dto.warehouseId ? warehouseStockMap.get(String(product._id)) : null;
+          const unitCostPaise = product.trackStock ? this.toPaise(dto.warehouseId ? (warehouseStock?.averageCost || 0) : (product.averageCost || 0)) : 0;
           if (product.trackStock && product.stockQty > 0 && !product.valuationInitialized) {
             throw new BadRequestException(`Inventory valuation is not initialized for ${product.name}. Reconcile opening stock before selling this item.`);
           }
@@ -500,15 +533,41 @@ export class SalesService {
           }
 
           const previousQty = product.stockQty || 0;
-
-          if (previousQty < quantity) {
+          const warehouseStock = dto.warehouseId ? warehouseStockMap.get(String(product._id)) : null;
+          if (dto.warehouseId && !warehouseStock) {
+            throw new BadRequestException(`No stock is allocated for ${product.name} in the selected warehouse.`);
+          }
+          const availableQty = dto.warehouseId ? warehouseStock.quantity : previousQty;
+          if (availableQty < quantity) {
             throw new BadRequestException(
-              `Insufficient stock for ${product.name}. Available: ${previousQty}, requested: ${quantity}.`,
+              `Insufficient stock for ${product.name}. Available: ${availableQty}, requested: ${quantity}.`,
             );
           }
-
           const newQty = previousQty - quantity;
+          let movementPreviousQty = previousQty;
+          let movementNewQty = newQty;
+          const warehouseCostPaise = dto.warehouseId ? this.toPaise(warehouseStock.averageCost || 0) : this.toPaise(product.averageCost || 0);
+          const relievedValuePaise = dto.warehouseId
+            ? (quantity === warehouseStock.quantity ? this.toPaise(warehouseStock.inventoryValue || 0) : warehouseCostPaise * quantity)
+            : this.toPaise(product.averageCost || 0) * quantity;
+          if (dto.warehouseId) {
+            const warehouseNewQty = warehouseStock.quantity - quantity;
+            movementPreviousQty = warehouseStock.quantity;
+            movementNewQty = warehouseNewQty;
+            const warehouseValuePaise = this.toPaise(warehouseStock.inventoryValue || 0);
+            if (relievedValuePaise > warehouseValuePaise) throw new ConflictException('Warehouse inventory valuation is inconsistent; reconcile before selling');
+            const warehouseNewValuePaise = Math.max(0, this.toPaise(warehouseStock.inventoryValue || 0) - relievedValuePaise);
+            const warehouseUpdated = await this.warehouseStocks.findOneAndUpdate(
+              tenantFilter(tenantId, { _id: warehouseStock._id, quantity: warehouseStock.quantity }),
+              { $set: { quantity: warehouseNewQty, inventoryValue: this.fromPaise(warehouseNewValuePaise), averageCost: warehouseNewQty > 0 ? this.fromPaise(Math.round(warehouseNewValuePaise / warehouseNewQty)) : 0 } },
+              { new: true, session, runValidators: true },
+            );
+            if (!warehouseUpdated) throw new ConflictException(`Warehouse stock changed while processing ${product.name}. Please retry.`);
+          }
 
+          const productValuePaise = this.toPaise(product.inventoryValue || 0);
+          if (dto.warehouseId && relievedValuePaise > productValuePaise) throw new ConflictException('Product inventory valuation is inconsistent with warehouse stock; reconcile before selling');
+          const nextInventoryValuePaise = Math.max(0, productValuePaise - relievedValuePaise);
           const updated = await this.products.findOneAndUpdate(
             tenantFilter(tenantId, {
               _id: product._id,
@@ -519,11 +578,8 @@ export class SalesService {
             {
               $set: {
                 stockQty: newQty,
-                inventoryValue: this.fromPaise(Math.max(
-                  0,
-                  this.toPaise(product.inventoryValue || 0) -
-                    this.toPaise(product.averageCost || 0) * quantity,
-                )),
+                inventoryValue: this.fromPaise(nextInventoryValuePaise),
+                averageCost: newQty > 0 ? this.fromPaise(Math.round(nextInventoryValuePaise / newQty)) : 0,
               },
             },
             {
@@ -544,10 +600,11 @@ export class SalesService {
               {
                 tenantId: new Types.ObjectId(tenantId),
                 productId: product._id,
+                ...(dto.warehouseId ? { warehouseId: selectedWarehouse._id } : {}),
                 type: 'SALE',
                 quantityDelta: -quantity,
-                previousQty,
-                newQty,
+                previousQty: movementPreviousQty,
+                newQty: movementNewQty,
                 reason: `Sale invoice ${invoiceNumber}`,
                 performedBy: new Types.ObjectId(userId),
               },
@@ -580,6 +637,7 @@ export class SalesService {
             .filter(Boolean)
             .join(', '),
           customerId: linkedCustomer?._id ?? null,
+          warehouseId: selectedWarehouse?._id ?? null,
           customerName,
           customerPhone,
           customerGstin,
@@ -1113,11 +1171,44 @@ if (existingPayment) {
               throw new ConflictException(`Opening inventory valuation is required before restocking "${original.name}".`);
             }
             const newQty = previousQty + requested.quantity;
+            let movementPreviousQty = previousQty;
+            let movementNewQty = newQty;
             const returnedUnitCostPaise = invoice.costingVersion === 1
               ? this.toPaise(original.unitCostAtSale || 0)
               : this.toPaise(product.averageCost || 0);
             const returnedCostPaise = returnedUnitCostPaise * requested.quantity;
             restockedCostPaise += returnedCostPaise;
+
+            if (invoice.warehouseId) {
+              const warehouseStock = await this.warehouseStocks.findOne(tenantFilter(tenantId, {
+                warehouseId: invoice.warehouseId, productId: product._id,
+              })).session(session);
+              const warehousePreviousQty = warehouseStock?.quantity || 0;
+              const warehousePreviousValuePaise = this.toPaise(warehouseStock?.inventoryValue || 0);
+              const warehouseNextQty = warehousePreviousQty + requested.quantity;
+              movementPreviousQty = warehousePreviousQty;
+              movementNewQty = warehouseNextQty;
+              const warehouseNextValuePaise = warehousePreviousValuePaise + returnedCostPaise;
+              if (warehouseStock) {
+                const restoredWarehouse = await this.warehouseStocks.findOneAndUpdate(
+                  tenantFilter(tenantId, { _id: warehouseStock._id, quantity: warehousePreviousQty }),
+                  { $set: {
+                    quantity: warehouseNextQty,
+                    inventoryValue: this.fromPaise(warehouseNextValuePaise),
+                    averageCost: this.fromPaise(Math.round(warehouseNextValuePaise / warehouseNextQty)),
+                  } },
+                  { new: true, session, runValidators: true },
+                );
+                if (!restoredWarehouse) throw new ConflictException(`Warehouse stock changed while returning "${original.name}". Please retry.`);
+              } else {
+                await this.warehouseStocks.create([{
+                  tenantId: new Types.ObjectId(tenantId), warehouseId: invoice.warehouseId,
+                  productId: product._id, quantity: warehouseNextQty,
+                  inventoryValue: this.fromPaise(warehouseNextValuePaise),
+                  averageCost: this.fromPaise(Math.round(warehouseNextValuePaise / warehouseNextQty)),
+                }], { session });
+              }
+            }
 
             const updatedProduct = await this.products.findOneAndUpdate(
               tenantFilter(tenantId, {
@@ -1148,10 +1239,11 @@ if (existingPayment) {
                 {
                   tenantId: new Types.ObjectId(tenantId),
                   productId: product._id,
+                  ...(invoice.warehouseId ? { warehouseId: invoice.warehouseId } : {}),
                   type: 'SALE_RETURN',
                   quantityDelta: requested.quantity,
-                  previousQty,
-                  newQty,
+                  previousQty: movementPreviousQty,
+                  newQty: movementNewQty,
                   reason: `Credit note ${creditNumber}: ${reason}`.slice(
                     0,
                     250,
@@ -1640,9 +1732,42 @@ if (existingPayment) {
             throw new ConflictException('Opening inventory valuation is required before restoring stock for this invoice.');
           }
           const newQty = previousQty + quantity;
+          let movementPreviousQty = previousQty;
+          let movementNewQty = newQty;
           const restoredValuePaise = invoice.costingVersion === 1
             ? (restoreValuesPaise.get(productId) || 0)
             : this.toPaise(product.averageCost || 0) * quantity;
+
+          if (invoice.warehouseId) {
+            const warehouseStock = await this.warehouseStocks.findOne(tenantFilter(tenantId, {
+              warehouseId: invoice.warehouseId, productId: product._id,
+            })).session(session);
+            const warehousePreviousQty = warehouseStock?.quantity || 0;
+            const warehousePreviousValuePaise = this.toPaise(warehouseStock?.inventoryValue || 0);
+            const warehouseNextQty = warehousePreviousQty + quantity;
+            movementPreviousQty = warehousePreviousQty;
+            movementNewQty = warehouseNextQty;
+            const warehouseNextValuePaise = warehousePreviousValuePaise + restoredValuePaise;
+            if (warehouseStock) {
+              const restoredWarehouse = await this.warehouseStocks.findOneAndUpdate(
+                tenantFilter(tenantId, { _id: warehouseStock._id, quantity: warehousePreviousQty }),
+                { $set: {
+                  quantity: warehouseNextQty,
+                  inventoryValue: this.fromPaise(warehouseNextValuePaise),
+                  averageCost: this.fromPaise(Math.round(warehouseNextValuePaise / warehouseNextQty)),
+                } },
+                { new: true, session, runValidators: true },
+              );
+              if (!restoredWarehouse) throw new ConflictException('Warehouse stock changed while cancelling this invoice');
+            } else {
+              await this.warehouseStocks.create([{
+                tenantId: new Types.ObjectId(tenantId), warehouseId: invoice.warehouseId,
+                productId: product._id, quantity: warehouseNextQty,
+                inventoryValue: this.fromPaise(warehouseNextValuePaise),
+                averageCost: this.fromPaise(Math.round(warehouseNextValuePaise / warehouseNextQty)),
+              }], { session });
+            }
+          }
 
           const updated = await this.products.findOneAndUpdate(
             tenantFilter(tenantId, {
@@ -1681,10 +1806,11 @@ if (existingPayment) {
               {
                 tenantId: new Types.ObjectId(tenantId),
                 productId: product._id,
+                ...(invoice.warehouseId ? { warehouseId: invoice.warehouseId } : {}),
                 type: 'SALE_RETURN',
                 quantityDelta: quantity,
-                previousQty,
-                newQty,
+                previousQty: movementPreviousQty,
+                newQty: movementNewQty,
                 reason: `Cancellation ${invoice.invoiceNumber}: ${reason}`.slice(
                   0,
                   250,

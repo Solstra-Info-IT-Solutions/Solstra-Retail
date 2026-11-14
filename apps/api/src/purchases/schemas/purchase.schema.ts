@@ -70,6 +70,8 @@ export class PurchaseReceipt {
   items!: PurchaseReceiptItem[];
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   receivedBy!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'Warehouse', default: null })
+  warehouseId?: Types.ObjectId | null;
   @Prop({ required: true, default: Date.now })
   receivedAt!: Date;
 }

@@ -32,6 +32,7 @@ interface ProductResponse {
 }
 
 interface WarehouseOption { _id: string; name: string; branchName: string; }
+interface PromotionOption { _id: string; code: string; name: string; discountType: 'PERCENT' | 'FIXED'; discountValue: number; minimumSubtotal: number; maximumDiscount?: number | null; startsAt: string; endsAt: string; status: string; }
 interface WarehouseStockRow { productId: { _id: string } | string; quantity: number; }
 interface CartItem {
   product: Product;
@@ -83,6 +84,8 @@ export default function POSPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [warehouseId, setWarehouseId] = useState('');
+  const [promotions, setPromotions] = useState<PromotionOption[]>([]);
+  const [promotionCode, setPromotionCode] = useState('');
   const [warehouseQuantities, setWarehouseQuantities] = useState<Record<string, number>>({});
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -122,6 +125,14 @@ export default function POSPage() {
       window.clearTimeout(timer);
     };
   }, [search]);
+
+  useEffect(() => {
+    let active = true;
+    api.get<PromotionOption[]>('/sales/promotions').then(response => {
+      if (active) setPromotions((response.data || []).filter(p => p.status === 'ACTIVE'));
+    }).catch(() => { if (active) setPromotions([]); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -181,7 +192,12 @@ export default function POSPage() {
     [cart]
   );
 
-  const estimatedTotal = Math.max(0, subtotal - totalDiscount);
+  const activePromotion = promotions.find(p => p.code.toUpperCase() === promotionCode.trim().toUpperCase() && new Date(p.startsAt) <= new Date() && new Date(p.endsAt) > new Date());
+  const promotionBase = Math.max(0, subtotal - totalDiscount);
+  const promotionEstimate = activePromotion && promotionBase >= activePromotion.minimumSubtotal
+    ? Math.min(activePromotion.discountType === 'PERCENT' ? promotionBase * activePromotion.discountValue / 100 : activePromotion.discountValue, activePromotion.maximumDiscount ?? Number.POSITIVE_INFINITY, promotionBase)
+    : 0;
+  const estimatedTotal = Math.max(0, subtotal - totalDiscount - promotionEstimate);
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   function addProduct(product: Product) {
@@ -291,6 +307,7 @@ export default function POSPage() {
         customerGstin: customerGstin.trim().toUpperCase() || undefined,
         placeOfSupplyStateCode: stateCode,
         ...(warehouseId ? { warehouseId } : {}),
+        ...(promotionCode.trim() ? { promotionCode: promotionCode.trim().toUpperCase() } : {}),
         payments: amount > 0 ? [{
           method: paymentMethod,
           amount,
@@ -307,6 +324,7 @@ export default function POSPage() {
       setCustomerName('');
       setCustomerPhone('');
       setCustomerGstin('');
+      setPromotionCode('');
       setPaymentAmount('');
       setPaymentReference('');
     } catch (error: unknown) {
@@ -513,6 +531,12 @@ export default function POSPage() {
           </div>
 
           <div className="pos-payment-section">
+            <h3>Promotion / campaign code</h3>
+            <input value={promotionCode} onChange={event => setPromotionCode(event.target.value.toUpperCase())} placeholder="Enter promotion code (optional)" maxLength={40}/>
+            {activePromotion && <small>{activePromotion.name} · {activePromotion.discountType === 'PERCENT' ? activePromotion.discountValue + '% off' : money(activePromotion.discountValue) + ' off'}{promotionEstimate > 0 ? ' · estimated saving ' + money(promotionEstimate) : ' · minimum subtotal not met'}</small>}
+          </div>
+
+          <div className="pos-payment-section">
             <h3><CreditCard size={17} /> Payment collection</h3>
             <select
               value={paymentMethod}
@@ -545,6 +569,7 @@ export default function POSPage() {
           <div className="pos-bill-summary">
             <div><span>Subtotal (before tax adjustment)</span><strong>{money(subtotal)}</strong></div>
             <div><span>Item discounts</span><strong>- {money(totalDiscount)}</strong></div>
+            {promotionEstimate > 0 && <div><span>Promotion estimate</span><strong>- {money(promotionEstimate)}</strong></div>}
             <div className="pos-estimated-total">
               <span>Estimated amount</span>
               <strong>{money(estimatedTotal)}</strong>

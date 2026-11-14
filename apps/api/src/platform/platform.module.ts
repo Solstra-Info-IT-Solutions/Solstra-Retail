@@ -6,7 +6,7 @@ import { User, UserSchema } from '../auth/schemas/user.schema';
 import { Product, ProductSchema } from '../products/schemas/product.schema';
 import { WarehouseStock, WarehouseStockSchema } from '../inventory/schemas/warehouse-stock.schema';
 import {
-  AutomationRule, AutomationRuleSchema, BackupArtifact, BackupArtifactSchema, BackupPolicy, BackupPolicySchema,
+  AutomationExecution, AutomationExecutionSchema, AutomationRule, AutomationRuleSchema, BackupArtifact, BackupArtifactSchema, BackupPolicy, BackupPolicySchema,
   OfflineSyncRecord, OfflineSyncRecordSchema, PlatformNotification, SaasAdminAudit, SaasAdminAuditSchema,
   PlatformNotificationSchema, WebhookDelivery, WebhookDeliverySchema,
   WebhookIntegration, WebhookIntegrationSchema,
@@ -20,6 +20,7 @@ import { PlatformEventInterceptor } from './platform-event.interceptor';
     SalesModule,
     MongooseModule.forFeature([
       { name: AutomationRule.name, schema: AutomationRuleSchema },
+      { name: AutomationExecution.name, schema: AutomationExecutionSchema },
       { name: PlatformNotification.name, schema: PlatformNotificationSchema },
       { name: WebhookIntegration.name, schema: WebhookIntegrationSchema },
       { name: WebhookDelivery.name, schema: WebhookDeliverySchema },

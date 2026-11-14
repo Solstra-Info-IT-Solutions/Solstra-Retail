@@ -90,4 +90,8 @@ export class CreateSaleDto {
   @IsOptional()
   @IsMongoId()
   customerId?: string;
+
+  @IsOptional()
+  @IsMongoId()
+  warehouseId?: string;
 }

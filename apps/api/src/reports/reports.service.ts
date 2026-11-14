@@ -474,7 +474,7 @@ export class ReportsService {
     }
     return {
       entity: dto.entity, runKey: dto.runKey, totalRows: dto.rows.length,
-      validRows: normalized.filter((value, index) => value && !errors.some(error => error.row === index + 1)).length - duplicateRows.length,
+      validRows: normalized.filter((value, index) => value && !errors.some(error => error.row === index + 1)).length - new Set(duplicateRows.map(item => item.row)).size,
       errors, duplicates: duplicateRows,
       commitAllowed: errors.length === 0 && duplicateRows.length === 0,
       policy: 'Master data only. No invoices, payments, stock quantities, valuation, tax journals or opening balances are created.',

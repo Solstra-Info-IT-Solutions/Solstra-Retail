@@ -88,6 +88,12 @@ export class ReportsController {
   }
 
   @Roles('owner', 'admin')
+  @Get('reports/gst/einvoice-submissions')
+  listGstEInvoiceSubmissions(@Req() req: AuthenticatedRequest, @Query('page') page = '1') {
+    return this.reportsService.listGstEInvoiceSubmissions(req.user.tenantId, Number(page));
+  }
+
+  @Roles('owner', 'admin')
   @Post('reports/gst/einvoice/:invoiceId/cancel')
   cancelGstEInvoice(@Req() req: AuthenticatedRequest, @Param('invoiceId') invoiceId: string, @Body() body: { reason?: string }) {
     return this.reportsService.cancelGstEInvoice(req.user.tenantId, invoiceId, String(body?.reason || ''));

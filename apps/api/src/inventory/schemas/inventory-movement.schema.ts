@@ -10,7 +10,9 @@ export type InventoryMovementType =
   | 'OUT'
   | 'ADJUSTMENT'
   | 'SALE'
-  | 'SALE_RETURN';
+  | 'SALE_RETURN'
+  | 'TRANSFER_OUT'
+  | 'TRANSFER_IN';
 
 @Schema({
   timestamps: true,
@@ -32,9 +34,16 @@ export class InventoryMovement {
   })
   productId!: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId, ref: 'Warehouse', default: null, index: true })
+  warehouseId?: Types.ObjectId | null;
+
+  @Prop({ type: Types.ObjectId, ref: 'WarehouseTransfer', default: null, index: true })
+  transferId?: Types.ObjectId | null;
+
   @Prop({
+    type: String,
     required: true,
-    enum: ['OPENING', 'IN', 'OUT', 'ADJUSTMENT', 'SALE', 'SALE_RETURN'],
+    enum: ['OPENING', 'IN', 'OUT', 'ADJUSTMENT', 'SALE', 'SALE_RETURN', 'TRANSFER_OUT', 'TRANSFER_IN'],
   })
   type!: InventoryMovementType;
 
@@ -76,3 +85,6 @@ InventoryMovementSchema.index({
   tenantId: 1,
   createdAt: -1,
 });
+
+InventoryMovementSchema.index({ tenantId: 1, warehouseId: 1, createdAt: -1 });
+InventoryMovementSchema.index({ tenantId: 1, transferId: 1 });

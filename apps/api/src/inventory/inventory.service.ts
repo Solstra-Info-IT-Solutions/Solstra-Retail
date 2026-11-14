@@ -202,6 +202,8 @@ export class InventoryService {
         .skip((page - 1) * limit)
         .limit(limit)
         .populate('productId', 'name sku barcode')
+        .populate('warehouseId', 'name code')
+        .populate('transferId', 'quantity sourceWarehouseId destinationWarehouseId')
         .populate('performedBy', 'name email')
         .lean(),
 

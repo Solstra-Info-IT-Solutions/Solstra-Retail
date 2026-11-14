@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Download, RefreshCw, TrendingUp, Wallet, FileSpreadsheet, BarChart3 } from 'lucide-react';
 import { api } from '../api/client';
 import './ReportsPage.css';
+import AdvancedInsightsPanel from './AdvancedInsightsPanel';
 type SalesReport={invoiceCount:number;grossSalesRupees:number;netSalesRupees:number;creditNotesRupees:number;refundsRupees:number;totalTaxRupees:number;paymentMethods:Array<{_id:string;amountRupees:number;paymentCount:number}>;topProducts:Array<{productId:string;name:string;sku?:string;quantitySold:number;revenueRupees:number}>};
 type ProfitLoss={totalIncome:number;totalExpenses:number;netProfit:number};
 type Balance={totalAssets:number;totalLiabilities:number;totalEquity:number;difference:number;balanced:boolean};
@@ -32,6 +33,7 @@ export default function ReportsPage(){
  <section className="reports-card"><header><div><h2>GST control reconciliation</h2><p>Source documents versus posted Input/Output GST accounts</p></div><FileSpreadsheet size={19}/></header><div className="reports-gst-row"><div><strong>Input tax</strong><small>Source {money(gst?.inputTax.sourcePurchaseTax||0)} · Ledger {money(gst?.inputTax.ledgerNetDebit||0)}</small><b>{gst?.inputTax.reconciled?'Reconciled':'Difference '+money(gst?.inputTax.difference||0)}</b></div><div><strong>Output tax</strong><small>Source {money(gst?.outputTax.sourceInvoiceTaxLessCreditNotes||0)} · Ledger {money(gst?.outputTax.ledgerNetCredit||0)}</small><b>{gst?.outputTax.reconciled?'Reconciled':'Difference '+money(gst?.outputTax.difference||0)}</b></div></div><p className="reports-note">{gst?.note||'GST control balances are for internal review and do not establish statutory ITC eligibility.'}</p></section>
  </div>
  <section className="reports-card reports-products"><header><div><h2>Top products by sales value</h2><p>Highest revenue items in the selected period</p></div></header>{sales?.topProducts?.length?sales.topProducts.slice(0,8).map((p,i)=><div className="reports-product-row" key={p.productId}><span>{i+1}</span><strong>{p.name}</strong><div><i style={{width:(p.revenueRupees/maxProduct*100)+'%'}}/></div><b>{money(p.revenueRupees)}</b></div>):<p className="reports-empty">No product sales in this date range.</p>}</section>
+ <AdvancedInsightsPanel from={from} to={to}/>
  <section className="reports-card reports-exports"><header><div><h2>GST data exports</h2><p>Download review-ready CSV registers. These are not GSTN filing payloads.</p></div><Download size={18}/></header><div>{[['gstr1','GSTR-1 outward register'],['gstr3b','GSTR-3B summary'],['purchase-register','Inward purchase register'],['hsn-outward','Outward HSN summary'],['hsn-inward','Inward HSN summary']].map(([key,title])=><button key={key} onClick={()=>void exportCsv(key)} disabled={!!exporting}>{exporting===key?'Preparing...':title}<Download size={14}/></button>)}</div></section>
  </div>;
 }

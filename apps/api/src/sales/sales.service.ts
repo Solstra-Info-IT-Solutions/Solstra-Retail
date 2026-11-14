@@ -1550,6 +1550,47 @@ if (existingPayment) {
           { session },
         );
 
+        // Reverse earned loyalty points proportionally to cumulative taxable returns.
+        // Already-spent points are not driven negative; the actual deduction is auditable.
+        if (invoice.customerId && Number(invoice.taxableValue || 0) > 0) {
+          const earned = await this.loyaltyLedger.findOne(tenantFilter(tenantId, {
+            customerId: invoice.customerId, sourceType: 'SALE', sourceId: invoice._id.toString(), eventType: 'SALE_EARN',
+          })).session(session).lean();
+          if (earned && Number(earned.points || 0) > 0) {
+            const previousCreditNoteIds = previousNotes.map((note: any) => note._id);
+            const previousClawbacks = previousCreditNoteIds.length
+              ? await this.loyaltyLedger.find(tenantFilter(tenantId, {
+                  customerId: invoice.customerId, sourceType: 'CREDIT_NOTE', eventType: 'RETURN_CLAWBACK',
+                  sourceId: { $in: previousCreditNoteIds.map((id: any) => String(id)) },
+                })).session(session).lean()
+              : [];
+            const earnedPoints = Number(earned.points || 0);
+            const previouslyClawedBack = previousClawbacks.reduce((sum: number, row: any) => sum + row.points, 0);
+            const cumulativeReturnedTaxablePaise = previousNotes.reduce((sum: number, note: any) => sum + this.toPaise(note.taxableValue || 0), 0) + taxableTotalPaise;
+            const originalTaxablePaise = this.toPaise(invoice.taxableValue);
+            const targetClawback = Math.min(earnedPoints, cumulativeReturnedTaxablePaise >= originalTaxablePaise
+              ? earnedPoints
+              : Math.floor(earnedPoints * cumulativeReturnedTaxablePaise / originalTaxablePaise));
+            const requestedClawback = Math.max(0, targetClawback - previouslyClawedBack);
+            if (requestedClawback > 0) {
+              const customer = await this.customers.findOne(tenantFilter(tenantId, { _id: invoice.customerId, isDeleted: false })).session(session);
+              if (!customer) throw new ConflictException('Linked customer is unavailable for loyalty reversal');
+              const actualClawback = Math.min(customer.loyaltyPoints || 0, requestedClawback);
+              if (actualClawback > 0) {
+                customer.loyaltyPoints = (customer.loyaltyPoints || 0) - actualClawback;
+                await customer.save({ session });
+                await this.loyaltyLedger.create([{
+                  tenantId: new Types.ObjectId(tenantId), customerId: invoice.customerId,
+                  eventType: 'RETURN_CLAWBACK', sourceType: 'CREDIT_NOTE', sourceId: String(created._id),
+                  points: actualClawback, pointsDelta: -actualClawback, balanceAfter: customer.loyaltyPoints,
+                  reason: `Loyalty points reversed for credit note ${creditNumber}; returned taxable value ₹${this.fromPaise(taxableTotalPaise).toFixed(2)}`,
+                  createdBy: new Types.ObjectId(userId),
+                }], { session });
+              }
+            }
+          }
+        }
+
         const creditJournalLines: Array<{ accountCode: string; debit: number; credit: number; description: string }> = [];
         if (taxableTotalPaise > 0) creditJournalLines.push({
           accountCode: '4000', debit: this.fromPaise(taxableTotalPaise), credit: 0,
@@ -1665,7 +1706,7 @@ if (existingPayment) {
           tenantId: new Types.ObjectId(tenantId), warrantyId: warranty._id,
           invoiceId: warranty.invoiceId, claimCode: 'WC' + randomBytes(6).toString('hex').toUpperCase(),
           quantity: dto.quantity, issueDescription: dto.issueDescription.trim(),
-          status: 'OPEN', createdBy: new Types.ObjectId(userId),
+          status: 'OPEN', createdBy: new Types.ObjectId(userId), history: [{ status: 'OPEN', reason: 'Warranty claim submitted', actorId: new Types.ObjectId(userId), occurredAt: new Date() }],
         }], { session });
         result = claim;
       });
@@ -1733,6 +1774,7 @@ if (existingPayment) {
           );
         }
         claim.status = dto.status;
+        claim.history.push({ status: dto.status, reason, actorId: new Types.ObjectId(userId), occurredAt: new Date() } as any);
         claim.reviewReason = reason;
         claim.reviewedBy = new Types.ObjectId(userId);
         claim.reviewedAt = new Date();

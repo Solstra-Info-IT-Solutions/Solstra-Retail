@@ -54,7 +54,7 @@ type Invoice = {
 };
 
 type Warranty = { _id: string; invoiceId: string; productId: string; productName: string; invoiceNumber: string; quantity: number; claimedQuantity: number; warrantyDays: number; terms: string; coverageEndsAt: string; status: string };
-type WarrantyClaim = { _id: string; warrantyId: string; invoiceId: string; claimCode: string; quantity: number; issueDescription: string; status: string; reviewReason: string; resolutionType?: string; creditNoteId?: string; replacementInvoiceId?: string };
+type WarrantyClaim = { _id: string; warrantyId: string; invoiceId: string; claimCode: string; quantity: number; issueDescription: string; status: string; reviewReason: string; resolutionType?: string; creditNoteId?: string; replacementInvoiceId?: string; history?: Array<{ status: string; reason: string; occurredAt: string }> };
 type CreditNote = { _id: string; creditNoteNumber: string; totalAmount: number; refundableAmount: number; refundedAmount: number; appliedToDueAmount: number; reason: string; items: Array<{ name: string; quantity: number; restocked: boolean }>; refunds: Array<{ method: string; amount: number; reference?: string; refundedAt: string }> };
 
 type SalesResponse = {
@@ -431,7 +431,7 @@ export default function SalesPage() {
             </section>}
             {warrantyClaims.length > 0 && <section className="sales-warranties"><h3>Warranty & exchange cases</h3>
               {warrantyClaims.map(claim => <article key={claim._id}>
-                <div><strong>{claim.claimCode} · {claim.status.replace('_',' ')}</strong><small>{claim.issueDescription}</small><small>Quantity: {claim.quantity}{claim.resolutionType ? ' · Resolution: ' + claim.resolutionType : ''}</small>{claim.reviewReason && <small>Review: {claim.reviewReason}</small>}</div>
+                <div><strong>{claim.claimCode} · {claim.status.replace('_',' ')}</strong><small>{claim.issueDescription}</small><small>Quantity: {claim.quantity}{claim.resolutionType ? ' · Resolution: ' + claim.resolutionType : ''}</small>{claim.reviewReason && <small>Review: {claim.reviewReason}</small>}{claim.history?.map((event,index)=><small key={index}>{date(event.occurredAt)} · {event.status.replace('_',' ')} — {event.reason}</small>)}</div>
                 {canManageReturns && !['REJECTED','RESOLVED'].includes(claim.status) && <button onClick={() => { setReviewTarget(claim); setReviewStatus(claim.status === 'APPROVED' ? 'RESOLVED' : 'UNDER_REVIEW'); setReviewReason(''); setResolutionType(claim.resolutionType || 'REPAIR'); setResolutionCreditNoteId(claim.creditNoteId || ''); setReplacementInvoiceId(claim.replacementInvoiceId || ''); }}>Review case</button>}
               </article>)}
             </section>}

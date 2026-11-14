@@ -60,6 +60,7 @@ export class RecurringExpensesService {
     const generated: Array<{ scheduleId: string; expenseId: string; period: string }> = [];
     for (const item of due) {
       const session = await this.schedules.db.startSession();
+      let generatedItem: { scheduleId: string; expenseId: string; period: string } | null = null;
       try {
         await session.withTransaction(async () => {
           const current = await this.schedules.findOne(tenantFilter(tenantId, {
@@ -93,11 +94,12 @@ export class RecurringExpensesService {
           current.nextRunAt = next;
           if (completed) current.status = 'COMPLETED';
           await current.save({ session });
-          generated.push({ scheduleId: current._id.toString(), expenseId: expense._id.toString(), period });
+          generatedItem = { scheduleId: current._id.toString(), expenseId: expense._id.toString(), period };
         });
       } finally {
         await session.endSession();
       }
+      if (generatedItem) generated.push(generatedItem);
     }
     return { generatedCount: generated.length, generated, checkedCount: due.length, limit: 50 };
   }

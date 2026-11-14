@@ -13,6 +13,7 @@ export interface AuthUser {
   name: string;
   email: string;
   role: string;
+  permissions?: string[];
 }
 
 interface LoginResponse {
@@ -64,8 +65,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        await api.get('/auth/me');
-        setUser(JSON.parse(savedUser) as AuthUser);
+        const response = await api.get<{ user: AuthUser }>('/auth/me');
+        setUser(response.data.user || JSON.parse(savedUser) as AuthUser);
       } catch {
         logout();
       } finally {

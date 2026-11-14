@@ -820,6 +820,25 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     return { _id: row._id, name: row.name, channel: row.channel, endpointUrl: row.endpointUrl, enabled: row.enabled };
   }
 
+  async rotateCommunicationProviderSecret(tenantId: string, id: string, apiToken: string) {
+    this.identity(tenantId);
+    if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid communication provider ID');
+    if (typeof apiToken !== 'string' || apiToken.trim().length < 12 || apiToken.trim().length > 500) {
+      throw new BadRequestException('Provider credential must contain 12–500 characters');
+    }
+    const encrypted = this.encryptSecret(apiToken.trim(), await this.encryptionKey());
+    const row = await this.communicationProviders.findOneAndUpdate(
+      tenantFilter(tenantId, { _id: new Types.ObjectId(id) }),
+      { $set: encrypted }, { new: true },
+    ).select('-encryptedSecret -secretIv -secretTag').lean();
+    if (!row) throw new NotFoundException('Communication provider not found');
+    return {
+      provider: row,
+      rotatedAt: new Date(),
+      warning: 'The previous credential is invalid immediately. Update the external provider configuration before the next queued delivery.',
+    };
+  }
+
   async updateCommunicationProvider(tenantId: string, id: string, enabled: boolean) {
     this.identity(tenantId);
     if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid communication provider ID');

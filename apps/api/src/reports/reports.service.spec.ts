@@ -34,7 +34,7 @@ describe('ReportsService validation', () => {
     const sales = jest.spyOn(service, 'salesReport')
       .mockResolvedValueOnce({ invoiceCount: 8, netSalesRupees: 1200 } as any)
       .mockResolvedValueOnce({ invoiceCount: 6, netSalesRupees: 1000 } as any);
-    const result = await service.answerBusinessQuestion('507f1f77bcf86cd799439011', 'compare sales this month vs last month');
+    const result: any = await service.answerBusinessQuestion('507f1f77bcf86cd799439011', 'compare sales this month vs last month');
     expect(result.mode).toBe('RULE_BASED_COMPARATIVE_ANALYSIS');
     expect(result.change).toMatchObject({ amountRupees: 200, percent: 20, direction: 'UP' });
     expect(sales).toHaveBeenCalledTimes(2);

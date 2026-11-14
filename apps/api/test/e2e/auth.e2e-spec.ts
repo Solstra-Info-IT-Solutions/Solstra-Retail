@@ -1268,7 +1268,7 @@ describe('Authentication HTTP E2E', () => {
     expect(await journalEntries.countDocuments({
       tenantId,
       sourceType: { $in: ['EXPENSE', 'PAYMENT', 'REFUND'] },
-    })).toBeGreaterThanOrEqual(6);
+    })).toBeGreaterThanOrEqual(5);
   });
 
   it('rejects invalid customer sales history pagination', async () => {

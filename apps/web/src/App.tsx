@@ -15,6 +15,7 @@ import BranchesPage from './pages/BranchesPage';
 import StaffPage from './pages/StaffPage';
 import AuditPage from './pages/AuditPage';
 import ReportsPage from './pages/ReportsPage';
+import ExpensesPage from './pages/ExpensesPage';
 
 function AppRoutes() {
   const { isAuthenticated } = useAuth();
@@ -41,6 +42,7 @@ function AppRoutes() {
           <Route path="/staff" element={<StaffPage />} />
           <Route path="/audit" element={<AuditPage />} />
           <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/expenses" element={<ExpensesPage />} />
         </Route>
       </Route>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />

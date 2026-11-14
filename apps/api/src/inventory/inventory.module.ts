@@ -15,6 +15,10 @@ import { Warehouse, WarehouseSchema } from '../branches/schemas/warehouse.schema
 import { WarehouseStock, WarehouseStockSchema } from './schemas/warehouse-stock.schema';
 import { WarehouseTransfer, WarehouseTransferSchema } from './schemas/warehouse-transfer.schema';
 import { WarehouseInventoryService } from './warehouse-inventory.service';
+import { ReplenishmentPolicy, ReplenishmentPolicySchema } from './schemas/replenishment-policy.schema';
+import { ReplenishmentService } from './replenishment.service';
+import { SalesInvoice, SalesInvoiceSchema } from '../sales/schemas/sales-invoice.schema';
+import { Supplier, SupplierSchema } from '../suppliers/schemas/supplier.schema';
 
 @Module({
   imports: [
@@ -25,6 +29,9 @@ import { WarehouseInventoryService } from './warehouse-inventory.service';
       { name: Warehouse.name, schema: WarehouseSchema },
       { name: WarehouseStock.name, schema: WarehouseStockSchema },
       { name: WarehouseTransfer.name, schema: WarehouseTransferSchema },
+      { name: ReplenishmentPolicy.name, schema: ReplenishmentPolicySchema },
+      { name: SalesInvoice.name, schema: SalesInvoiceSchema },
+      { name: Supplier.name, schema: SupplierSchema },
       {
         name: InventoryMovement.name,
         schema: InventoryMovementSchema,
@@ -32,7 +39,7 @@ import { WarehouseInventoryService } from './warehouse-inventory.service';
     ]),
   ],
   controllers: [InventoryController],
-  providers: [InventoryService, WarehouseInventoryService],
+  providers: [InventoryService, WarehouseInventoryService, ReplenishmentService],
   exports: [InventoryService],
 })
 export class InventoryModule {}

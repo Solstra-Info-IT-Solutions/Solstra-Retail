@@ -164,6 +164,12 @@ export class PlatformController {
   }
 
   @Roles('owner', 'admin')
+  @Post('communications/providers/:id/rotate-secret')
+  rotateCommunicationProviderSecret(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: { apiToken: string }) {
+    return this.platform.rotateCommunicationProviderSecret(req.user.tenantId, id, body.apiToken);
+  }
+
+  @Roles('owner', 'admin')
   @Patch('communications/providers/:id')
   updateCommunicationProvider(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: UpdateWebhookDto) {
     return this.platform.updateCommunicationProvider(req.user.tenantId, id, dto.enabled);

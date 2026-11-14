@@ -162,7 +162,7 @@ export default function SalesPage() {
     } finally { setReturnSaving(false); }
   }
 
-  async function recordRefund(event: React.FormEvent<HTMLFormElement>) {
+  async function recordRefund(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!selected || !refundTarget) return;
     setRefundSaving(true); setReturnError('');
     try {
@@ -307,7 +307,7 @@ export default function SalesPage() {
               </div>
               <div className="sales-detail-actions">
                 {canManageReturns && selected.status !== 'CANCELLED' && <button onClick={() => { setReturnQty({}); setReturnRestock({}); setReturnReason(''); setReturnError(''); setReturnOpen(true); }}>Record return</button>}
-                <button onClick={printInvoice title="Print invoice"><Printer size={18} /> Print</button>
+                <button onClick={printInvoice} title="Print invoice"><Printer size={18} /> Print</button>
                 <button className="sales-close" onClick={() => setSelected(null)} aria-label="Close"><X size={20} /></button>
               </div>
             </div>

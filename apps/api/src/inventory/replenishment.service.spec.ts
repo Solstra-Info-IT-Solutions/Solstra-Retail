@@ -57,7 +57,7 @@ describe('ReplenishmentService', () => {
     };
     policies.find.mockReturnValue(policyQuery);
     stocks.find.mockReturnValue(stockQuery);
-    sales.aggregate.mockResolvedValue([{ _id: productId, unitsSold: 90 }]);
+    sales.aggregate.mockResolvedValue([{ _id: { productId, warehouseId }, unitsSold: 90 }]);
 
     const result = await service.suggestions(tenantId, { lookbackDays: 90, forecastDays: 30 });
 

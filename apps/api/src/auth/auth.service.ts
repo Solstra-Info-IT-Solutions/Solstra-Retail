@@ -4,7 +4,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { User, UserDocument } from './schemas/user.schema';
 import { Tenant, TenantDocument } from '../tenants/schemas/tenant.schema';
@@ -12,7 +12,6 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { UpdateUserPermissionsDto } from './dto/update-user-permissions.dto';
 import { CreateStaffUserDto } from './dto/create-staff-user.dto';
-import { Types } from 'mongoose';
 
 const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -116,17 +115,35 @@ export class AuthService {
       .sort({ createdAt: 1 }).lean();
   }
 
-  async updateUserPermissions(tenantId: string, userId: string, dto: UpdateUserPermissionsDto) {
-    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(userId)) {
+  async updateUserPermissions(tenantId: string, changedBy: string, userId: string, dto: UpdateUserPermissionsDto) {
+    if (![tenantId, changedBy, userId].every((id) => Types.ObjectId.isValid(id))) {
       throw new BadRequestException('Invalid tenant or user ID');
     }
+    const filter = {
+      _id: new Types.ObjectId(userId),
+      tenantId: new Types.ObjectId(tenantId),
+      role: 'staff',
+    };
+    const existing = await this.users.findOne(filter).select('permissions').lean();
+    if (!existing) throw new NotFoundException('Staff user not found in this business');
+    const previousPermissions = existing.permissions || [];
     const permissions = [...new Set(dto.permissions)];
     const user = await this.users.findOneAndUpdate(
-      { _id: new Types.ObjectId(userId), tenantId: new Types.ObjectId(tenantId), role: 'staff' },
-      { $set: { permissions } },
+      { ...filter, permissions: previousPermissions },
+      {
+        $set: { permissions },
+        $push: {
+          permissionHistory: {
+            changedBy: new Types.ObjectId(changedBy),
+            previousPermissions,
+            newPermissions: permissions,
+            changedAt: new Date(),
+          },
+        },
+      },
       { new: true, runValidators: true },
-    ).select('_id name email role permissions isActive').lean();
-    if (!user) throw new NotFoundException('Staff user not found in this business');
+    ).select('_id name email role permissions permissionHistory isActive').lean();
+    if (!user) throw new ConflictException('Staff permissions changed concurrently; reload and retry');
     return user;
   }
 

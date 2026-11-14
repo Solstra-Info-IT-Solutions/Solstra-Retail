@@ -374,7 +374,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       if (existing?.status === 'SUCCEEDED') { results.push({ idempotencyKey: operation.idempotencyKey, status: 'SUCCEEDED', result: existing.result, replayed: true }); continue; }
       if (existing?.status === 'PROCESSING' && new Date(existing.updatedAt || existing.createdAt).getTime() > Date.now() - 5 * 60 * 1000) { results.push({ idempotencyKey: operation.idempotencyKey, status: 'PROCESSING', replayed: true }); continue; }
       if (existing?.status === 'PROCESSING') {
-        const recovered = await this.syncRecords.findOneAndUpdate(tenantFilter(tenantId, { _id: existing._id, status: 'PROCESSING', updatedAt: { $lte: new Date(Date.now() - 5 * 60 * 1000) } }), { $set: { status: 'PROCESSING', errorMessage: '' } }, { new: true }).lean();
+        const recovered = await this.syncRecords.findOneAndUpdate(tenantFilter(tenantId, { _id: existing._id, status: 'PROCESSING', updatedAt: { $lte: new Date(Date.now() - 5 * 60 * 1000) } }), { $set: { status: 'PROCESSING', payloadSha256, errorMessage: '' } }, { new: true }).lean();
         if (!recovered) { results.push({ idempotencyKey: operation.idempotencyKey, status: 'PROCESSING', replayed: true }); continue; }
       }
       if (!existing) {

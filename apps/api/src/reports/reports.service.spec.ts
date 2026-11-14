@@ -15,6 +15,7 @@ describe('ReportsService validation', () => {
       {} as any,
       purchases as any,
       {} as any,
+      {} as any,
     );
 
     return { service, invoices, purchases };
@@ -81,6 +82,12 @@ describe('ReportsService validation', () => {
     expect(result.supportedTopics).toContain('sales');
     expect(result.disclaimer).toContain('does not execute arbitrary database queries');
     expect(invoices.aggregate).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid tenant context before historical migration assessment queries', async () => {
+    const { service } = createService();
+    await expect(service.migrationReadiness('invalid-tenant')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.submitGstEInvoice('invalid-tenant', 'invalid-invoice')).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects invalid tenant context in dashboard summary', async () => {

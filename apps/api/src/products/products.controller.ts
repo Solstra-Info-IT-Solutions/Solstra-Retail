@@ -58,6 +58,18 @@ export class ProductsController {
     );
   }
 
+  @Roles('owner', 'admin')
+  @Post('import/preview')
+  previewImport(@Req() req: AuthenticatedRequest, @Body() body: { rows: unknown[] }) {
+    return this.productsService.previewProductImport(req.user.tenantId, body?.rows);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('import/commit')
+  commitImport(@Req() req: AuthenticatedRequest, @Body() body: { rows: unknown[] }) {
+    return this.productsService.commitProductImport(req.user.tenantId, req.user.userId, body?.rows);
+  }
+
   @Permissions('products.view')
   @Get()
   findAll(

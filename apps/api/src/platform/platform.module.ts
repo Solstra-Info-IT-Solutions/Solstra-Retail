@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { SalesModule } from '../sales/sales.module';
+import { ExpensesModule } from '../expenses/expenses.module';
 import { Tenant, TenantSchema } from '../tenants/schemas/tenant.schema';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { Product, ProductSchema } from '../products/schemas/product.schema';
@@ -19,6 +20,7 @@ import { PlatformEventInterceptor } from './platform-event.interceptor';
 @Module({
   imports: [
     SalesModule,
+    ExpensesModule,
     MongooseModule.forFeature([
       { name: AutomationRule.name, schema: AutomationRuleSchema },
       { name: AutomationExecution.name, schema: AutomationExecutionSchema },

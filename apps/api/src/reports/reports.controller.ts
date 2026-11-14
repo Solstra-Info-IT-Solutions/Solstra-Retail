@@ -15,6 +15,7 @@ import { ReportsService } from './reports.service';
 import { ReportDateRangeDto } from './dto/report-date-range.dto';
 import { BusinessQuestionDto } from './dto/business-question.dto';
 import { MigrationImportDto } from './dto/migration-import.dto';
+import { HistoricalTransactionImportDto } from './dto/historical-transaction-import.dto';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 
@@ -134,6 +135,30 @@ export class ReportsController {
   @Get('reports/migration/import/runs')
   masterDataImportRuns(@Req() req: AuthenticatedRequest, @Query('page') page = '1') {
     return this.reportsService.getMasterDataImportRuns(req.user.tenantId, Number(page));
+  }
+
+  @Roles('owner', 'admin')
+  @Post('reports/migration/historical/preview')
+  previewHistoricalTransactionImport(@Req() req: AuthenticatedRequest, @Body() dto: HistoricalTransactionImportDto) {
+    return this.reportsService.previewHistoricalTransactionImport(req.user.tenantId, dto);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('reports/migration/historical/commit')
+  commitHistoricalTransactionImport(@Req() req: AuthenticatedRequest, @Body() dto: HistoricalTransactionImportDto) {
+    return this.reportsService.commitHistoricalTransactionImport(req.user.tenantId, dto);
+  }
+
+  @Roles('owner', 'admin')
+  @Get('reports/migration/historical/runs')
+  historicalTransactionImportRuns(@Req() req: AuthenticatedRequest, @Query('page') page = '1') {
+    return this.reportsService.historicalTransactionImportRuns(req.user.tenantId, Number(page));
+  }
+
+  @Roles('owner', 'admin')
+  @Get('reports/migration/historical/reconciliation/:runKey')
+  reconcileHistoricalTransactionImport(@Req() req: AuthenticatedRequest, @Param('runKey') runKey: string) {
+    return this.reportsService.reconcileHistoricalTransactionImport(req.user.tenantId, runKey);
   }
 
   @Roles('owner', 'admin')

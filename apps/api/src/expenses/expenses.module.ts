@@ -20,6 +20,6 @@ import { RecurringExpensesService } from './recurring-expenses.service';
   ],
   controllers: [ExpensesController, RecurringExpensesController],
   providers: [ExpensesService, RecurringExpensesService],
-  exports: [ExpensesService],
+  exports: [ExpensesService, RecurringExpensesService],
 })
 export class ExpensesModule {}

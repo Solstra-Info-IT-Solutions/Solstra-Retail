@@ -139,6 +139,60 @@ export class WarehouseInventoryService {
     return result;
   }
 
+  async reconciliation(tenantId: string) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant context');
+    const [products, allocations] = await Promise.all([
+      this.products.find(tenantFilter(tenantId, { isDeleted: false, trackStock: true }))
+        .select('_id name sku stockQty inventoryValue valuationInitialized').sort({ name: 1 }).lean(),
+      this.stocks.find(tenantFilter(tenantId, {})).select('productId quantity inventoryValue').lean(),
+    ]);
+    const byProduct = new Map<string, { quantity: number; valuePaise: number }>();
+    for (const allocation of allocations as any[]) {
+      const key = String(allocation.productId);
+      const current = byProduct.get(key) || { quantity: 0, valuePaise: 0 };
+      current.quantity += Number(allocation.quantity) || 0;
+      current.valuePaise += Math.round(((Number(allocation.inventoryValue) || 0) + Number.EPSILON) * 100);
+      byProduct.set(key, current);
+    }
+    const items = products.map((product: any) => {
+      const allocated = byProduct.get(String(product._id)) || { quantity: 0, valuePaise: 0 };
+      const stockQty = Number(product.stockQty) || 0;
+      const inventoryValuePaise = Math.round(((Number(product.inventoryValue) || 0) + Number.EPSILON) * 100);
+      const issues: string[] = [];
+      if (allocated.quantity > stockQty) issues.push('OVER_ALLOCATED_QUANTITY');
+      if (allocated.valuePaise > inventoryValuePaise) issues.push('OVER_ALLOCATED_VALUE');
+      return {
+        productId: product._id,
+        name: product.name,
+        sku: product.sku || '',
+        valuationInitialized: product.valuationInitialized === true,
+        totalStock: stockQty,
+        allocatedStock: allocated.quantity,
+        unallocatedStock: Math.max(0, stockQty - allocated.quantity),
+        totalInventoryValue: inventoryValuePaise / 100,
+        allocatedInventoryValue: allocated.valuePaise / 100,
+        unallocatedInventoryValue: Math.max(0, inventoryValuePaise - allocated.valuePaise) / 100,
+        status: issues.length ? 'DISCREPANCY' : allocated.quantity === stockQty && allocated.valuePaise === inventoryValuePaise ? 'RECONCILED' : 'UNALLOCATED',
+        issues,
+      };
+    });
+    const discrepancies = items.filter((item) => item.status === 'DISCREPANCY');
+    return {
+      summary: {
+        products: items.length,
+        fullyAllocated: items.filter((item) => item.status === 'RECONCILED').length,
+        partiallyOrNotAllocated: items.filter((item) => item.status === 'UNALLOCATED').length,
+        discrepancies: discrepancies.length,
+        totalStock: items.reduce((sum, item) => sum + item.totalStock, 0),
+        allocatedStock: items.reduce((sum, item) => sum + item.allocatedStock, 0),
+        unallocatedStock: items.reduce((sum, item) => sum + item.unallocatedStock, 0),
+      },
+      items,
+      discrepancies,
+      note: 'Unallocated stock is not an error; it remains in the business-wide stock pool until assigned to a warehouse. Over-allocation is a blocking reconciliation issue.',
+    };
+  }
+
   async listWarehouseStock(tenantId: string, warehouseId: string) {
     if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(warehouseId)) throw new BadRequestException('Invalid tenant or warehouse ID');
     const warehouseObjectId = new Types.ObjectId(warehouseId);

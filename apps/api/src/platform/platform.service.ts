@@ -177,6 +177,23 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     return { eventType, eventKey, matchedRules: rules.length, results };
   }
 
+  async evaluateLowStock(tenantId: string, productIds: string[], eventKey: string) {
+    this.identity(tenantId);
+    const ids = [...new Set(productIds.filter(id => Types.ObjectId.isValid(id)))].map(id => new Types.ObjectId(id));
+    if (!ids.length) return { triggered: 0 };
+    const products = await this.products.find(tenantFilter(tenantId, {
+      _id: { $in: ids }, isDeleted: false, trackStock: true,
+      $expr: { $lte: ['$stockQty', '$lowStockThreshold'] },
+    })).select('name sku stockQty lowStockThreshold').lean();
+    for (const product of products) {
+      const key = `${eventKey}:LOW_STOCK:${String(product._id)}`.slice(0, 160);
+      const payload = { productId: String(product._id), name: product.name, sku: product.sku, stockQty: product.stockQty, lowStockThreshold: product.lowStockThreshold };
+      await this.executeEvent(tenantId, 'LOW_STOCK', key, payload);
+      await this.queueEventForIntegrations(tenantId, 'LOW_STOCK', key, payload);
+    }
+    return { triggered: products.length };
+  }
+
   async createNotification(tenantId: string, input: { userId?: string; title: string; body: string; severity?: string; category: string; sourceId?: string }) {
     this.identity(tenantId, input.userId);
     const recipients = input.userId
@@ -357,6 +374,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         await this.syncRecords.updateOne(tenantFilter(tenantId, { idempotencyKey: operation.idempotencyKey }), { $set: { status: 'SUCCEEDED', invoiceId: invoiceId && Types.ObjectId.isValid(String(invoiceId)) ? new Types.ObjectId(String(invoiceId)) : null, result: summary, errorMessage: '' } });
         await this.executeEvent(tenantId, 'SALE_CREATED', operation.idempotencyKey, summary);
         await this.queueEventForIntegrations(tenantId, 'SALE_CREATED', operation.idempotencyKey, summary);
+        await this.evaluateLowStock(tenantId, (operation.payload.items || []).map((item: any) => String(item.productId)), operation.idempotencyKey);
         results.push({ idempotencyKey: operation.idempotencyKey, status: 'SUCCEEDED', result: summary, replayed: false });
       } catch (error: any) {
         const message = String(error?.response?.message || error?.message || 'Sale sync failed').slice(0, 500);

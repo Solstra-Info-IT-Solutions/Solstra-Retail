@@ -11,7 +11,7 @@ import './CustomersPage.css';
 type Customer = {
   _id: string; name: string; phone?: string; email?: string; gstin?: string;
   addressLine1?: string; addressLine2?: string; city?: string; state?: string;
-  pincode?: string; notes?: string; createdAt?: string;
+  pincode?: string; notes?: string; createdAt?: string; loyaltyPoints?: number; lifetimeLoyaltyPoints?: number; loyaltyTier?: string;
 };
 type CustomerListResponse = {
   items: Customer[];
@@ -26,6 +26,8 @@ type HistoryResponse = {
   summary: { invoiceCount: number; totalBilled: number; totalPaid: number; totalDue: number };
   pagination: { total: number; page: number; limit: number; totalPages: number };
 };
+type LoyaltyEntry = { _id: string; eventType: string; pointsDelta: number; balanceAfter: number; reason: string; createdAt: string };
+type LoyaltyResponse = { customer: { pointsBalance: number; lifetimePoints: number; tier: string; nextTier: { tier: string; pointsRequired: number } | null }; items: LoyaltyEntry[]; earningRule: string };
 type CustomerForm = {
   name: string; phone: string; email: string; gstin: string; addressLine1: string;
   addressLine2: string; city: string; state: string; pincode: string; notes: string;
@@ -59,6 +61,12 @@ export default function CustomersPage() {
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [historyPage, setHistoryPage] = useState(1);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [loyalty, setLoyalty] = useState<LoyaltyResponse | null>(null);
+  const [loyaltyAdjustOpen, setLoyaltyAdjustOpen] = useState(false);
+  const [loyaltyDelta, setLoyaltyDelta] = useState('');
+  const [loyaltyReason, setLoyaltyReason] = useState('');
+  const [loyaltySaving, setLoyaltySaving] = useState(false);
+  const [loyaltyError, setLoyaltyError] = useState('');
 
   const loadCustomers = useCallback(async () => {
     setLoading(true);
@@ -114,17 +122,32 @@ export default function CustomersPage() {
   }
 
   async function openDetails(customer: Customer, nextPage = 1) {
-    setSelected(customer); setHistory(null); setHistoryPage(nextPage); setDetailLoading(true);
+    setSelected(customer); setHistory(null); setLoyalty(null); setHistoryPage(nextPage); setDetailLoading(true);
     try {
-      const [customerResponse, historyResponse] = await Promise.all([
+      const [customerResponse, historyResponse, loyaltyResponse] = await Promise.all([
         api.get<Customer>('/customers/' + customer._id),
         api.get<HistoryResponse>('/customers/' + customer._id + '/sales', {
           params: { page: nextPage, limit: 8 },
         }),
+        api.get<LoyaltyResponse>('/customers/' + customer._id + '/loyalty', { params: { page: 1, limit: 8 } }),
       ]);
-      setSelected(customerResponse.data); setHistory(historyResponse.data);
+      setSelected(customerResponse.data); setHistory(historyResponse.data); setLoyalty(loyaltyResponse.data);
     } catch { setHistory(null); }
     finally { setDetailLoading(false); }
+  }
+
+  async function adjustLoyalty(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setLoyaltySaving(true); setLoyaltyError('');
+    try {
+      await api.post('/customers/' + selected._id + '/loyalty/adjust', { pointsDelta: Number(loyaltyDelta), reason: loyaltyReason.trim() });
+      const response = await api.get<LoyaltyResponse>('/customers/' + selected._id + '/loyalty', { params: { page: 1, limit: 8 } });
+      setLoyalty(response.data); setLoyaltyAdjustOpen(false); setLoyaltyDelta(''); setLoyaltyReason('');
+    } catch (requestError: unknown) {
+      const message = (requestError as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      setLoyaltyError(Array.isArray(message) ? message.join(', ') : message || 'Points adjustment could not be saved.');
+    } finally { setLoyaltySaving(false); }
   }
 
   const customers = data?.items ?? [];
@@ -244,6 +267,29 @@ export default function CustomersPage() {
             <div><MapPin size={15} /><span>{[selected.addressLine1, selected.addressLine2, selected.city, selected.state, selected.pincode].filter(Boolean).join(', ') || 'No address added'}</span></div>
             <div><FileText size={15} /><span>{selected.gstin ? 'GSTIN: ' + selected.gstin : 'No GSTIN added'}</span></div>
           </div>
+          <section className="customers-loyalty-card">
+            <div className="customers-loyalty-top">
+              <div><span className="customers-eyebrow">REWARDS MEMBERSHIP</span><h3>{loyalty?.customer.tier || selected.loyaltyTier || 'BRONZE'} MEMBER</h3><p>Earn 1 point for every ₹100 taxable invoice value.</p></div>
+              {canManageCustomers && <button className="customers-secondary" onClick={() => { setLoyaltyError(''); setLoyaltyAdjustOpen(true); }}>Adjust points</button>}
+            </div>
+            <div className="customers-loyalty-stats">
+              <div><small>Available points</small><strong>{(loyalty?.customer.pointsBalance ?? selected.loyaltyPoints ?? 0).toLocaleString('en-IN')}</strong></div>
+              <div><small>Lifetime points</small><strong>{(loyalty?.customer.lifetimePoints ?? selected.lifetimeLoyaltyPoints ?? 0).toLocaleString('en-IN')}</strong></div>
+              <div><small>Next tier</small><strong>{loyalty?.customer.nextTier ? loyalty.customer.nextTier.tier + ' · ' + loyalty.customer.nextTier.pointsRequired + ' pts' : 'Top tier'}</strong></div>
+            </div>
+            <div className="customers-loyalty-ledger"><strong>Recent points activity</strong>
+              {loyalty?.items.length ? loyalty.items.slice(0,5).map(entry => <div key={entry._id}><span>{entry.reason}<small>{date(entry.createdAt)}</small></span><b className={entry.pointsDelta < 0 ? 'is-negative' : 'is-positive'}>{entry.pointsDelta > 0 ? '+' : ''}{entry.pointsDelta}</b></div>) : <p>No loyalty activity yet. Points are earned automatically on eligible linked-customer invoices.</p>}
+            </div>
+          </section>
+          {loyaltyAdjustOpen && <div className="customers-modal-backdrop" onClick={() => !loyaltySaving && setLoyaltyAdjustOpen(false)}>
+            <form className="customers-form-modal customers-loyalty-adjust" onSubmit={adjustLoyalty} onClick={event => event.stopPropagation()}>
+              <div className="customers-modal-header"><div><span className="customers-eyebrow">REWARDS ADMINISTRATION</span><h2>Adjust loyalty points</h2><p>Manual changes are recorded in the customer points ledger.</p></div><button type="button" className="customers-icon-button" onClick={() => setLoyaltyAdjustOpen(false)}><X size={20}/></button></div>
+              <label className="customers-field">Points change *<input type="number" required step="1" min="-1000000" max="1000000" value={loyaltyDelta} onChange={event => setLoyaltyDelta(event.target.value)} placeholder="e.g. 100 or -25"/></label>
+              <label className="customers-field">Reason *<textarea required minLength={5} maxLength={250} rows={3} value={loyaltyReason} onChange={event => setLoyaltyReason(event.target.value)} placeholder="Explain why this adjustment is required"/></label>
+              {loyaltyError && <div className="customers-error">{loyaltyError}</div>}
+              <div className="customers-form-footer"><button type="button" className="customers-secondary" onClick={() => setLoyaltyAdjustOpen(false)} disabled={loyaltySaving}>Cancel</button><button type="submit" className="customers-primary" disabled={loyaltySaving || !loyaltyDelta || Number(loyaltyDelta) === 0 || loyaltyReason.trim().length < 5}>{loyaltySaving ? 'Saving...' : 'Save adjustment'}</button></div>
+            </form>
+          </div>}
           <div className="customers-account-summary">
             <div><small>Invoices</small><strong>{history?.summary.invoiceCount ?? '—'}</strong></div>
             <div><small>Total billed</small><strong>{money(history?.summary.totalBilled)}</strong></div>

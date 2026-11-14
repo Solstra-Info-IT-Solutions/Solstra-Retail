@@ -1354,8 +1354,36 @@ export class ReportsService {
     else if (/yesterday/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 1); from = localIso(d); to = from; period = 'YESTERDAY'; }
     else if (/last\s+7\s+days|past\s+week/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 6); from = localIso(d); period = 'LAST_7_DAYS'; }
     else if (/last\s+30\s+days|past\s+month/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 29); from = localIso(d); period = 'LAST_30_DAYS'; }
-    else if (/last\\s+month/.test(normalized)) { from = localIso(new Date(now.getFullYear(), now.getMonth() - 1, 1)); to = localIso(new Date(now.getFullYear(), now.getMonth(), 0)); period = 'LAST_MONTH'; }
+    else if (/last\s+month/.test(normalized)) { from = localIso(new Date(now.getFullYear(), now.getMonth() - 1, 1)); to = localIso(new Date(now.getFullYear(), now.getMonth(), 0)); period = 'LAST_MONTH'; }
     const range = { from, to };
+    if (/compare|versus|\\bvs\\b/.test(normalized) && /sales|revenue|turnover/.test(normalized)) {
+      const current = await this.salesReport(tenantId, range);
+      let previousFrom = '', previousTo = '';
+      if (period === 'THIS_MONTH_TO_DATE') {
+        previousFrom = localIso(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+        previousTo = localIso(new Date(now.getFullYear(), now.getMonth(), 0));
+      } else if (period === 'LAST_7_DAYS') {
+        const priorEnd = new Date(now); priorEnd.setDate(priorEnd.getDate() - 7);
+        const priorStart = new Date(priorEnd); priorStart.setDate(priorStart.getDate() - 6);
+        previousFrom = localIso(priorStart); previousTo = localIso(priorEnd);
+      } else if (period === 'LAST_30_DAYS') {
+        const priorEnd = new Date(now); priorEnd.setDate(priorEnd.getDate() - 30);
+        const priorStart = new Date(priorEnd); priorStart.setDate(priorStart.getDate() - 29);
+        previousFrom = localIso(priorStart); previousTo = localIso(priorEnd);
+      } else {
+        throw new BadRequestException('Sales comparison supports this month-to-date, last 7 days or last 30 days only');
+      }
+      const previous = await this.salesReport(tenantId, { from: previousFrom, to: previousTo });
+      const delta = Math.round((current.netSalesRupees - previous.netSalesRupees) * 100) / 100;
+      const percent = previous.netSalesRupees ? Math.round((delta / previous.netSalesRupees) * 10000) / 100 : null;
+      return {
+        mode: 'RULE_BASED_COMPARATIVE_ANALYSIS', question, period,
+        comparison: { current: { from, to, invoiceCount: current.invoiceCount, netSalesRupees: current.netSalesRupees }, previous: { from: previousFrom, to: previousTo, invoiceCount: previous.invoiceCount, netSalesRupees: previous.netSalesRupees } },
+        change: { amountRupees: delta, percent, direction: delta > 0 ? 'UP' : delta < 0 ? 'DOWN' : 'UNCHANGED' },
+        answer: `Net sales ${delta > 0 ? 'increased' : delta < 0 ? 'decreased' : 'were unchanged'} by ₹${Math.abs(delta).toFixed(2)} compared with the previous period${percent === null ? '' : ' (' + (delta > 0 ? '+' : '') + percent.toFixed(2) + '%)'}.`,
+        disclaimer: 'Like-for-like calendar periods are compared using issued invoices less credit notes. This is descriptive analysis, not a forecast.',
+      };
+    }
     if (/low\s*stock|reorder|out of stock/.test(normalized)) {
       const result = await this.inventoryReport(tenantId, range);
       return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'Inventory items at or below reorder threshold', period, answer: `${result.lowStockCount} products are currently listed at or below their low-stock threshold.`, data: { lowStockCount: result.lowStockCount, products: result.lowStockProducts }, disclaimer: 'Stock levels can change immediately after this query; confirm current warehouse stock before purchasing.' };

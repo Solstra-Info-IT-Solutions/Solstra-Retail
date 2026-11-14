@@ -16,7 +16,8 @@ export class PlatformEventInterceptor implements NestInterceptor {
     let eventType: string | null = null;
     if (/\/api\/v1\/sales\/?$/.test(route)) eventType = 'SALE_CREATED';
     else if (/\/api\/v1\/expenses\/?$/.test(route)) eventType = 'EXPENSE_PENDING_APPROVAL';
-    if (!eventType) return next.handle();
+    const isInventoryMovement = /\/api\/v1\/inventory\/products\/[^/]+\/movements\/?$/.test(route);
+    if (!eventType && !isInventoryMovement) return next.handle();
     return next.handle().pipe(tap((response) => {
       const sourceId = String(response?._id || response?.id || request.body?.idempotencyKey || `${route}:${Date.now()}`);
       const payload = {
@@ -27,13 +28,15 @@ export class PlatformEventInterceptor implements NestInterceptor {
         status: String(response?.approvalStatus || response?.status || ''),
       };
       if (eventType === 'EXPENSE_PENDING_APPROVAL' && !['PENDING_APPROVAL', 'PENDING'].includes(payload.status)) return;
-      void this.platform.executeEvent(String(user.tenantId), eventType!, sourceId, payload).catch(() => undefined);
-      void this.platform.queueEventForIntegrations(String(user.tenantId), eventType!, sourceId, payload).catch(() => undefined);
+      if (eventType) {
+        void this.platform.executeEvent(String(user.tenantId), eventType, sourceId, payload).catch(() => undefined);
+        void this.platform.queueEventForIntegrations(String(user.tenantId), eventType, sourceId, payload).catch(() => undefined);
+      }
       if (eventType === 'SALE_CREATED') {
         const productIds = Array.isArray(request.body?.items) ? request.body.items.map((item: any) => String(item.productId)) : [];
         void this.platform.evaluateLowStock(String(user.tenantId), productIds, sourceId).catch(() => undefined);
       }
-      if (/\/api\/v1\/inventory\/products\/[^/]+\/movements\/?$/.test(route)) {
+      if (isInventoryMovement) {
         const productId = String(request.params?.productId || '');
         void this.platform.evaluateLowStock(String(user.tenantId), [productId], sourceId).catch(() => undefined);
       }

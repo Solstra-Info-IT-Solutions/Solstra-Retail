@@ -192,14 +192,17 @@ export class ExpensesService {
       this.expenses.aggregate([
         { $match: tenantFilter(tenantId, {}) },
         { $group: {
-          _id: null, totalAmount: { $sum: '$amount' },
-          paidAmount: { $sum: '$paidAmount' }, dueAmount: { $sum: '$dueAmount' },
-          expenseCount: { $sum: 1 },
+          _id: null,
+          totalAmount: { $sum: { $cond: [{ $eq: ['$approvalStatus', 'APPROVED'] }, '$amount', 0] } },
+          paidAmount: { $sum: { $cond: [{ $eq: ['$approvalStatus', 'APPROVED'] }, '$paidAmount', 0] } },
+          dueAmount: { $sum: { $cond: [{ $eq: ['$approvalStatus', 'APPROVED'] }, '$dueAmount', 0] } },
+          expenseCount: { $sum: { $cond: [{ $eq: ['$approvalStatus', 'APPROVED'] }, 1, 0] } },
+          pendingApprovalCount: { $sum: { $cond: [{ $eq: ['$approvalStatus', 'PENDING_APPROVAL'] }, 1, 0] } },
         } },
       ]),
     ]);
     return {
-      items, summary: summary[0] ?? { totalAmount: 0, paidAmount: 0, dueAmount: 0, expenseCount: 0 },
+      items, summary: summary[0] ?? { totalAmount: 0, paidAmount: 0, dueAmount: 0, expenseCount: 0, pendingApprovalCount: 0 },
       pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }

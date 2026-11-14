@@ -297,4 +297,17 @@ describe('PlatformService security boundaries', () => {
     expect(result.review[0].status).toBe('MATCHED');
   });
 
+  it('expires paid workspaces only after their subscription period ends', async () => {
+    const service: any = createService();
+    service.tenants = { updateMany: jest.fn().mockResolvedValue({ modifiedCount: 2 }) };
+    await expect(service.expirePaidSubscriptions()).resolves.toBe(2);
+    expect(service.tenants.updateMany).toHaveBeenCalledWith({
+      status: 'active',
+      subscriptionStatus: 'active',
+      subscriptionPeriodEnd: { $lte: expect.any(Date), $ne: null },
+    }, {
+      $set: { subscriptionStatus: 'expired', billingStatus: 'PAST_DUE' },
+    });
+  });
+
 });

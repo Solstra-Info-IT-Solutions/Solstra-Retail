@@ -53,6 +53,13 @@ describe('ReportsService validation', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('rejects invalid tenant context in advanced analytics before querying data', async () => {
+    const { service, invoices } = createService();
+    await expect(service.advancedAnalytics('invalid-tenant', {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.businessAssistantInsights('invalid-tenant', {})).rejects.toBeInstanceOf(BadRequestException);
+    expect(invoices.aggregate).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid tenant context in dashboard summary', async () => {
     const { service } = createService();
 

@@ -109,6 +109,11 @@ export class PlatformController {
     return this.platform.revokeOfflineDevice(req.user.tenantId, deviceId);
   }
 
+  @Get('offline/sync-records')
+  listOfflineSyncRecords(@Req() req: AuthenticatedRequest, @Query('page') page = '1', @Query('status') status = '') {
+    return this.platform.listOfflineSyncRecords(req.user.tenantId, req.user.userId, req.user.role, Number(page), status);
+  }
+
   @Permissions('sales.create')
   @Post('offline/sync')
   syncOfflineSales(@Req() req: AuthenticatedRequest, @Body() dto: OfflineSyncBatchDto) {

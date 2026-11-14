@@ -33,6 +33,8 @@ import { Customer } from '../customers/schemas/customer.schema';
 import { Supplier } from '../suppliers/schemas/supplier.schema';
 import { GstEInvoiceSubmission } from './schemas/gst-einvoice-submission.schema';
 import { GstComplianceSubmission } from './schemas/gst-compliance-submission.schema';
+import { MigrationImportRun } from './schemas/migration-import-run.schema';
+import { MigrationImportDto } from './dto/migration-import.dto';
 
 type DateRange = {
   start: Date;
@@ -77,6 +79,9 @@ export class ReportsService {
 
     @InjectModel(GstComplianceSubmission.name)
     private readonly gstComplianceSubmissions: Model<any>,
+
+    @InjectModel(MigrationImportRun.name)
+    private readonly migrationImportRuns: Model<any>,
   ) {}
 
   private resolveRange(dto: ReportDateRangeDto): DateRange {
@@ -415,6 +420,117 @@ export class ReportsService {
       if (error instanceof BadRequestException || error instanceof ServiceUnavailableException) throw error;
       throw new ServiceUnavailableException('GST GSP cancellation request failed; verify IRP status before retrying');
     } finally { clearTimeout(timeout); }
+  }
+
+  private validateMasterImportRows(entity: 'customers' | 'suppliers', rows: Array<Record<string, unknown>>) {
+    const allowed = entity === 'customers'
+      ? new Set(['name', 'phone', 'email', 'gstin', 'addressLine1', 'addressLine2', 'city', 'state', 'pincode', 'notes'])
+      : new Set(['name', 'contactPerson', 'phone', 'email', 'gstin', 'stateCode', 'addressLine1', 'addressLine2', 'city', 'state', 'pincode', 'notes']);
+    const seen = new Set<string>();
+    const errors: Array<{ row: number; message: string }> = [];
+    const normalized: Array<Record<string, any> | null> = rows.map((raw, index) => {
+      const row = index + 1;
+      const unknown = Object.keys(raw || {}).filter(key => !allowed.has(key));
+      if (unknown.length) { errors.push({ row, message: `Unsupported fields: ${unknown.join(', ')}` }); return null; }
+      const value: Record<string, any> = { ...raw };
+      value.name = String(value.name || '').trim();
+      if (value.name.length < 2 || value.name.length > (entity === 'customers' ? 120 : 150)) {
+        errors.push({ row, message: 'Name is required and must be within the supported length' }); return null;
+      }
+      for (const key of ['phone', 'email', 'gstin', 'stateCode']) {
+        if (value[key] !== undefined && value[key] !== null) value[key] = String(value[key]).trim();
+      }
+      if (value.phone && !/^[+0-9() .-]{7,20}$/.test(value.phone)) errors.push({ row, message: 'Phone format is invalid' });
+      if (value.email) { value.email = value.email.toLowerCase(); if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.email)) errors.push({ row, message: 'Email format is invalid' }); }
+      if (value.gstin) { value.gstin = value.gstin.toUpperCase(); if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(value.gstin)) errors.push({ row, message: 'GSTIN format is invalid' }); }
+      if (entity === 'suppliers' && value.stateCode && !/^(0[1-9]|[1-2][0-9]|3[0-8]|97|99)$/.test(value.stateCode)) errors.push({ row, message: 'Supplier state code is invalid' });
+      for (const key of ['addressLine1', 'addressLine2', 'city', 'state', 'pincode', 'notes', 'contactPerson']) {
+        if (value[key] !== undefined) value[key] = String(value[key]).trim();
+      }
+      for (const key of ['phone', 'email', 'gstin']) {
+        if (!value[key]) continue;
+        const fingerprint = key + ':' + value[key].toLowerCase();
+        if (seen.has(fingerprint)) errors.push({ row, message: `Duplicate ${key} within this import batch` });
+        seen.add(fingerprint);
+      }
+      return value;
+    });
+    return { normalized, errors };
+  }
+
+  async previewMasterDataImport(tenantId: string, dto: MigrationImportDto) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    const { normalized, errors } = this.validateMasterImportRows(dto.entity, dto.rows);
+    const model = dto.entity === 'customers' ? this.customers : this.suppliers;
+    const duplicateRows: Array<{ row: number; field: string; value: string }> = [];
+    for (let index = 0; index < normalized.length; index += 1) {
+      const value = normalized[index];
+      if (!value || errors.some(error => error.row === index + 1)) continue;
+      for (const field of ['phone', 'email', 'gstin']) {
+        if (!value[field]) continue;
+        const existing = await model.findOne(tenantFilter(tenantId, { [field]: value[field], isDeleted: false })).select('_id').lean();
+        if (existing) duplicateRows.push({ row: index + 1, field, value: value[field] });
+      }
+    }
+    return {
+      entity: dto.entity, runKey: dto.runKey, totalRows: dto.rows.length,
+      validRows: normalized.filter((value, index) => value && !errors.some(error => error.row === index + 1)).length - new Set(duplicateRows.map(item => item.row)).size,
+      errors, duplicates: duplicateRows,
+      commitAllowed: errors.length === 0 && duplicateRows.length === 0,
+      policy: 'Master data only. No invoices, payments, stock quantities, valuation, tax journals or opening balances are created.',
+    };
+  }
+
+  async commitMasterDataImport(tenantId: string, dto: MigrationImportDto) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    const preview = await this.previewMasterDataImport(tenantId, dto);
+    if (!preview.commitAllowed) throw new BadRequestException({ message: 'Import contains validation errors or existing duplicates', preview });
+    const payloadSha256 = createHash('sha256').update(JSON.stringify({ entity: dto.entity, rows: dto.rows })).digest('hex');
+    let run: any;
+    try {
+      run = await this.migrationImportRuns.create({
+        tenantId: new Types.ObjectId(tenantId), runKey: dto.runKey, entity: dto.entity,
+        payloadSha256, status: 'COMMITTING', totalRows: dto.rows.length,
+      });
+    } catch (error: any) {
+      if (error?.code !== 11000) throw error;
+      const existing: any = await this.migrationImportRuns.findOne(tenantFilter(tenantId, { runKey: dto.runKey })).lean();
+      if (!existing) throw error;
+      if (existing.payloadSha256 !== payloadSha256 || existing.entity !== dto.entity) {
+        throw new BadRequestException('Import run key was already used with a different payload');
+      }
+      if (['COMPLETED', 'PARTIAL'].includes(existing.status)) return { ...existing, replayed: true };
+      throw new BadRequestException('This import run is already processing. Check its status before retrying.');
+    }
+    const model = dto.entity === 'customers' ? this.customers : this.suppliers;
+    let createdCount = 0;
+    const errors: Array<{ row: number; message: string }> = [];
+    for (let index = 0; index < dto.rows.length; index += 1) {
+      try {
+        const value = this.validateMasterImportRows(dto.entity, [dto.rows[index]]).normalized[0];
+        if (!value) throw new Error('Invalid row');
+        await model.create({ ...value, tenantId: new Types.ObjectId(tenantId), isDeleted: false });
+        createdCount += 1;
+      } catch (error: any) {
+        errors.push({ row: index + 1, message: error?.code === 11000 ? 'A matching record already exists' : String(error?.message || 'Import row failed').slice(0, 300) });
+      }
+    }
+    const status = errors.length ? (createdCount ? 'PARTIAL' : 'FAILED') : 'COMPLETED';
+    await this.migrationImportRuns.updateOne(tenantFilter(tenantId, { _id: run._id, status: 'COMMITTING' }), {
+      $set: { status, createdCount, skippedCount: dto.rows.length - createdCount, errors, completedAt: new Date() },
+    });
+    return { runKey: dto.runKey, entity: dto.entity, status, totalRows: dto.rows.length, createdCount, skippedCount: dto.rows.length - createdCount, errors, replayed: false };
+  }
+
+  async getMasterDataImportRuns(tenantId: string, page = 1) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    const safePage = Number.isInteger(page) && page > 0 ? Math.min(page, 100000) : 1;
+    const filter = tenantFilter(tenantId, {});
+    const [items, total] = await Promise.all([
+      this.migrationImportRuns.find(filter).sort({ createdAt: -1 }).skip((safePage - 1) * 20).limit(20).lean(),
+      this.migrationImportRuns.countDocuments(filter),
+    ]);
+    return { items, total, page: safePage, limit: 20, totalPages: Math.ceil(total / 20) };
   }
 
   async exportMigrationRecords(tenantId: string, entity: string, cursor = '', limit = 250) {

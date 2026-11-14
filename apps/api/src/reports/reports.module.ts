@@ -25,6 +25,7 @@ import { Customer, CustomerSchema } from '../customers/schemas/customer.schema';
 import { Supplier, SupplierSchema } from '../suppliers/schemas/supplier.schema';
 import { GstEInvoiceSubmission, GstEInvoiceSubmissionSchema } from './schemas/gst-einvoice-submission.schema';
 import { GstComplianceSubmission, GstComplianceSubmissionSchema } from './schemas/gst-compliance-submission.schema';
+import { MigrationImportRun, MigrationImportRunSchema } from './schemas/migration-import-run.schema';
 
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
@@ -47,6 +48,7 @@ import { ReportsService } from './reports.service';
       { name: Supplier.name, schema: SupplierSchema },
       { name: GstEInvoiceSubmission.name, schema: GstEInvoiceSubmissionSchema },
       { name: GstComplianceSubmission.name, schema: GstComplianceSubmissionSchema },
+      { name: MigrationImportRun.name, schema: MigrationImportRunSchema },
     ]),
   ],
   controllers: [ReportsController],

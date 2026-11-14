@@ -114,10 +114,14 @@ export class Product {
   })
   lowStockThreshold!: number;
 
-  @Prop({
-    default: true,
-  })
+  @Prop({ default: true })
   trackStock!: boolean;
+
+  @Prop({ type: Number, min: 0, max: 3650, default: 0 })
+  warrantyDays!: number;
+
+  @Prop({ type: String, trim: true, maxlength: 1000, default: '' })
+  warrantyTerms!: string;
 
   @Prop({
     default: false,

@@ -2,6 +2,8 @@ import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/c
 import { Request } from 'express';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import { Public } from '../common/decorators/public.decorator';
+import { SkipTrial } from '../common/decorators/skip-trial.decorator';
 import { PlatformService } from './platform.service';
 import {
   BackupPolicyDto, CreateAutomationRuleDto, CreateWebhookDto, OfflineSyncBatchDto,
@@ -9,7 +11,7 @@ import {
   UpdateWebhookDto, VerifyBackupDto, CreateCommunicationProviderDto, SendCommunicationDto, RecordSubscriptionPaymentDto,
 } from './dto/platform.dto';
 
-type AuthenticatedRequest = Request & { user: { tenantId: string; userId: string; role: string } };
+type AuthenticatedRequest = Request & { user: { tenantId: string; userId: string; role: string }; rawBody?: Buffer };
 
 @Controller('platform')
 export class PlatformController {
@@ -161,6 +163,20 @@ export class PlatformController {
   @Post('billing/invoices')
   requestSubscriptionInvoice(@Req() req: AuthenticatedRequest) {
     return this.platform.requestSubscriptionInvoice(req.user.tenantId, req.user.userId);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('billing/invoices/:id/checkout')
+  createSubscriptionCheckout(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.platform.createSubscriptionCheckout(req.user.tenantId, req.user.userId, id);
+  }
+
+  @Public()
+  @SkipTrial()
+  @Post('billing/webhook/razorpay')
+  razorpayWebhook(@Req() req: AuthenticatedRequest) {
+    const signature = req.headers['x-razorpay-signature'];
+    return this.platform.handleRazorpayWebhook(req.rawBody, Array.isArray(signature) ? signature[0] : signature);
   }
 
   @Get('saas/plans')

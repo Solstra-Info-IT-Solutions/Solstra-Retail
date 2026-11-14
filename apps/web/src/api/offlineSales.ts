@@ -106,8 +106,13 @@ export async function syncQueuedOfflineSales(scope: string) {
     const now = Date.now();
     const batch = remaining.filter(item => !item.blocked && (!item.nextAttemptAt || new Date(item.nextAttemptAt).getTime() <= now)).slice(0, 100);
     if (!batch.length) break;
+    const sequenceKey = `solstra_offline_sync_sequence::${scope}`;
+    const previousSequence = Number(window.localStorage.getItem(sequenceKey) || 0);
+    const batchSequence = Math.max(Date.now(), previousSequence + 1);
+    window.localStorage.setItem(sequenceKey, String(batchSequence));
     const response = await api.post<{ results: Array<{ idempotencyKey: string; status: string; error?: string }> }>('/platform/offline/sync', {
       deviceId,
+      batchSequence,
       operations: batch.map(item => ({ type: 'SALE', idempotencyKey: item.idempotencyKey, payload: item.payload })),
     });
     const results = response.data.results || [];

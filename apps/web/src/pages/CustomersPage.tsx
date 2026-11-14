@@ -27,7 +27,10 @@ type HistoryResponse = {
   pagination: { total: number; page: number; limit: number; totalPages: number };
 };
 type LoyaltyEntry = { _id: string; eventType: string; pointsDelta: number; balanceAfter: number; reason: string; createdAt: string };
-type LoyaltyResponse = { customer: { pointsBalance: number; lifetimePoints: number; tier: string; nextTier: { tier: string; pointsRequired: number } | null }; items: LoyaltyEntry[]; earningRule: string };
+type LoyaltyVoucher = { _id: string; code: string; discountAmount: number; pointsRedeemed: number; status: string; expiresAt: string };
+type LoyaltyResponse = { customer: { pointsBalance: number; lifetimePoints: number; tier: string; nextTier: { tier: string; pointsRequired: number } | null }; items: LoyaltyEntry[]; vouchers: LoyaltyVoucher[]; earningRule: string };
+type CustomerSegment = 'NEW' | 'ACTIVE' | 'AT_RISK' | 'DORMANT' | 'VIP';
+type SegmentSummary = { segments: { segment: CustomerSegment; customerCount: number; lifetimeSpend: number }[]; rules: Record<CustomerSegment, string> };
 type CustomerForm = {
   name: string; phone: string; email: string; gstin: string; addressLine1: string;
   addressLine2: string; city: string; state: string; pincode: string; notes: string;
@@ -49,6 +52,8 @@ export default function CustomersPage() {
   const canManageCustomers = user?.role === 'owner' || user?.role === 'admin';
   const [data, setData] = useState<CustomerListResponse | null>(null);
   const [search, setSearch] = useState('');
+  const [segmentSummary, setSegmentSummary] = useState<SegmentSummary | null>(null);
+  const [selectedSegment, setSelectedSegment] = useState<CustomerSegment | null>(null);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -67,26 +72,51 @@ export default function CustomersPage() {
   const [loyaltyReason, setLoyaltyReason] = useState('');
   const [loyaltySaving, setLoyaltySaving] = useState(false);
   const [loyaltyError, setLoyaltyError] = useState('');
+  const [redeemOpen, setRedeemOpen] = useState(false);
+  const [redeemPoints, setRedeemPoints] = useState('100');
+  const [redeemSaving, setRedeemSaving] = useState(false);
+  const [redeemMessage, setRedeemMessage] = useState('');
 
   const loadCustomers = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const response = await api.get<CustomerListResponse>('/customers', {
-        params: { page, limit: 20, ...(search.trim() ? { search: search.trim() } : {}) },
-      });
+      const response = selectedSegment
+        ? await api.get<CustomerListResponse>('/customers/segments/' + selectedSegment, { params: { page, limit: 20 } })
+        : await api.get<CustomerListResponse>('/customers', { params: { page, limit: 20, ...(search.trim() ? { search: search.trim() } : {}) } });
       setData(response.data);
     } catch {
       setError('Customer records could not be loaded. Please refresh and try again.');
     } finally {
       setLoading(false);
     }
-  }, [page, search]);
+  }, [page, search, selectedSegment]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadCustomers(), 250);
     return () => window.clearTimeout(timer);
   }, [loadCustomers]);
+
+  useEffect(() => {
+    api.get<SegmentSummary>('/customers/segments/summary').then(response => setSegmentSummary(response.data)).catch(() => setSegmentSummary(null));
+  }, []);
+
+  async function redeemLoyalty() {
+    if (!selected) return;
+    const points = Number(redeemPoints);
+    if (!Number.isInteger(points) || points < 100 || points % 100 !== 0 || points > (loyalty?.customer.pointsBalance ?? 0)) { setRedeemMessage('Enter a multiple of 100 points within the available balance.'); return; }
+    setRedeemSaving(true); setRedeemMessage('');
+    try {
+      const response = await api.post<{ voucher: { code: string; discountAmount: number; expiresAt: string } }>('/customers/' + selected._id + '/loyalty/redeem', { points });
+      const voucher = response.data.voucher;
+      setRedeemMessage('Voucher ' + voucher.code + ' created for ' + money(voucher.discountAmount) + '. Valid until ' + date(voucher.expiresAt) + '.');
+      const refreshed = await api.get<LoyaltyResponse>('/customers/' + selected._id + '/loyalty', { params: { page: 1, limit: 8 } });
+      setLoyalty(refreshed.data); setRedeemOpen(false);
+    } catch (requestError: unknown) {
+      const message = (requestError as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      setRedeemMessage(Array.isArray(message) ? message.join(', ') : message || 'Points could not be redeemed.');
+    } finally { setRedeemSaving(false); }
+  }
 
   function startCreate() {
     setEditing(null); setForm(emptyForm); setFormError(''); setFormOpen(true);
@@ -178,10 +208,18 @@ export default function CustomersPage() {
         <div className="customers-overview-note">Customer balances are calculated from issued invoices and shown in each customer’s account.</div>
       </div>
 
+      {segmentSummary && <section className="customers-segments">
+        <div className="customers-segments-heading"><div><span className="customers-eyebrow">CUSTOMER INTELLIGENCE</span><h2>Segments</h2><p>Live groups based on issued-invoice activity and lifetime spend.</p></div>
+          {selectedSegment && <button className="customers-secondary" onClick={() => { setSelectedSegment(null); setPage(1); }}>Clear segment</button>}
+        </div>
+        <div className="customers-segment-grid">{segmentSummary.segments.map(item => <button key={item.segment} className={'customers-segment-card ' + (selectedSegment === item.segment ? 'is-selected' : '')} onClick={() => { setSelectedSegment(selectedSegment === item.segment ? null : item.segment); setPage(1); setSearch(''); }}>
+          <small>{item.segment.replace('_', ' ')}</small><strong>{item.customerCount.toLocaleString('en-IN')}</strong><span>{money(item.lifetimeSpend)} lifetime spend</span>
+        </button>)}</div>
+      </section>}
       <div className="customers-toolbar">
         <div className="customers-search"><Search size={18} />
-          <input value={search} placeholder="Search name, phone, email or GSTIN..."
-            onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
+          <input value={search} placeholder={selectedSegment ? "Viewing " + selectedSegment.toLowerCase().replace("_", " ") + " customers" : "Search name, phone, email or GSTIN..."}
+            onChange={(event) => { setSelectedSegment(null); setSearch(event.target.value); setPage(1); }} />
           {search && <button aria-label="Clear search" onClick={() => setSearch('')}><X size={16} /></button>}
         </div>
         <span>{total.toLocaleString('en-IN')} customer{total === 1 ? '' : 's'}</span>
@@ -193,8 +231,8 @@ export default function CustomersPage() {
           <tbody>
             {loading ? <tr><td colSpan={6} className="customers-empty">Loading customer records...</td></tr> :
               customers.length === 0 ? <tr><td colSpan={6} className="customers-empty">
-                <Users size={32} /><strong>{search ? 'No matching customers' : 'No customers yet'}</strong>
-                <span>{search ? 'Try a different name, phone or GSTIN.' : 'Add your first customer to start building your customer book.'}</span>
+                <Users size={32} /><strong>{selectedSegment ? 'No customers in this segment' : search ? 'No matching customers' : 'No customers yet'}</strong>
+                <span>{selectedSegment ? 'This segment currently has no matching customers.' : search ? 'Try a different name, phone or GSTIN.' : 'Add your first customer to start building your customer book.'}</span>
                 {!search && canManageCustomers && <button className="customers-empty-action" onClick={startCreate}><Plus size={15} /> Add first customer</button>}
               </td></tr> : customers.map((customer) => (
                 <tr key={customer._id}>
@@ -270,7 +308,10 @@ export default function CustomersPage() {
           <section className="customers-loyalty-card">
             <div className="customers-loyalty-top">
               <div><span className="customers-eyebrow">REWARDS MEMBERSHIP</span><h3>{loyalty?.customer.tier || selected.loyaltyTier || 'BRONZE'} MEMBER</h3><p>Earn 1 point for every ₹100 taxable invoice value.</p></div>
-              {canManageCustomers && <button className="customers-secondary" onClick={() => { setLoyaltyError(''); setLoyaltyAdjustOpen(true); }}>Adjust points</button>}
+              <div className="customers-loyalty-actions">
+                {(canManageCustomers || user?.permissions?.includes('sales.create')) && <button className="customers-secondary" onClick={() => { setRedeemMessage(''); setRedeemOpen(true); }}>Redeem points</button>}
+                {canManageCustomers && <button className="customers-secondary" onClick={() => { setLoyaltyError(''); setLoyaltyAdjustOpen(true); }}>Adjust points</button>}
+              </div>
             </div>
             <div className="customers-loyalty-stats">
               <div><small>Available points</small><strong>{(loyalty?.customer.pointsBalance ?? selected.loyaltyPoints ?? 0).toLocaleString('en-IN')}</strong></div>
@@ -280,7 +321,20 @@ export default function CustomersPage() {
             <div className="customers-loyalty-ledger"><strong>Recent points activity</strong>
               {loyalty?.items.length ? loyalty.items.slice(0,5).map(entry => <div key={entry._id}><span>{entry.reason}<small>{date(entry.createdAt)}</small></span><b className={entry.pointsDelta < 0 ? 'is-negative' : 'is-positive'}>{entry.pointsDelta > 0 ? '+' : ''}{entry.pointsDelta}</b></div>) : <p>No loyalty activity yet. Points are earned automatically on eligible linked-customer invoices.</p>}
             </div>
+            <div className="customers-loyalty-vouchers"><strong>Reward vouchers</strong>
+              {loyalty?.vouchers?.length ? loyalty.vouchers.map(voucher => <div key={voucher._id}><span><b>{voucher.code}</b><small>{money(voucher.discountAmount)} · expires {date(voucher.expiresAt)}</small></span><em className={'voucher-' + voucher.status.toLowerCase()}>{voucher.status}</em></div>) : <p>No reward vouchers generated yet.</p>}
+            </div>
           </section>
+          {redeemOpen && <div className="customers-modal-backdrop" onClick={() => !redeemSaving && setRedeemOpen(false)}>
+            <form className="customers-form-modal customers-loyalty-adjust" onSubmit={event => { event.preventDefault(); void redeemLoyalty(); }} onClick={event => event.stopPropagation()}>
+              <div className="customers-modal-header"><div><span className="customers-eyebrow">REWARDS REDEMPTION</span><h2>Redeem loyalty points</h2><p>100 points = ₹10 invoice discount. Voucher is valid for 30 days.</p></div><button type="button" className="customers-icon-button" onClick={() => setRedeemOpen(false)}><X size={20}/></button></div>
+              <div className="customers-redemption-balance">Available: <strong>{(loyalty?.customer.pointsBalance ?? 0).toLocaleString('en-IN')} points</strong></div>
+              <label className="customers-field">Points to redeem *<input type="number" min="100" step="100" max={loyalty?.customer.pointsBalance ?? 0} required value={redeemPoints} onChange={event => setRedeemPoints(event.target.value)}/></label>
+              <div className="customers-redemption-preview">Voucher value: <strong>{money(Number(redeemPoints) / 10)}</strong></div>
+              {redeemMessage && <div className="customers-error">{redeemMessage}</div>}
+              <div className="customers-form-footer"><button type="button" className="customers-secondary" onClick={() => setRedeemOpen(false)} disabled={redeemSaving}>Cancel</button><button type="submit" className="customers-primary" disabled={redeemSaving || Number(redeemPoints) < 100 || Number(redeemPoints) % 100 !== 0 || Number(redeemPoints) > (loyalty?.customer.pointsBalance ?? 0)}>{redeemSaving ? 'Creating voucher...' : 'Create voucher'}</button></div>
+            </form>
+          </div>}
           {loyaltyAdjustOpen && <div className="customers-modal-backdrop" onClick={() => !loyaltySaving && setLoyaltyAdjustOpen(false)}>
             <form className="customers-form-modal customers-loyalty-adjust" onSubmit={adjustLoyalty} onClick={event => event.stopPropagation()}>
               <div className="customers-modal-header"><div><span className="customers-eyebrow">REWARDS ADMINISTRATION</span><h2>Adjust loyalty points</h2><p>Manual changes are recorded in the customer points ledger.</p></div><button type="button" className="customers-icon-button" onClick={() => setLoyaltyAdjustOpen(false)}><X size={20}/></button></div>

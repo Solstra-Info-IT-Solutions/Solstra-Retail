@@ -7,6 +7,7 @@ import {
 } from '../sales/schemas/sales-invoice.schema';
 import { Customer, CustomerSchema } from './schemas/customer.schema';
 import { LoyaltyLedger, LoyaltyLedgerSchema } from './schemas/loyalty-ledger.schema';
+import { LoyaltyRewardVoucher, LoyaltyRewardVoucherSchema } from './schemas/loyalty-reward-voucher.schema';
 import { CustomersController } from './customers.controller';
 import { CustomersService } from './customers.service';
 
@@ -16,6 +17,7 @@ import { CustomersService } from './customers.service';
       { name: Customer.name, schema: CustomerSchema },
       { name: SalesInvoice.name, schema: SalesInvoiceSchema },
       { name: LoyaltyLedger.name, schema: LoyaltyLedgerSchema },
+      { name: LoyaltyRewardVoucher.name, schema: LoyaltyRewardVoucherSchema },
     ]),
   ],
   controllers: [CustomersController],

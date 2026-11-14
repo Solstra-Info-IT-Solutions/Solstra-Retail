@@ -11,6 +11,7 @@ import { Connection, Model, Types } from 'mongoose';
 import { Product } from '../products/schemas/product.schema';
 import { Customer, CustomerDocument } from '../customers/schemas/customer.schema';
 import { LoyaltyLedger, LoyaltyLedgerDocument } from '../customers/schemas/loyalty-ledger.schema';
+import { LoyaltyRewardVoucher, LoyaltyRewardVoucherDocument } from '../customers/schemas/loyalty-reward-voucher.schema';
 import { Tenant } from '../tenants/schemas/tenant.schema';
 import { InventoryMovement } from '../inventory/schemas/inventory-movement.schema';
 import { Warehouse } from '../branches/schemas/warehouse.schema';
@@ -66,6 +67,7 @@ export class SalesService {
     @InjectModel(Branch.name) private readonly branches: Model<Branch>,
     @InjectModel(WarehouseStock.name) private readonly warehouseStocks: Model<WarehouseStockDocument>,
     @InjectModel(LoyaltyLedger.name) private readonly loyaltyLedger: Model<LoyaltyLedgerDocument>,
+    @InjectModel(LoyaltyRewardVoucher.name) private readonly loyaltyVouchers: Model<LoyaltyRewardVoucherDocument>,
   ) {}
 
   private loyaltyTier(points: number): 'BRONZE' | 'SILVER' | 'GOLD' | 'PLATINUM' {
@@ -233,6 +235,7 @@ export class SalesService {
       customerGstin: dto.customerGstin ?? null,
       placeOfSupplyStateCode: dto.placeOfSupplyStateCode,
       ...(dto.warehouseId ? { warehouseId: dto.warehouseId } : {}),
+      ...(dto.rewardVoucherCode ? { rewardVoucherCode: dto.rewardVoucherCode.trim().toUpperCase() } : {}),
       payments: (dto.payments ?? []).map((payment) => ({
         method: payment.method,
         amountPaise: this.toPaise(payment.amount),
@@ -313,6 +316,20 @@ export class SalesService {
 
         if (dto.customerId && !linkedCustomer) {
           throw new NotFoundException('Customer not found in this business.');
+        }
+
+        let rewardVoucher: any = null;
+        let voucherDiscountPaise = 0;
+        if (dto.rewardVoucherCode) {
+          if (!linkedCustomer) throw new BadRequestException('A linked customer is required to redeem a loyalty voucher.');
+          rewardVoucher = await this.loyaltyVouchers.findOne(tenantFilter(tenantId, {
+            customerId: linkedCustomer._id,
+            code: dto.rewardVoucherCode.trim().toUpperCase(),
+            status: 'AVAILABLE',
+            expiresAt: { $gt: saleDate },
+          })).session(session);
+          if (!rewardVoucher) throw new BadRequestException('Reward voucher is invalid, expired, already used, or belongs to another customer.');
+          voucherDiscountPaise = this.toPaise(rewardVoucher.discountAmount);
         }
 
         const customerName = linkedCustomer?.name ?? dto.customerName ?? '';
@@ -412,13 +429,33 @@ export class SalesService {
         const invoiceItems: any[] = [];
         let totalCogsPaise = 0;
 
-        for (const item of dto.items) {
+        let voucherAllocations = dto.items.map(() => 0);
+        if (voucherDiscountPaise > 0) {
+          const eligibleNetByLine = dto.items.map((item) => {
+            const product = productMap.get(item.productId);
+            const gross = this.toPaise(product.sellingPrice) * item.quantity;
+            return Math.max(0, gross - this.toPaise(item.discountAmount || 0));
+          });
+          const eligibleTotal = eligibleNetByLine.reduce((sum, value) => sum + value, 0);
+          if (voucherDiscountPaise > eligibleTotal) throw new BadRequestException('Reward voucher discount exceeds the sale amount after line discounts.');
+          let remainingVoucher = voucherDiscountPaise;
+          const eligibleLines = eligibleNetByLine.map((value, index) => ({ value, index })).filter((line) => line.value > 0);
+          eligibleLines.forEach((line, position) => {
+            const allocation = position === eligibleLines.length - 1
+              ? remainingVoucher
+              : Math.min(remainingVoucher, Math.floor((voucherDiscountPaise * line.value) / eligibleTotal));
+            voucherAllocations[line.index] = allocation;
+            remainingVoucher -= allocation;
+          });
+        }
+
+        for (const [itemIndex, item] of dto.items.entries()) {
           const product = productMap.get(item.productId);
           const quantity = item.quantity;
 
           const unitPricePaise = this.toPaise(product.sellingPrice);
           const grossPaise = unitPricePaise * quantity;
-          const discountPaise = this.toPaise(item.discountAmount || 0);
+          const discountPaise = this.toPaise(item.discountAmount || 0) + (voucherAllocations[itemIndex] || 0);
 
           if (discountPaise > grossPaise) {
             throw new BadRequestException(
@@ -647,6 +684,8 @@ export class SalesService {
             .join(', '),
           customerId: linkedCustomer?._id ?? null,
           warehouseId: selectedWarehouse?._id ?? null,
+          loyaltyVoucherCode: rewardVoucher?.code ?? null,
+          loyaltyVoucherDiscount: this.fromPaise(voucherDiscountPaise),
           customerName,
           customerPhone,
           customerGstin,
@@ -669,6 +708,12 @@ export class SalesService {
         });
 
         await invoice.save({ session });
+        if (rewardVoucher) {
+          rewardVoucher.status = 'REDEEMED';
+          rewardVoucher.redeemedInvoiceId = invoice._id;
+          rewardVoucher.redeemedAt = now;
+          await rewardVoucher.save({ session });
+        }
 
         // Loyalty rewards are earned only by linked customers and only on taxable value (GST excluded).
         const loyaltyPointsEarned = linkedCustomer ? Math.floor(taxableTotalPaise / 10000) : 0;
@@ -1879,6 +1924,20 @@ if (existingPayment) {
           throw new ConflictException(
             'Invoice status changed while cancelling. Please retry.',
           );
+        }
+
+        if (invoice.loyaltyVoucherCode) {
+          const voucher = await this.loyaltyVouchers.findOne(tenantFilter(tenantId, {
+            code: invoice.loyaltyVoucherCode,
+            redeemedInvoiceId: invoice._id,
+            status: 'REDEEMED',
+          })).session(session);
+          if (voucher) {
+            voucher.status = voucher.expiresAt > new Date() ? 'AVAILABLE' : 'EXPIRED';
+            voucher.redeemedInvoiceId = null;
+            voucher.redeemedAt = null;
+            await voucher.save({ session });
+          }
         }
 
         await this.accounting.reverseOperationalJournal({

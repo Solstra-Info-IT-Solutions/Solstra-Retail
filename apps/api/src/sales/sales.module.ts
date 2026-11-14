@@ -8,6 +8,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { Product, ProductSchema } from '../products/schemas/product.schema';
 import { Customer, CustomerSchema } from '../customers/schemas/customer.schema';
 import { LoyaltyLedger, LoyaltyLedgerSchema } from '../customers/schemas/loyalty-ledger.schema';
+import { LoyaltyRewardVoucher, LoyaltyRewardVoucherSchema } from '../customers/schemas/loyalty-reward-voucher.schema';
 import { Tenant, TenantSchema } from '../tenants/schemas/tenant.schema';
 import {
   InventoryMovement,
@@ -41,6 +42,7 @@ import { SalesService } from './sales.service';
       { name: Product.name, schema: ProductSchema },
       { name: Customer.name, schema: CustomerSchema },
       { name: LoyaltyLedger.name, schema: LoyaltyLedgerSchema },
+      { name: LoyaltyRewardVoucher.name, schema: LoyaltyRewardVoucherSchema },
       { name: Tenant.name, schema: TenantSchema },
       { name: InventoryMovement.name, schema: InventoryMovementSchema },
       { name: Warehouse.name, schema: WarehouseSchema },

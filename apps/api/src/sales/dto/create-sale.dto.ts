@@ -94,4 +94,9 @@ export class CreateSaleDto {
   @IsOptional()
   @IsMongoId()
   warehouseId?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^SR[A-F0-9]{12}$/)
+  rewardVoucherCode?: string;
 }

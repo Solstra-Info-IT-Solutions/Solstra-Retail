@@ -11,11 +11,11 @@ export class LoyaltyLedger {
   @Prop({ type: Types.ObjectId, ref: 'Customer', required: true, index: true })
   customerId!: Types.ObjectId;
 
-  @Prop({ type: String, required: true, enum: ['SALE_EARN', 'MANUAL_ADJUSTMENT'] })
-  eventType!: 'SALE_EARN' | 'MANUAL_ADJUSTMENT';
+  @Prop({ type: String, required: true, enum: ['SALE_EARN', 'MANUAL_ADJUSTMENT', 'REDEEM'] })
+  eventType!: 'SALE_EARN' | 'MANUAL_ADJUSTMENT' | 'REDEEM';
 
-  @Prop({ type: String, required: true, enum: ['SALE', 'MANUAL'] })
-  sourceType!: 'SALE' | 'MANUAL';
+  @Prop({ type: String, required: true, enum: ['SALE', 'MANUAL', 'REDEMPTION'] })
+  sourceType!: 'SALE' | 'MANUAL' | 'REDEMPTION';
 
   @Prop({ type: String, required: true, trim: true })
   sourceId!: string;

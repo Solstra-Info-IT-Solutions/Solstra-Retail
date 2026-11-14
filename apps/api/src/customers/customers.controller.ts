@@ -17,6 +17,7 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 import { ListCustomersDto } from './dto/list-customers.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { AdjustLoyaltyPointsDto } from './dto/adjust-loyalty-points.dto';
+import { RedeemLoyaltyPointsDto } from './dto/redeem-loyalty-points.dto';
 import { CustomersService } from './customers.service';
 
 type AuthenticatedRequest = Request & {
@@ -37,6 +38,28 @@ export class CustomersController {
   @Get()
   findAll(@Req() req: AuthenticatedRequest, @Query() query: ListCustomersDto) {
     return this.customersService.findAll(req.user.tenantId, query);
+  }
+
+  @Permissions('customers.view')
+  @Get('segments/summary')
+  getCustomerSegments(@Req() req: AuthenticatedRequest) {
+    return this.customersService.getCustomerSegments(req.user.tenantId);
+  }
+
+  @Permissions('customers.view')
+  @Get('segments/:segment')
+  getSegmentCustomers(
+    @Req() req: AuthenticatedRequest,
+    @Param('segment') segment: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedPage = page === undefined ? 1 : Number(page);
+    const parsedLimit = limit === undefined ? 20 : Number(limit);
+    if (!Number.isInteger(parsedPage) || parsedPage < 1 || !Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+      throw new BadRequestException('Invalid customer segment pagination');
+    }
+    return this.customersService.getSegmentCustomers(req.user.tenantId, segment, parsedPage, parsedLimit);
   }
 
   @Permissions('customers.view')
@@ -92,6 +115,16 @@ export class CustomersController {
     @Body() dto: AdjustLoyaltyPointsDto,
   ) {
     return this.customersService.adjustLoyaltyPoints(req.user.tenantId, req.user.userId, id, dto);
+  }
+
+  @Permissions('sales.create')
+  @Post(':id/loyalty/redeem')
+  redeemLoyalty(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: RedeemLoyaltyPointsDto,
+  ) {
+    return this.customersService.redeemLoyaltyPoints(req.user.tenantId, req.user.userId, id, dto);
   }
 
   @Permissions('customers.view')

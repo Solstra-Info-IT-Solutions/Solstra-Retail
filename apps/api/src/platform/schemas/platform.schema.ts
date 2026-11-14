@@ -33,6 +33,7 @@ export class PlatformNotification {
 export type PlatformNotificationDocument = HydratedDocument<PlatformNotification>;
 export const PlatformNotificationSchema = SchemaFactory.createForClass(PlatformNotification);
 PlatformNotificationSchema.index({ tenantId: 1, userId: 1, readAt: 1, createdAt: -1 });
+PlatformNotificationSchema.index({ tenantId: 1, userId: 1, sourceId: 1, category: 1, title: 1 }, { unique: true, partialFilterExpression: { sourceId: { $type: 'string', $gt: '' } } });
 
 @Schema({ timestamps: true, collection: 'webhook_integrations', versionKey: false })
 export class WebhookIntegration {

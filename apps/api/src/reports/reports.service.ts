@@ -156,6 +156,18 @@ export class ReportsService {
     return result[0]?.total ?? 0;
   }
 
+  async listGstComplianceSubmissions(tenantId: string, page = 1) {
+    this.validateTenant(tenantId);
+    const safePage = Number.isInteger(page) && page > 0 ? Math.min(page, 10000) : 1;
+    const filter = tenantFilter(tenantId, {});
+    const [items, total] = await Promise.all([
+      this.gstComplianceSubmissions.find(filter).sort({ createdAt: -1 }).skip((safePage - 1) * 20).limit(20)
+        .select('submissionType periodKey sourceReference status providerReference acknowledgementNumber acknowledgementDate attempts lastError submittedAt createdAt').lean(),
+      this.gstComplianceSubmissions.countDocuments(filter),
+    ]);
+    return { items, pagination: { page: safePage, limit: 20, total, totalPages: Math.ceil(total / 20) } };
+  }
+
   async submitGstCompliance(tenantId: string, submissionType: string, reference: string) {
     if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant context');
     if (!['GSTR1', 'GSTR3B', 'EWAY_BILL'].includes(submissionType)) throw new BadRequestException('Unsupported GST submission type');

@@ -207,6 +207,12 @@ export class PlatformController {
   }
 
   @Roles('owner', 'admin')
+  @Post('communications/deliveries/:id/retry')
+  retryCommunicationDelivery(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.platform.retryCommunicationDelivery(req.user.tenantId, id);
+  }
+
+  @Roles('owner', 'admin')
   @Get('billing/invoices')
   listSubscriptionInvoices(@Req() req: AuthenticatedRequest) {
     return this.platform.listSubscriptionInvoices(req.user.tenantId);

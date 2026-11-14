@@ -735,6 +735,42 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     return { items, pagination: { page: safePage, limit: 20, total, totalPages: Math.ceil(total / 20) } };
   }
 
+  async recordCommunicationReceipt(deliveryId: string, rawBody: Buffer | undefined, signature: string | undefined) {
+    if (!Types.ObjectId.isValid(deliveryId) || !rawBody?.length || !signature || !/^[a-f0-9]{64}$/i.test(signature)) {
+      throw new ForbiddenException('Invalid communication delivery receipt signature');
+    }
+    const delivery: any = await this.communicationDeliveries.findOne({ _id: new Types.ObjectId(deliveryId) }).lean();
+    if (!delivery) throw new NotFoundException('Communication delivery not found');
+    const provider: any = await this.communicationProviders.findOne(tenantFilter(String(delivery.tenantId), { _id: delivery.providerId, enabled: true }))
+      .select('+encryptedSecret +secretIv +secretTag').lean();
+    if (!provider) throw new ForbiddenException('Communication provider is unavailable');
+    const secret = this.decryptSecret(provider, await this.encryptionKey());
+    const expected = createHmac('sha256', secret).update(rawBody).digest();
+    const received = Buffer.from(signature, 'hex');
+    if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
+      throw new ForbiddenException('Invalid communication delivery receipt signature');
+    }
+    let event: any;
+    try { event = JSON.parse(rawBody.toString('utf8')); } catch { throw new BadRequestException('Invalid communication receipt payload'); }
+    if (String(event.deliveryId || '') !== deliveryId || !['delivered', 'failed'].includes(String(event.status || '').toLowerCase())) {
+      throw new BadRequestException('Communication receipt does not match the delivery or has an unsupported status');
+    }
+    const delivered = String(event.status).toLowerCase() === 'delivered';
+    const updated = await this.communicationDeliveries.findOneAndUpdate(
+      { _id: delivery._id, tenantId: delivery.tenantId, status: { $in: ['DELIVERED', 'PENDING', 'DELIVERING', 'FAILED'] } },
+      { $set: {
+        status: delivered ? 'DELIVERED' : 'FAILED',
+        providerMessageId: String(event.providerMessageId || '').slice(0, 160),
+        deliveredAt: delivered ? new Date() : null,
+        failedAt: delivered ? null : new Date(),
+        lastError: delivered ? '' : String(event.reason || 'Provider reported delivery failure').slice(0, 500),
+      } },
+      { new: true },
+    ).select('_id status providerMessageId deliveredAt failedAt').lean();
+    if (!updated) throw new ConflictException('Communication delivery is no longer eligible for receipt updates');
+    return updated;
+  }
+
   async runCommunicationDeliveries(tenantId: string, limit = 20) {
     this.identity(tenantId);
     const safeLimit = Math.min(50, Math.max(1, Math.floor(limit) || 20));

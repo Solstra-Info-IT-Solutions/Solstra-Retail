@@ -149,6 +149,8 @@ export class AutomationExecution {
   @Prop({ type: String, required: true, maxlength: 160 }) eventKey!: string;
   @Prop({ type: String, required: true, enum: ['PROCESSING', 'SUCCEEDED', 'FAILED'] }) status!: string;
   @Prop({ type: String, default: '', maxlength: 500 }) errorMessage!: string;
+  @Prop({ type: String, default: '', maxlength: 36, index: true }) deviceId!: string;
+  @Prop({ type: Number, default: null }) batchSequence?: number | null;
   @Prop({ type: Date, default: Date.now }) executedAt!: Date;
 }
 export type AutomationExecutionDocument = HydratedDocument<AutomationExecution>;
@@ -205,6 +207,8 @@ export class SubscriptionInvoice {
   @Prop({ type: Date, required: true }) dueAt!: Date;
   @Prop({ type: String, required: true, enum: ['DUE', 'PAID', 'VOID'], default: 'DUE', index: true }) status!: string;
   @Prop({ type: Date, default: null }) paidAt?: Date | null;
+  @Prop({ type: Date, default: null, index: true }) lastReminderAt?: Date | null;
+  @Prop({ type: Number, default: 0, min: 0, max: 7 }) reminderCount!: number;
   @Prop({ type: String, default: '', maxlength: 120 }) paymentReference!: string;
   @Prop({ type: String, default: '', maxlength: 120, index: true }) paymentGateway!: string;
   @Prop({ type: String, default: '', maxlength: 120, index: true }) gatewayOrderId!: string;

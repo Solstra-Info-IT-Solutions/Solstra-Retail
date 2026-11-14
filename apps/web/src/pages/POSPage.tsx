@@ -31,6 +31,8 @@ interface ProductResponse {
   };
 }
 
+interface WarehouseOption { _id: string; name: string; branchName: string; }
+interface WarehouseStockRow { productId: { _id: string } | string; quantity: number; }
 interface CartItem {
   product: Product;
   quantity: number;
@@ -79,6 +81,9 @@ function createIdempotencyKey(): string {
 
 export default function POSPage() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
+  const [warehouseId, setWarehouseId] = useState('');
+  const [warehouseQuantities, setWarehouseQuantities] = useState<Record<string, number>>({});
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [productError, setProductError] = useState('');
@@ -118,6 +123,51 @@ export default function POSPage() {
     };
   }, [search]);
 
+  useEffect(() => {
+    let active = true;
+    async function loadWarehouses() {
+      try {
+        const response = await api.get<{ items: Array<{ _id: string; name: string }> }>('/branches');
+        const options: WarehouseOption[] = [];
+        for (const branch of response.data.items || []) {
+          const detail = await api.get<{ warehouses?: Array<{ _id: string; name: string; isActive: boolean }> }>('/branches/' + branch._id);
+          for (const warehouse of detail.data.warehouses || []) {
+            if (warehouse.isActive) options.push({ _id: warehouse._id, name: warehouse.name, branchName: branch.name });
+          }
+        }
+        if (active) {
+          setWarehouses(options);
+          if (options.length === 1) setWarehouseId(options[0]._id);
+        }
+      } catch {
+        if (active) setWarehouses([]);
+      }
+    }
+    void loadWarehouses();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (!warehouseId) { setWarehouseQuantities({}); return; }
+    api.get<{ items: WarehouseStockRow[] }>('/inventory/warehouses/' + warehouseId + '/stock')
+      .then(response => {
+        if (!active) return;
+        const quantities: Record<string, number> = {};
+        for (const row of response.data.items || []) {
+          const id = typeof row.productId === 'string' ? row.productId : row.productId?._id;
+          if (id) quantities[id] = row.quantity;
+        }
+        setWarehouseQuantities(quantities);
+      })
+      .catch(() => { if (active) setCheckoutError('Warehouse stock could not be loaded. Refresh or select another warehouse.'); });
+    return () => { active = false; };
+  }, [warehouseId]);
+
+  function availableQty(product: Product) {
+    return warehouseId ? (warehouseQuantities[product._id] || 0) : product.stockQty;
+  }
+
   const subtotal = useMemo(
     () => cart.reduce(
       (sum, item) => sum + item.product.sellingPrice * item.quantity,
@@ -138,7 +188,7 @@ export default function POSPage() {
     setCheckoutError('');
     setSuccessMessage('');
 
-    if (product.trackStock && product.stockQty <= 0) {
+    if (product.trackStock && availableQty(product) <= 0) {
       setCheckoutError(`${product.name} is out of stock.`);
       return;
     }
@@ -147,8 +197,8 @@ export default function POSPage() {
       const existing = current.find(item => item.product._id === product._id);
 
       if (existing) {
-        if (product.trackStock && existing.quantity >= product.stockQty) {
-          setCheckoutError(`Available stock for ${product.name}: ${product.stockQty}`);
+        if (product.trackStock && existing.quantity >= availableQty(product)) {
+          setCheckoutError(`Available stock for ${product.name}: ${availableQty(product)}`);
           return current;
         }
 
@@ -172,8 +222,8 @@ export default function POSPage() {
 
         if (next > item.quantity &&
             item.product.trackStock &&
-            next > item.product.stockQty) {
-          setCheckoutError(`Only ${item.product.stockQty} units available.`);
+            next > availableQty(item.product)) {
+          setCheckoutError(`Only ${availableQty(item.product)} units available.`);
           return item;
         }
 
@@ -201,6 +251,11 @@ export default function POSPage() {
 
     if (!cart.length) {
       setCheckoutError('Add at least one product to the cart.');
+      return;
+    }
+
+    if (warehouses.length > 0 && !warehouseId) {
+      setCheckoutError('Select the billing warehouse before creating this invoice.');
       return;
     }
 
@@ -235,6 +290,7 @@ export default function POSPage() {
         customerPhone: customerPhone.trim() || undefined,
         customerGstin: customerGstin.trim().toUpperCase() || undefined,
         placeOfSupplyStateCode: stateCode,
+        ...(warehouseId ? { warehouseId } : {}),
         payments: amount > 0 ? [{
           method: paymentMethod,
           amount,
@@ -325,7 +381,7 @@ export default function POSPage() {
               {products.map(product => {
                 const inCart = cart.find(item => item.product._id === product._id);
                 const unavailable =
-                  product.trackStock && product.stockQty <= 0;
+                  product.trackStock && availableQty(product) <= 0;
 
                 return (
                   <button
@@ -356,7 +412,7 @@ export default function POSPage() {
                     </div>
                     <span className={`pos-stock ${unavailable ? 'out' : ''}`}>
                       {product.trackStock
-                        ? unavailable ? 'Out of stock' : `${product.stockQty} ${product.unit} available`
+                        ? unavailable ? 'Out of stock' : `${availableQty(product)} ${product.unit} available`
                         : 'Stock not tracked'}
                     </span>
                   </button>
@@ -367,6 +423,7 @@ export default function POSPage() {
         </section>
 
         <aside className="pos-checkout">
+          {warehouses.length > 0 && <div className="pos-warehouse-select"><label>Billing location / warehouse<select value={warehouseId} onChange={event => { setWarehouseId(event.target.value); setCart([]); setCheckoutError(''); }}><option value="">Select warehouse *</option>{warehouses.map(warehouse => <option key={warehouse._id} value={warehouse._id}>{warehouse.branchName} · {warehouse.name}</option>)}</select></label><small>Stock availability is checked against the selected warehouse.</small></div>}
           <div className="pos-cart-heading">
             <div>
               <h2>Current Bill</h2>

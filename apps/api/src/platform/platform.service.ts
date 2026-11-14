@@ -697,7 +697,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
 
   async queueCommunication(tenantId: string, userId: string, dto: SendCommunicationDto) {
     this.identity(tenantId, userId);
-    const provider = await this.communicationProviders.findOne(tenantFilter(tenantId, { channel: dto.channel, enabled: true })).sort({ createdAt: -1 }).lean();
+    const provider: any = await this.communicationProviders.findOne(tenantFilter(tenantId, { channel: dto.channel, enabled: true })).sort({ createdAt: -1 }).lean();
     if (!provider) throw new ConflictException('Configure an enabled provider for this communication channel first');
     if (dto.channel === 'EMAIL' && !dto.recipient.includes('@')) throw new BadRequestException('Enter a valid email recipient');
     if (dto.channel !== 'EMAIL' && !/^\+?[0-9]{8,15}$/.test(dto.recipient.replace(/[\s()-]/g, ''))) throw new BadRequestException('Enter a valid international phone number');

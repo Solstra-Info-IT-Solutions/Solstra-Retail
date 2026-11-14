@@ -1617,6 +1617,10 @@ if (existingPayment) {
           { new: true, session },
         );
         if (!updated) throw new ConflictException('Warranty claim quantity changed concurrently. Refresh and retry.');
+        if (updated.claimedQuantity >= updated.quantity) {
+          updated.status = 'CLAIMED';
+          await updated.save({ session });
+        }
         const [claim] = await this.warrantyClaims.create([{
           tenantId: new Types.ObjectId(tenantId), warrantyId: warranty._id,
           invoiceId: warranty.invoiceId, claimCode: 'WC' + randomBytes(6).toString('hex').toUpperCase(),

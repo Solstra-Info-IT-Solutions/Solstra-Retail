@@ -468,7 +468,7 @@ export class SalesService {
           const registered = await serialCollection.find({
             tenantId: new Types.ObjectId(tenantId), productId: new Types.ObjectId(item.productId),
             warehouseId: new Types.ObjectId(dto.warehouseId), serialNumber: { $in: serialNumbers }, status: 'IN_STOCK',
-          }).session(session).toArray();
+          }, { session }).toArray();
           if (registered.length !== serialNumbers.length) throw new ConflictException('One or more serials are not available for this product in the selected warehouse');
         }
 
@@ -807,7 +807,7 @@ export class SalesService {
             if (!dto.warehouseId) throw new BadRequestException(`Select a warehouse to consume batches for ${product.name}.`);
             const availableBatches = await batchCollection.find({
               ...batchScope, status: 'ACTIVE', expiresAt: { $gt: now }, quantity: { $gt: 0 },
-            }).sort({ expiresAt: 1, createdAt: 1 }).session(session).toArray();
+            }, { session }).sort({ expiresAt: 1, createdAt: 1 }).toArray();
             const availableBatchQty = availableBatches.reduce((sum: number, row: any) => sum + Number(row.quantity || 0), 0);
             if (availableBatchQty < quantity) throw new ConflictException(`Insufficient unexpired batch quantity for ${product.name}. Available batch units: ${availableBatchQty}.`);
             let remaining = quantity;

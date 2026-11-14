@@ -558,6 +558,18 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     for (const key of ['status', 'subscriptionStatus', 'subscriptionPlan', 'maxUsers', 'maxProducts', 'maxBranches'] as const) {
       if (dto[key] !== undefined) updates[key] = dto[key];
     }
+    if (dto.subscriptionPlan) {
+      const limits: Record<string, { maxUsers: number; maxProducts: number; maxBranches: number }> = {
+        starter: { maxUsers: 3, maxProducts: 1000, maxBranches: 1 },
+        growth: { maxUsers: 10, maxProducts: 5000, maxBranches: 3 },
+        business: { maxUsers: 25, maxProducts: 25000, maxBranches: 10 },
+        enterprise: { maxUsers: 1000, maxProducts: 1000000, maxBranches: 1000 },
+      };
+      const defaults = limits[dto.subscriptionPlan];
+      for (const key of ['maxUsers', 'maxProducts', 'maxBranches'] as const) {
+        if (dto[key] === undefined) updates[key] = defaults[key];
+      }
+    }
     if (!Object.keys(updates).length || !dto.reason?.trim()) throw new BadRequestException('Provide at least one platform setting and a mandatory reason');
     const previous = await this.tenants.findById(tenantId).select('status subscriptionStatus subscriptionPlan maxUsers maxProducts maxBranches').lean();
     if (!previous) throw new NotFoundException('Tenant not found');

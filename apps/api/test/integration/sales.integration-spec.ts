@@ -196,6 +196,9 @@ describe('SalesService MongoDB integration', () => {
         new TaxPeriodsService(TaxPeriodModel as any),
       ),
       new TaxPeriodsService(TaxPeriodModel as any),
+      {} as any,
+      {} as any,
+      {} as any,
     );
   });
 

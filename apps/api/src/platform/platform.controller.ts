@@ -221,6 +221,12 @@ export class PlatformController {
   }
 
   @Roles('owner', 'admin')
+  @Get('operations/metrics')
+  operationsMetrics(@Req() req: AuthenticatedRequest) {
+    return this.platform.operationsMetrics(req.user.tenantId);
+  }
+
+  @Roles('owner', 'admin')
   @Get('backups/replication-events')
   listBackupReplicationEvents(@Req() req: AuthenticatedRequest, @Query('artifactId') artifactId?: string) {
     return this.platform.listBackupReplicationEvents(req.user.tenantId, artifactId);

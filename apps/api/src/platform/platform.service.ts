@@ -531,6 +531,20 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     return response;
   }
 
+  async listOfflineSyncRecords(tenantId: string, userId: string, role: string, page = 1, status = '') {
+    this.identity(tenantId, userId);
+    if (status && !['PROCESSING', 'SUCCEEDED', 'FAILED'].includes(status)) throw new BadRequestException('Invalid offline sync status filter');
+    const safePage = Number.isInteger(page) && page > 0 ? Math.min(page, 100000) : 1;
+    const filter: any = tenantFilter(tenantId, {});
+    if (!['owner', 'admin'].includes(role)) filter.createdBy = new Types.ObjectId(userId);
+    if (status) filter.status = status;
+    const [items, total] = await Promise.all([
+      this.syncRecords.find(filter).select('idempotencyKey status createdBy invoiceId result errorMessage deviceId batchSequence createdAt updatedAt').sort({ createdAt: -1 }).skip((safePage - 1) * 25).limit(25).lean(),
+      this.syncRecords.countDocuments(filter),
+    ]);
+    return { items, total, page: safePage, limit: 25, totalPages: Math.ceil(total / 25) };
+  }
+
   async getBackupPolicy(tenantId: string) {
     this.identity(tenantId);
     return await this.backupPolicies.findOne(tenantFilter(tenantId, {})).lean() || { enabled: false, frequency: 'DAILY', retentionDays: 30, lastStatus: 'NOT_CONFIGURED' };

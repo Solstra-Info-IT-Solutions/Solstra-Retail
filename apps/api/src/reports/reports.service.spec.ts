@@ -67,6 +67,48 @@ describe('ReportsService validation', () => {
     expect(preview).not.toHaveBeenCalled();
   });
 
+  it('normalizes historical sales and purchase headers without retaining raw payloads', () => {
+    const { service } = createService();
+    const result = (service as any).normalizeHistoricalTransactionRows({
+      entity: 'SALES', sourceSystem: 'Legacy ERP', runKey: 'historical-run-001',
+      rows: [{
+        sourceId: 'OLD-INV-001', invoiceNumber: 'INV-001', date: '2025-04-10',
+        subtotal: 100, totalTax: 18, grandTotal: 118, customerName: 'Example Customer',
+      }],
+    });
+    expect(result.errors).toHaveLength(0);
+    expect(result.normalized[0]).toMatchObject({
+      sourceId: 'OLD-INV-001', documentNumber: 'INV-001',
+      taxableValuePaise: 10000, taxAmountPaise: 1800, totalAmountPaise: 11800,
+      counterpartyName: 'Example Customer', currency: 'INR',
+    });
+    expect(result.normalized[0]).not.toHaveProperty('rawPayload');
+  });
+
+  it('blocks historical transaction archive commits when source document-count or amount totals do not reconcile', async () => {
+    const { service } = createService();
+    (service as any).historicalRecords = {
+      find: jest.fn(() => ({ select: () => ({ lean: async () => [] }) })),
+    };
+    const payload = {
+      entity: 'PURCHASES', sourceSystem: 'Legacy ERP', runKey: 'historical-run-002',
+      rows: [{
+        sourceId: 'OLD-PUR-001', purchaseNumber: 'PUR-001', sourceDate: '2025-04-11',
+        taxableValue: 100, taxAmount: 18, totalAmount: 118,
+      }],
+    };
+    const preview = await service.previewHistoricalTransactionImport('507f1f77bcf86cd799439011', {
+      ...payload, expectedDocumentCount: 1, expectedTotalAmount: 118,
+    } as any);
+    expect(preview.commitAllowed).toBe(true);
+    const mismatch = await service.previewHistoricalTransactionImport('507f1f77bcf86cd799439011', {
+      ...payload, runKey: 'historical-run-003', expectedDocumentCount: 2, expectedTotalAmount: 119,
+    } as any);
+    expect(mismatch.commitAllowed).toBe(false);
+    expect(mismatch.countDifference).toBe(1);
+    expect(mismatch.amountDifference).toBe(1);
+  });
+
   it('rejects invalid migration export entity, cursor and tenant context', async () => {
     const { service } = createService();
     await expect(service.exportMigrationRecords('invalid-tenant', 'customers')).rejects.toBeInstanceOf(BadRequestException);

@@ -12,6 +12,9 @@ import { Product } from '../products/schemas/product.schema';
 import { Customer, CustomerDocument } from '../customers/schemas/customer.schema';
 import { Tenant } from '../tenants/schemas/tenant.schema';
 import { InventoryMovement } from '../inventory/schemas/inventory-movement.schema';
+import { Warehouse } from '../branches/schemas/warehouse.schema';
+import { Branch } from '../branches/schemas/branch.schema';
+import { WarehouseStock, WarehouseStockDocument } from '../inventory/schemas/warehouse-stock.schema';
 import { tenantFilter } from '../common/tenant-scoped.service';
 
 import { SalesInvoice } from './schemas/sales-invoice.schema';
@@ -58,6 +61,9 @@ export class SalesService {
 
     private readonly accounting: AccountingService,
     private readonly taxPeriods: TaxPeriodsService,
+    @InjectModel(Warehouse.name) private readonly warehouses: Model<Warehouse>,
+    @InjectModel(Branch.name) private readonly branches: Model<Branch>,
+    @InjectModel(WarehouseStock.name) private readonly warehouseStocks: Model<WarehouseStockDocument>,
   ) {}
 
   private toPaise(value: number): number {
@@ -217,6 +223,7 @@ export class SalesService {
       customerPhone: dto.customerPhone ?? '',
       customerGstin: dto.customerGstin ?? null,
       placeOfSupplyStateCode: dto.placeOfSupplyStateCode,
+      warehouseId: dto.warehouseId ?? null,
       payments: (dto.payments ?? []).map((payment) => ({
         method: payment.method,
         amountPaise: this.toPaise(payment.amount),
@@ -353,6 +360,25 @@ export class SalesService {
           productMap.set(productId, product);
         }
 
+        let selectedWarehouse: any = null;
+        const warehouseStockMap = new Map<string, any>();
+        if (dto.warehouseId) {
+          if (!Types.ObjectId.isValid(dto.warehouseId)) throw new BadRequestException('Invalid warehouse ID');
+          selectedWarehouse = await this.warehouses.findOne(tenantFilter(tenantId, {
+            _id: new Types.ObjectId(dto.warehouseId), isDeleted: false, isActive: true,
+          })).session(session).lean();
+          if (!selectedWarehouse) throw new NotFoundException('Active warehouse not found in this business');
+          const branch = await this.branches.findOne(tenantFilter(tenantId, {
+            _id: selectedWarehouse.branchId, isDeleted: false, isActive: true,
+          })).session(session).lean();
+          if (!branch) throw new ConflictException('The selected warehouse branch is inactive');
+          const stockRows = await this.warehouseStocks.find(tenantFilter(tenantId, {
+            warehouseId: selectedWarehouse._id,
+            productId: { $in: Array.from(productMap.values()).map((product: any) => product._id) },
+          })).session(session).lean();
+          for (const stock of stockRows) warehouseStockMap.set(String(stock.productId), stock);
+        }
+
         const now = saleDate;
         const invoiceNumber = await this.nextInvoiceNumber(
           tenantId,
@@ -427,7 +453,8 @@ export class SalesService {
           sgstTotalPaise += sgstPaise;
           igstTotalPaise += igstPaise;
 
-          const unitCostPaise = product.trackStock ? this.toPaise(product.averageCost || 0) : 0;
+          const warehouseStock = dto.warehouseId ? warehouseStockMap.get(String(product._id)) : null;
+          const unitCostPaise = product.trackStock ? this.toPaise(dto.warehouseId ? (warehouseStock?.averageCost || 0) : (product.averageCost || 0)) : 0;
           if (product.trackStock && product.stockQty > 0 && !product.valuationInitialized) {
             throw new BadRequestException(`Inventory valuation is not initialized for ${product.name}. Reconcile opening stock before selling this item.`);
           }
@@ -500,15 +527,33 @@ export class SalesService {
           }
 
           const previousQty = product.stockQty || 0;
-
-          if (previousQty < quantity) {
+          const warehouseStock = dto.warehouseId ? warehouseStockMap.get(String(product._id)) : null;
+          if (dto.warehouseId && !warehouseStock) {
+            throw new BadRequestException(`No stock is allocated for ${product.name} in the selected warehouse.`);
+          }
+          const availableQty = dto.warehouseId ? warehouseStock.quantity : previousQty;
+          if (availableQty < quantity) {
             throw new BadRequestException(
-              `Insufficient stock for ${product.name}. Available: ${previousQty}, requested: ${quantity}.`,
+              `Insufficient stock for ${product.name}. Available: ${availableQty}, requested: ${quantity}.`,
             );
           }
-
           const newQty = previousQty - quantity;
+          const warehouseCostPaise = dto.warehouseId ? this.toPaise(warehouseStock.averageCost || 0) : this.toPaise(product.averageCost || 0);
+          const relievedValuePaise = dto.warehouseId
+            ? (quantity === warehouseStock.quantity ? this.toPaise(warehouseStock.inventoryValue || 0) : warehouseCostPaise * quantity)
+            : this.toPaise(product.averageCost || 0) * quantity;
+          if (dto.warehouseId) {
+            const warehouseNewQty = warehouseStock.quantity - quantity;
+            const warehouseNewValuePaise = Math.max(0, this.toPaise(warehouseStock.inventoryValue || 0) - relievedValuePaise);
+            const warehouseUpdated = await this.warehouseStocks.findOneAndUpdate(
+              tenantFilter(tenantId, { _id: warehouseStock._id, quantity: warehouseStock.quantity }),
+              { $set: { quantity: warehouseNewQty, inventoryValue: this.fromPaise(warehouseNewValuePaise), averageCost: warehouseNewQty > 0 ? this.fromPaise(Math.round(warehouseNewValuePaise / warehouseNewQty)) : 0 } },
+              { new: true, session, runValidators: true },
+            );
+            if (!warehouseUpdated) throw new ConflictException(`Warehouse stock changed while processing ${product.name}. Please retry.`);
+          }
 
+          const nextInventoryValuePaise = Math.max(0, this.toPaise(product.inventoryValue || 0) - relievedValuePaise);
           const updated = await this.products.findOneAndUpdate(
             tenantFilter(tenantId, {
               _id: product._id,
@@ -519,11 +564,8 @@ export class SalesService {
             {
               $set: {
                 stockQty: newQty,
-                inventoryValue: this.fromPaise(Math.max(
-                  0,
-                  this.toPaise(product.inventoryValue || 0) -
-                    this.toPaise(product.averageCost || 0) * quantity,
-                )),
+                inventoryValue: this.fromPaise(nextInventoryValuePaise),
+                averageCost: newQty > 0 ? this.fromPaise(Math.round(nextInventoryValuePaise / newQty)) : 0,
               },
             },
             {
@@ -544,6 +586,7 @@ export class SalesService {
               {
                 tenantId: new Types.ObjectId(tenantId),
                 productId: product._id,
+                ...(dto.warehouseId ? { warehouseId: selectedWarehouse._id } : {}),
                 type: 'SALE',
                 quantityDelta: -quantity,
                 previousQty,
@@ -580,6 +623,7 @@ export class SalesService {
             .filter(Boolean)
             .join(', '),
           customerId: linkedCustomer?._id ?? null,
+          warehouseId: selectedWarehouse?._id ?? null,
           customerName,
           customerPhone,
           customerGstin,

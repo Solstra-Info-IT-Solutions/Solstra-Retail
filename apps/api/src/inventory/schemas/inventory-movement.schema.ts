@@ -41,6 +41,7 @@ export class InventoryMovement {
   transferId?: Types.ObjectId | null;
 
   @Prop({
+    type: String,
     required: true,
     enum: ['OPENING', 'IN', 'OUT', 'ADJUSTMENT', 'SALE', 'SALE_RETURN', 'TRANSFER_OUT', 'TRANSFER_IN'],
   })
@@ -84,3 +85,6 @@ InventoryMovementSchema.index({
   tenantId: 1,
   createdAt: -1,
 });
+
+InventoryMovementSchema.index({ tenantId: 1, warehouseId: 1, createdAt: -1 });
+InventoryMovementSchema.index({ tenantId: 1, transferId: 1 });

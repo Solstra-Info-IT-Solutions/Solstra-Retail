@@ -1926,6 +1926,24 @@ if (existingPayment) {
           );
         }
 
+        if (invoice.loyaltyVoucherCode) {
+          await this.loyaltyVouchers.updateOne(
+            tenantFilter(tenantId, {
+              code: invoice.loyaltyVoucherCode,
+              redeemedInvoiceId: invoice._id,
+              status: 'REDEEMED',
+            }),
+            {
+              $set: {
+                status: new Date() < new Date(invoice.invoiceDate.getTime() + 30 * 24 * 60 * 60 * 1000) ? 'AVAILABLE' : 'EXPIRED',
+                redeemedInvoiceId: null,
+                redeemedAt: null,
+              },
+            },
+            { session },
+          );
+        }
+
         await this.accounting.reverseOperationalJournal({
           tenantId, userId, sourceType: 'SALES', sourceId: invoice._id.toString(),
           reason: reason || 'Sales invoice cancelled', session,

@@ -464,6 +464,8 @@ export class PurchasesService {
 
             if (!updated) throw new ConflictException(`Stock changed while receiving ${line.name}`);
 
+            let movementPreviousQty = previousQty;
+            let movementNewQty = newQty;
             if (selectedWarehouse) {
               const warehouseStock = await this.warehouseStocks.findOne(tenantFilter(tenantId, {
                 warehouseId: selectedWarehouse._id, productId: product._id,
@@ -472,6 +474,8 @@ export class PurchasesService {
               const warehousePreviousValuePaise = this.toPaise(warehouseStock?.inventoryValue || 0);
               const warehouseReceivedValuePaise = receivedValuePaise;
               const warehouseNextQty = warehousePreviousQty + quantity;
+              movementPreviousQty = warehousePreviousQty;
+              movementNewQty = warehouseNextQty;
               const warehouseNextValuePaise = warehousePreviousValuePaise + warehouseReceivedValuePaise;
               if (warehouseStock) {
                 const warehouseUpdated = await this.warehouseStocks.findOneAndUpdate(
@@ -500,8 +504,8 @@ export class PurchasesService {
               ...(selectedWarehouse ? { warehouseId: selectedWarehouse._id } : {}),
               type: 'IN',
               quantityDelta: quantity,
-              previousQty,
-              newQty,
+              previousQty: movementPreviousQty,
+              newQty: movementNewQty,
               reason: `Purchase ${purchase.purchaseNumber}`,
               performedBy: new Types.ObjectId(userId),
             }], { session });

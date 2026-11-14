@@ -54,6 +54,12 @@ export class InventoryController {
     return this.warehouseInventory.initializeOpeningStock(req.user.tenantId, req.user.userId, warehouseId, dto);
   }
 
+  @Roles('owner', 'admin')
+  @Get('warehouse-reconciliation')
+  warehouseReconciliation(@Req() req: AuthenticatedRequest) {
+    return this.warehouseInventory.reconciliation(req.user.tenantId);
+  }
+
   @Permissions('inventory.view')
   @Get('warehouses/:warehouseId/stock')
   listWarehouseStock(@Req() req: AuthenticatedRequest, @Param('warehouseId') warehouseId: string) {

@@ -7,6 +7,7 @@ describe('ReportsService validation', () => {
     const products = { find: jest.fn() };
     const purchases = { find: jest.fn() };
     const journals = { find: jest.fn() };
+    const gstSubmissions = { findOne: jest.fn(), findOneAndUpdate: jest.fn(), countDocuments: jest.fn() };
 
     const service = new ReportsService(
       invoices as any,
@@ -17,11 +18,11 @@ describe('ReportsService validation', () => {
       journals as any,
       purchases as any,
       {} as any,
-      {} as any,
+      gstSubmissions as any,
       {} as any,
     );
 
-    return { service, invoices, products, purchases, journals };
+    return { service, invoices, products, purchases, journals, gstSubmissions };
   };
 
   it('exports posted balanced journals as escaped Tally XML vouchers', async () => {
@@ -95,6 +96,16 @@ describe('ReportsService validation', () => {
     const { service } = createService();
     await expect(service.cancelGstEInvoice('invalid-tenant', 'invalid-id', 'reason')).rejects.toBeInstanceOf(BadRequestException);
     await expect(service.cancelGstEInvoice('507f1f77bcf86cd799439011', '507f1f77bcf86cd799439012', 'short')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('refuses to cancel an e-invoice without a provider-acknowledged IRN', async () => {
+    const { service, gstSubmissions } = createService();
+    gstSubmissions.findOne.mockReturnValue({ lean: async () => ({ status: 'FAILED', irn: '' }) });
+    await expect(service.cancelGstEInvoice(
+      '507f1f77bcf86cd799439011',
+      '507f1f77bcf86cd799439012',
+      'Duplicate invoice was issued in error',
+    )).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects impossible calendar dates', async () => {

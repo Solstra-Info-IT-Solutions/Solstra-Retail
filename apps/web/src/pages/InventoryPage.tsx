@@ -12,6 +12,7 @@ type Product = {
 type ProductList = { items: Product[]; pagination?: { total: number } };
 type WarehouseOption = { _id: string; name: string; branchName: string };
 type WarehouseStockRow = { _id: string; productId: Product | string; quantity: number; averageCost: number; inventoryValue: number };
+type WarehouseReconciliation = { summary: { products: number; fullyAllocated: number; partiallyOrNotAllocated: number; discrepancies: number; totalStock: number; allocatedStock: number; unallocatedStock: number }; discrepancies: Array<{ productId: string; name: string; sku: string; issues: string[]; totalStock: number; allocatedStock: number }> };
 type MovementProduct = { _id: string; name: string; sku?: string } | string;
 type MovementUser = { _id: string; name?: string; email?: string } | string;
 type Movement = {
@@ -50,6 +51,7 @@ export default function InventoryPage() {
   const [selectedWarehouse, setSelectedWarehouse] = useState('');
   const [warehouseStock, setWarehouseStock] = useState<WarehouseStockRow[]>([]);
   const [warehouseLoading, setWarehouseLoading] = useState(false);
+  const [warehouseReconciliation, setWarehouseReconciliation] = useState<WarehouseReconciliation | null>(null);
   const [allocationOpen, setAllocationOpen] = useState(false);
   const [allocationForm, setAllocationForm] = useState({ productId: '', quantity: '1', reason: '' });
 
@@ -97,6 +99,16 @@ export default function InventoryPage() {
     void loadWarehouses();
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (canManage) {
+      api.get<WarehouseReconciliation>('/inventory/warehouse-reconciliation')
+        .then(response => { if (active) setWarehouseReconciliation(response.data); })
+        .catch(() => { if (active) setWarehouseReconciliation(null); });
+    }
+    return () => { active = false; };
+  }, [canManage]);
 
   useEffect(() => {
     let active = true;
@@ -235,6 +247,12 @@ export default function InventoryPage() {
             <button disabled={!movements || page >= movements.pagination.totalPages || loading} onClick={() => setPage((value) => value + 1)}>Next</button></div>
         </div>
       </section>
+
+      {canManage && warehouseReconciliation && <section className="inventory-panel inventory-reconciliation-panel">
+        <div className="inventory-panel-heading"><div><h2>Warehouse allocation reconciliation</h2><p>Compares warehouse allocations with business-wide stock and inventory valuation.</p></div><span className={warehouseReconciliation.summary.discrepancies?'inventory-recon-alert':'inventory-recon-ok'}>{warehouseReconciliation.summary.discrepancies} discrepancies</span></div>
+        <div className="inventory-recon-stats"><span>Total stock <b>{number(warehouseReconciliation.summary.totalStock)}</b></span><span>Allocated <b>{number(warehouseReconciliation.summary.allocatedStock)}</b></span><span>Unallocated pool <b>{number(warehouseReconciliation.summary.unallocatedStock)}</b></span><span>Fully allocated products <b>{number(warehouseReconciliation.summary.fullyAllocated)}</b></span></div>
+        {warehouseReconciliation.discrepancies.length>0?<div className="inventory-recon-list">{warehouseReconciliation.discrepancies.slice(0,10).map(item=><div key={item.productId}><strong>{item.name}</strong><small>{item.sku||'No SKU'} · {item.issues.join(', ')}</small><b>{number(item.allocatedStock)} / {number(item.totalStock)}</b></div>)}</div>:<p className="inventory-recon-clear">No over-allocation discrepancies detected. Unallocated stock remains available for future warehouse assignment.</p>}
+      </section>}
 
       {warehouseOptions.length > 0 && <section className="inventory-panel inventory-warehouse-panel">
         <div className="inventory-panel-heading"><div><h2>Warehouse stock & allocation</h2><p>View physical stock by warehouse. Opening allocations move existing aggregate stock into a location without changing total stock.</p></div>

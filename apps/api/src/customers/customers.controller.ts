@@ -16,6 +16,7 @@ import { Permissions } from '../common/decorators/permissions.decorator';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { ListCustomersDto } from './dto/list-customers.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
+import { AdjustLoyaltyPointsDto } from './dto/adjust-loyalty-points.dto';
 import { CustomersService } from './customers.service';
 
 type AuthenticatedRequest = Request & {
@@ -65,6 +66,32 @@ export class CustomersController {
       parsedPage,
       parsedLimit,
     );
+  }
+
+  @Permissions('customers.view')
+  @Get(':id/loyalty')
+  getLoyalty(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedPage = page === undefined ? 1 : Number(page);
+    const parsedLimit = limit === undefined ? 20 : Number(limit);
+    if (!Number.isInteger(parsedPage) || parsedPage < 1 || !Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+      throw new BadRequestException('Invalid loyalty history pagination');
+    }
+    return this.customersService.getLoyalty(req.user.tenantId, id, parsedPage, parsedLimit);
+  }
+
+  @Roles('owner', 'admin')
+  @Post(':id/loyalty/adjust')
+  adjustLoyalty(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: AdjustLoyaltyPointsDto,
+  ) {
+    return this.customersService.adjustLoyaltyPoints(req.user.tenantId, req.user.userId, id, dto);
   }
 
   @Permissions('customers.view')

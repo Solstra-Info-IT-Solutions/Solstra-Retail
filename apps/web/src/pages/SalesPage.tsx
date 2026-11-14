@@ -148,7 +148,7 @@ export default function SalesPage() {
 
   async function createReturn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!selected) return;
-    const items = selected.items.map((item, lineIndex) => ({ lineIndex, quantity: Number(returnQty[lineIndex] || 0), restock: returnRestock[lineIndex] === true })).filter(item => item.quantity > 0);
+    const items = selected.items.map((_, lineIndex) => ({ lineIndex, quantity: Number(returnQty[lineIndex] || 0), restock: returnRestock[lineIndex] === true })).filter(item => item.quantity > 0);
     if (!items.length || returnReason.trim().length < 3) { setReturnError('Select at least one returned quantity and enter a reason.'); return; }
     setReturnSaving(true); setReturnError('');
     try {

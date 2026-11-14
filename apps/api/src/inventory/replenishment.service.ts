@@ -99,21 +99,21 @@ export class ReplenishmentService {
     const [stocks, sales] = await Promise.all([
       this.stocks.find({ tenantId: new Types.ObjectId(tenantId), warehouseId: { $in: warehouseIds }, productId: { $in: productIds } }).select('warehouseId productId quantity').lean(),
       this.sales.aggregate([
-        { $match: { tenantId: new Types.ObjectId(tenantId), status: 'ISSUED', invoiceDate: { $gte: startDate } } },
+        { $match: { tenantId: new Types.ObjectId(tenantId), status: 'ISSUED', invoiceDate: { $gte: startDate }, warehouseId: { $in: warehouseIds } } },
         { $unwind: '$items' },
         { $match: { 'items.stockTracked': true, 'items.productId': { $in: productIds } } },
-        { $group: { _id: '$items.productId', unitsSold: { $sum: '$items.quantity' } } },
+        { $group: { _id: { productId: '$items.productId', warehouseId: '$warehouseId' }, unitsSold: { $sum: '$items.quantity' } } },
       ]),
     ]);
     const stockByKey = new Map(stocks.map(s => [String(s.warehouseId) + ':' + String(s.productId), Number(s.quantity) || 0]));
-    const salesByProduct = new Map(sales.map(s => [String(s._id), Number(s.unitsSold) || 0]));
+    const salesByProductWarehouse = new Map(sales.map(s => [String(s._id.warehouseId) + ':' + String(s._id.productId), Number(s.unitsSold) || 0]));
     const items = policies.map(policy => {
       const product = policy.productId as any;
       const warehouse = policy.warehouseId as any;
       const productId = String(product?._id || policy.productId);
       const warehouseId = String(warehouse?._id || policy.warehouseId);
       const onHand = stockByKey.get(warehouseId + ':' + productId) || 0;
-      const unitsSold = salesByProduct.get(productId) || 0;
+      const unitsSold = salesByProductWarehouse.get(warehouseId + ':' + productId) || 0;
       const averageDailyDemand = unitsSold / lookbackDays;
       const leadTimeDemand = averageDailyDemand * policy.leadTimeDays;
       const forecastDemand = averageDailyDemand * forecastDays;

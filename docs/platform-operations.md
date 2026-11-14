@@ -38,3 +38,22 @@ The valuation reconciliation endpoint is read-only. It reports products awaiting
 ## Advanced inventory lifecycle
 
 The Advanced Inventory workspace exposes batch receipts and expiry lists, serial registry management, draft stocktakes with explicit completion, and dynamic pricing rule management. POS checkout now requires selecting the exact available warehouse serials when a product has registered serial inventory. Serial states are moved to SOLD in the same database transaction as the invoice, and credit-note returns restore serialized units to IN_STOCK only when the return is restocked; non-restocked serials remain in RETURNED quarantine state. When a warehouse/product has batch records, POS consumes unexpired batches by FEFO and records exact batch allocations on invoice lines. Restocked credit-note returns restore those quantities to the original unexpired batches; expired batch returns must be quarantined by issuing the credit note without restocking. Products with legacy unbatched stock remain sellable when no batch records exist for the selected warehouse.
+
+
+## GST e-invoice preparation and external accounting interchange
+
+- Reports expose `GET /api/v1/reports/gst/einvoice-readiness?from=YYYY-MM-DD&to=YYYY-MM-DD` for issued B2B invoices. It checks seller/recipient GSTIN format, invoice number length, state codes, recipient name, HSN/UQC/quantity/taxable values and GST component reconciliation.
+- The preflight is a data-quality checklist only. It does not decide statutory e-invoice applicability/turnover thresholds and does not generate IRNs, signed QR codes, acknowledgements or e-way bills. Live IRP submission requires an approved GSP integration, sandbox certification, credentials and production approval.
+- `GET /api/v1/reports/accounting/journal-export?from=YYYY-MM-DD&to=YYYY-MM-DD` downloads posted journal lines as a generic accounting interchange CSV. Map ledger codes/names and reconcile opening balances before importing into Tally or another accounting package. It is not an official Tally XML or live sync connector.
+
+## Natural-language business assistant
+
+- `POST /api/v1/reports/assistant/query` accepts a 3–300 character question and maps it to an explicit allowlist of tenant-scoped reports: sales, profit/margin, top products, low stock, GST reconciliation and cash flow.
+- Supported periods include today, yesterday, last 7 days, last 30 days, this month-to-date and last month.
+- This is a deterministic report-query assistant, not an LLM. It does not execute arbitrary database queries or perform business mutations. Unknown questions return supported topics and suggested phrasing.
+
+## Offline POS reliability
+
+- IndexedDB v3 uses composite tenant/user scope keys for offline invoice queue entries and product cache entries. Existing v2 queue and product cache records are migrated during the version upgrade.
+- Failed offline invoice syncs retain the original payload and idempotency key, record attempt metadata and use exponential retry backoff capped at 60 minutes. Server-side invoice creation remains authoritative and validates current stock, prices, permissions and GST.
+- Offline invoice queue entries are not finalized invoices until server sync returns `SUCCEEDED`. The product catalogue and stock values shown offline are last-synced snapshots; refresh online before high-risk sales.

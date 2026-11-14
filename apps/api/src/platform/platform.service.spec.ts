@@ -40,6 +40,18 @@ describe('PlatformService security boundaries', () => {
       .rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('rejects checkout creation for an invalid tenant before reading invoices', async () => {
+    const service = createService();
+    await expect(service.createSubscriptionCheckout('bad-tenant', userId, 'bad-invoice'))
+      .rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects unsigned Razorpay webhook requests', async () => {
+    const service = createService();
+    await expect(service.handleRazorpayWebhook(Buffer.from('{}'), undefined))
+      .rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('denies SaaS-wide access when no platform operator allowlist is configured', async () => {
     const service = createService('');
     await expect(service.listSaasTenants(userId)).rejects.toBeInstanceOf(ForbiddenException);

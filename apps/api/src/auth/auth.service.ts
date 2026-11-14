@@ -110,9 +110,10 @@ export class AuthService {
 
   async listTenantUsers(tenantId: string) {
     if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
-    return this.users.find({ tenantId: new Types.ObjectId(tenantId) })
+    const users = await this.users.find({ tenantId: new Types.ObjectId(tenantId) })
       .select('_id name email role permissions isActive createdAt updatedAt')
       .sort({ createdAt: 1 }).lean();
+    return users.map((user) => ({ ...user, permissions: user.permissions || [] }));
   }
 
   async updateUserPermissions(tenantId: string, changedBy: string, userId: string, dto: UpdateUserPermissionsDto) {
@@ -128,8 +129,11 @@ export class AuthService {
     if (!existing) throw new NotFoundException('Staff user not found in this business');
     const previousPermissions = existing.permissions || [];
     const permissions = [...new Set(dto.permissions)];
+    const concurrencyFilter = previousPermissions.length
+      ? { permissions: previousPermissions }
+      : { $or: [{ permissions: [] }, { permissions: { $exists: false } }] };
     const user = await this.users.findOneAndUpdate(
-      { ...filter, permissions: previousPermissions },
+      { ...filter, ...concurrencyFilter },
       {
         $set: { permissions },
         $push: {

@@ -245,7 +245,7 @@ describe('PlatformService security boundaries', () => {
         .mockImplementationOnce(() => ({ limit: () => ({ lean: async () => [invoice] }) })),
       findOneAndUpdate: jest.fn().mockReturnValue({ lean: async () => ({ reminderCount: 1 }) }),
     };
-    service.tenants = { updateOne: jest.fn() };
+    service.tenants = { updateOne: jest.fn(), updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }) };
     service.runScheduledBackupJobs = jest.fn().mockResolvedValue({ processed: 0 });
     service.deliveries = { distinct: jest.fn().mockResolvedValue([]) };
     service.communicationDeliveries = { distinct: jest.fn().mockResolvedValue([]) };

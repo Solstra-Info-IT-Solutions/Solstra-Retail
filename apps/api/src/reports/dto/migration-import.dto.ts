@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsObject, IsString, Length, MaxLength } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsObject, IsString, Length } from 'class-validator';
 
 export class MigrationImportDto {
   @IsIn(['customers', 'suppliers']) entity!: 'customers' | 'suppliers';

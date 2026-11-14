@@ -516,7 +516,7 @@ describe('Authentication HTTP E2E', () => {
 
     await users.updateOne(
       { _id: registration.body.user.id },
-      { $set: { role: 'staff' } },
+      { $set: { role: 'staff', permissions: ['inventory.view'] } },
     );
 
     const login = await request(app.getHttpServer())

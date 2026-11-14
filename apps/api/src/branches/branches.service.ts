@@ -59,6 +59,7 @@ export class BranchesService {
     const branch = await this.findBranch(tenantId, branchId);
     if (!branch.isActive) throw new ConflictException('Cannot add a warehouse to an inactive branch');
     try {
+      if (dto.isDefault) await this.warehouses.updateMany(tenantFilter(tenantId, { branchId: branch._id, isDeleted: false }), { $set: { isDefault: false } });
       const warehouse = await this.warehouses.create({ ...dto, code: dto.code.trim().toUpperCase(), tenantId: new Types.ObjectId(tenantId), branchId: branch._id });
       return warehouse;
     } catch (error: any) { this.handleDuplicate(error, 'Warehouse code already exists in this branch'); }

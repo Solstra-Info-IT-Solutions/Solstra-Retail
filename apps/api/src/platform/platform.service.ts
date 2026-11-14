@@ -5,7 +5,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
-import { GridFSBucket } from 'mongodb';
+import { GridFSBucket, MongoClient } from 'mongodb';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { gzipSync, gunzipSync } from 'zlib';
 import { lookup } from 'dns/promises';
@@ -1239,6 +1239,48 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     } finally { clearTimeout(timeout); }
   }
 
+  private async restoreArchiveIntoIsolatedDatabase(archive: any) {
+    const restoreUri = this.config.get<string>('DR_RESTORE_MONGO_URI') || '';
+    const productionUri = this.config.get<string>('MONGODB_URI') || this.config.get<string>('MONGO_URI') || '';
+    if (!restoreUri) return { status: 'NOT_CONFIGURED', message: 'Set DR_RESTORE_MONGO_URI to a separately managed MongoDB deployment to run an isolated restore rehearsal.' };
+    let restoreHost = '';
+    let productionHost = '';
+    try { restoreHost = new URL(restoreUri).host.toLowerCase(); productionHost = productionUri ? new URL(productionUri).host.toLowerCase() : ''; }
+    catch { throw new BadRequestException('Disaster-recovery restore URI is invalid'); }
+    if (!restoreHost || (productionHost && restoreHost === productionHost)) {
+      throw new BadRequestException('DR_RESTORE_MONGO_URI must target a separate MongoDB host from the production database');
+    }
+    const client = new MongoClient(restoreUri, { serverSelectionTimeoutMS: 10000, connectTimeoutMS: 10000 });
+    const databaseName = 'solstra_drill_' + randomBytes(12).toString('hex');
+    let database: any;
+    try {
+      await client.connect();
+      database = client.db(databaseName);
+      let restoredDocuments = 0;
+      let restoredCollections = 0;
+      for (const [name, rows] of Object.entries(archive.collections as Record<string, any[]>)) {
+        if (!/^[a-zA-Z0-9_]+$/.test(name) || !Array.isArray(rows)) throw new Error('Archive contains an invalid collection entry');
+        if (!rows.length) continue;
+        await database.collection(name).insertMany(rows, { ordered: true });
+        const actual = await database.collection(name).countDocuments({});
+        if (actual !== rows.length) throw new Error('Isolated restore count mismatch for collection ' + name);
+        restoredCollections += 1;
+        restoredDocuments += actual;
+      }
+      const tenantRows = await database.collection('tenants').countDocuments({ _id: archive.tenant?._id });
+      if (tenantRows !== 1) throw new Error('Isolated restore did not reproduce the workspace tenant record');
+      return {
+        status: 'PASSED', databaseName, restoredCollections, restoredDocuments,
+        message: 'Archive restored into a temporary database on a separate MongoDB host; collection counts and workspace identity verified.',
+      };
+    } finally {
+      if (database) {
+        try { await database.dropDatabase(); } catch { /* preserve the original drill outcome */ }
+      }
+      await client.close().catch(() => undefined);
+    }
+  }
+
   async runBackupRestoreDrill(tenantId: string, artifactId: string) {
     this.identity(tenantId);
     if (!Types.ObjectId.isValid(artifactId)) throw new BadRequestException('Invalid backup artifact ID');
@@ -1273,8 +1315,16 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
           documentCount += 1;
         }
       }
-      status = 'PASSED';
-      message = 'Checksum, gzip, archive format, tenant identity, collection structure and document ownership checks passed. No live database records were changed.';
+      const isolated = await this.restoreArchiveIntoIsolatedDatabase(archive);
+      if (isolated.status === 'PASSED') {
+        status = 'PASSED';
+        message = String(isolated.message);
+        collectionCount = Number(isolated.restoredCollections || collectionCount);
+        documentCount = Number(isolated.restoredDocuments || documentCount);
+      } else {
+        status = 'VALIDATED_ONLY';
+        message = 'Archive checksum, gzip, tenant identity and document structure passed local validation. ' + isolated.message + ' No isolated restore was performed.';
+      }
     } catch (error: any) {
       message = String(error?.message || message).slice(0, 500);
     }

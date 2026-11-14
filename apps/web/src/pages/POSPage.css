@@ -82,3 +82,5 @@
 .pos-warehouse-select small{display:block;margin-top:6px;color:var(--color-muted);font-size:9px}
 
 .pos-offline-queue{display:inline-flex;margin-top:7px;padding:5px 9px;border-radius:7px;background:#fff2dc;color:#805a20;font-size:11px;font-weight:700}
+
+.pos-serial-select{display:flex;flex-direction:column;gap:6px;margin-top:9px;color:var(--color-muted);font-size:10px}.pos-serial-select select{min-height:70px;width:100%;padding:7px;border:1px solid var(--color-border);border-radius:7px;background:#fff;color:var(--color-text);font-size:11px}.pos-serial-select small{font-size:9px}

@@ -1963,12 +1963,13 @@ export class ReportsService {
       const row: any = byId.get(String(account._id));
       const debit = Math.round((row?.debit ?? 0) * 100) / 100;
       const credit = Math.round((row?.credit ?? 0) * 100) / 100;
-      const debitNormal = account.type === 'ASSET' || account.type === 'EXPENSE';
       const net = Math.round((debit - credit) * 100) / 100;
       return {
         accountId: account._id, code: account.code, name: account.name, type: account.type,
         debit, credit, balance: Math.abs(net),
-        balanceSide: net === 0 ? 'ZERO' : ((net > 0) === debitNormal ? 'DEBIT' : 'CREDIT'),
+        // Trial-balance sides represent the actual net debit/credit, not the
+        // account's normal balance class (liability/equity/income are credit-normal).
+        balanceSide: net === 0 ? 'ZERO' : net > 0 ? 'DEBIT' : 'CREDIT',
         entryLineCount: row?.entries ?? 0,
       };
     });
@@ -2022,20 +2023,19 @@ export class ReportsService {
     ]);
     const openingDebit = openingRows[0]?.debit ?? 0;
     const openingCredit = openingRows[0]?.credit ?? 0;
-    const debitNormal = account.type === 'ASSET' || account.type === 'EXPENSE';
     let running = Math.round((openingDebit - openingCredit) * 100) / 100;
     const openingBalance = Math.abs(running);
-    const openingSide = running === 0 ? 'ZERO' : ((running > 0) === debitNormal ? 'DEBIT' : 'CREDIT');
+    const openingSide = running === 0 ? 'ZERO' : running > 0 ? 'DEBIT' : 'CREDIT';
     const rows = entries.map((entry: any) => {
       running = Math.round((running + entry.debit - entry.credit) * 100) / 100;
       return { ...entry, runningBalance: Math.abs(running),
-        balanceSide: running === 0 ? 'ZERO' : ((running > 0) === debitNormal ? 'DEBIT' : 'CREDIT') };
+        balanceSide: running === 0 ? 'ZERO' : running > 0 ? 'DEBIT' : 'CREDIT' };
     });
     return {
       from: start, to: end, currency: 'INR', account: { code: account.code, name: account.name, type: account.type },
       opening: { balance: openingBalance, side: openingSide },
       entries: rows,
-      closing: { balance: Math.abs(running), side: running === 0 ? 'ZERO' : ((running > 0) === debitNormal ? 'DEBIT' : 'CREDIT') },
+      closing: { balance: Math.abs(running), side: running === 0 ? 'ZERO' : running > 0 ? 'DEBIT' : 'CREDIT' },
       totals: {
         debit: Math.round(rows.reduce((s: number, row: any) => s + row.debit, 0) * 100) / 100,
         credit: Math.round(rows.reduce((s: number, row: any) => s + row.credit, 0) * 100) / 100,

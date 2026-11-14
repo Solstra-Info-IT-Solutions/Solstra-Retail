@@ -1136,6 +1136,35 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     return this.backupRestoreDrills.find(filter).sort({ createdAt: -1 }).limit(100).lean();
   }
 
+  async platformSecurityPosture(tenantId: string) {
+    this.identity(tenantId);
+    const configured = (key: string) => Boolean(String(this.config.get<string>(key) || '').trim());
+    let replicaSet = false;
+    let databaseReachable = this.connection.readyState === 1;
+    if (databaseReachable && this.connection.db) {
+      try {
+        const hello: any = await this.connection.db.admin().command({ hello: 1 });
+        replicaSet = Boolean(hello.setName);
+      } catch { databaseReachable = false; }
+    }
+    const checks = [
+      { key: 'DATABASE_CONNECTION', status: databaseReachable ? 'PASS' : 'FAIL', detail: databaseReachable ? 'Database connection is active' : 'Database connection is unavailable' },
+      { key: 'DATABASE_REPLICA_SET', status: replicaSet ? 'PASS' : 'REVIEW', detail: replicaSet ? 'Replica-set topology detected; transaction support is available' : 'Replica-set topology was not confirmed; transaction-dependent workflows may fail' },
+      { key: 'WEBHOOK_SECRET_ENCRYPTION', status: /^[a-fA-F0-9]{64}$/.test(this.config.get<string>('WEBHOOK_SECRET_ENCRYPTION_KEY') || '') ? 'PASS' : 'FAIL', detail: 'Webhook and communication credentials require a dedicated 32-byte encryption key' },
+      { key: 'JWT_SIGNING_SECRET', status: configured('JWT_ACCESS_SECRET') || configured('JWT_SECRET') ? 'PASS' : 'REVIEW', detail: 'Confirm a strong, private JWT signing secret is configured' },
+      { key: 'OFFSITE_BACKUP_RECEIVER', status: configured('OFFSITE_BACKUP_RECEIVER_URL') && configured('OFFSITE_BACKUP_RECEIVER_TOKEN') ? 'PASS' : 'REVIEW', detail: 'Off-site replication requires a receiver URL and authentication token' },
+      { key: 'GST_GSP_ADAPTER', status: configured('GST_GSP_ADAPTER_URL') && configured('GST_GSP_ADAPTER_TOKEN') ? 'PASS' : 'REVIEW', detail: 'Live GST provider submission requires a certified provider adapter and credentials' },
+      { key: 'RAZORPAY_WEBHOOK', status: configured('RAZORPAY_WEBHOOK_SECRET') ? 'PASS' : 'REVIEW', detail: 'Payment callback authenticity requires the gateway webhook signing secret' },
+    ];
+    return {
+      generatedAt: new Date(),
+      score: Math.round((checks.filter(item => item.status === 'PASS').length / checks.length) * 100),
+      summary: { passed: checks.filter(item => item.status === 'PASS').length, review: checks.filter(item => item.status === 'REVIEW').length, failed: checks.filter(item => item.status === 'FAIL').length },
+      checks,
+      limitations: ['Configuration presence is checked; secret strength, rotation age and external provider connectivity are not penetration-tested.', 'This posture report is an operational checklist, not a security certification or vulnerability scan.'],
+    };
+  }
+
   async operationsMetrics(tenantId: string) {
     this.identity(tenantId);
     const filter = (extra: Record<string, any> = {}) => tenantFilter(tenantId, extra);

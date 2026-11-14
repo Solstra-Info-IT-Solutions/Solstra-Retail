@@ -20,7 +20,7 @@ import { User } from '../auth/schemas/user.schema';
 import { Product } from '../products/schemas/product.schema';
 import { WarehouseStock } from '../inventory/schemas/warehouse-stock.schema';
 import {
-  AutomationRule, BackupArtifact, BackupPolicy, OfflineSyncRecord, PlatformNotification,
+  AutomationRule, BackupArtifact, BackupPolicy, OfflineSyncRecord, PlatformNotification, SaasAdminAudit,
   WebhookDelivery, WebhookIntegration,
 } from './schemas/platform.schema';
 import {
@@ -57,6 +57,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     @InjectModel(OfflineSyncRecord.name) private readonly syncRecords: Model<any>,
     @InjectModel(BackupPolicy.name) private readonly backupPolicies: Model<any>,
     @InjectModel(BackupArtifact.name) private readonly backupArtifacts: Model<any>,
+    @InjectModel(SaasAdminAudit.name) private readonly saasAudit: Model<any>,
     @InjectModel(Tenant.name) private readonly tenants: Model<any>,
     @InjectModel(User.name) private readonly users: Model<any>,
     @InjectModel(Product.name) private readonly products: Model<any>,
@@ -518,8 +519,15 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       if (dto[key] !== undefined) updates[key] = dto[key];
     }
     if (!Object.keys(updates).length || !dto.reason?.trim()) throw new BadRequestException('Provide at least one platform setting and a mandatory reason');
+    const previous = await this.tenants.findById(tenantId).select('status subscriptionStatus subscriptionPlan maxUsers maxProducts maxBranches').lean();
+    if (!previous) throw new NotFoundException('Tenant not found');
     const tenant = await this.tenants.findByIdAndUpdate(tenantId, { $set: updates }, { new: true, runValidators: true }).select('name slug status subscriptionStatus subscriptionPlan maxUsers maxProducts maxBranches').lean();
     if (!tenant) throw new NotFoundException('Tenant not found');
+    await this.saasAudit.create({
+      tenantId: new Types.ObjectId(tenantId), actorId: new Types.ObjectId(userId),
+      previousValues: Object.fromEntries(Object.keys(updates).map(key => [key, (previous as any)[key]])),
+      newValues: updates, reason: dto.reason.trim(),
+    });
     return { tenant, auditReason: dto.reason.trim() };
   }
 

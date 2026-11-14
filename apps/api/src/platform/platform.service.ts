@@ -1,5 +1,5 @@
 import {
-  BadRequestException, ConflictException, ForbiddenException, Injectable,
+  BadRequestException, ConflictException, ForbiddenException, Injectable, Optional,
   NotFoundException, ServiceUnavailableException, OnModuleInit, OnModuleDestroy,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';

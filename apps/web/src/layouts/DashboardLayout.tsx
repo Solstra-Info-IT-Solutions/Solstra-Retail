@@ -3,7 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingCart, Package, Users, Warehouse,
   Truck, ClipboardList, BarChart3, Settings, ReceiptText, Building2,
-  Menu, X, LogOut, Search, Languages
+  Menu, X, LogOut, Search, Languages, ShieldCheck, History
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import './DashboardLayout.css';
@@ -18,6 +18,8 @@ const navigation = [
   { label: 'Suppliers', path: '/suppliers', icon: Truck },
   { label: 'Purchases', path: '/purchases', icon: ClipboardList },
   { label: 'Branches & Warehouses', path: '/branches', icon: Building2 },
+  { label: 'Staff & Permissions', path: '/staff', icon: ShieldCheck, adminOnly: true },
+  { label: 'Audit Trail', path: '/audit', icon: History, adminOnly: true },
   { label: 'Reports', path: '/reports', icon: BarChart3 },
   { label: 'Settings', path: '/settings', icon: Settings },
 ];
@@ -25,6 +27,7 @@ const navigation = [
 export default function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { user, logout } = useAuth();
+  const visibleNavigation = navigation.filter((item) => !('adminOnly' in item && item.adminOnly) || user?.role === 'owner' || user?.role === 'admin');
 
   return (
     <div className="dashboard-shell">
@@ -50,7 +53,7 @@ export default function DashboardLayout() {
 
         <div className="sidebar-section-label">WORKSPACE</div>
         <nav className="sidebar-navigation">
-          {navigation.map(({ label, path, icon: Icon }) => (
+          {visibleNavigation.map(({ label, path, icon: Icon }) => (
             <NavLink
               key={path}
               to={path}

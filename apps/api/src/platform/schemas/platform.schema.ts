@@ -77,7 +77,7 @@ export class OfflineDevice {
   @Prop({ type: Date, default: null, index: true }) revokedAt?: Date | null;
   @Prop({ type: Number, default: 0 }) lastSyncSequence!: number;
   @Prop({ type: String, default: '', maxlength: 64 }) lastSyncPayloadSha256!: string;
-  @Prop({ type: String, default: 'NONE', enum: ['NONE', 'PROCESSING', 'SUCCEEDED'] }) lastSyncStatus!: string;
+  @Prop({ type: String, default: 'NONE', enum: ['NONE', 'PROCESSING', 'SUCCEEDED', 'PARTIAL', 'FAILED'] }) lastSyncStatus!: string;
   @Prop({ type: Date, default: null }) lastSyncStartedAt?: Date | null;
   @Prop({ type: Object, default: null }) lastSyncResult?: Record<string, any> | null;
   @Prop({ type: Date, default: null }) lastSyncAcknowledgedAt?: Date | null;

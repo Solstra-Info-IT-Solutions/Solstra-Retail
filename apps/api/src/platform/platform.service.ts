@@ -295,6 +295,50 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     return this.integrations.find(tenantFilter(tenantId, {})).select('-encryptedSecret -secretIv -secretTag').sort({ createdAt: -1 }).lean();
   }
 
+  async rotateWebhookSecret(tenantId: string, id: string) {
+    this.identity(tenantId);
+    if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid integration ID');
+    const key = await this.encryptionKey();
+    const secret = randomBytes(32).toString('base64url');
+    const encrypted = this.encryptSecret(secret, key);
+    const row = await this.integrations.findOneAndUpdate(
+      tenantFilter(tenantId, { _id: new Types.ObjectId(id) }),
+      { $set: encrypted }, { new: true },
+    ).select('-encryptedSecret -secretIv -secretTag').lean();
+    if (!row) throw new NotFoundException('Integration not found');
+    return { integration: row, secret, warning: 'The previous signing secret is invalid immediately. Update the receiving endpoint before sending new deliveries.' };
+  }
+
+  async listWebhookDeliveries(tenantId: string, integrationId?: string, page = 1) {
+    this.identity(tenantId);
+    const safePage = Number.isInteger(page) && page > 0 ? Math.min(page, 10000) : 1;
+    const query: Record<string, any> = {};
+    if (integrationId) {
+      if (!Types.ObjectId.isValid(integrationId)) throw new BadRequestException('Invalid integration ID');
+      query.integrationId = new Types.ObjectId(integrationId);
+    }
+    const filter = tenantFilter(tenantId, query);
+    const [items, total, counts] = await Promise.all([
+      this.deliveries.find(filter).sort({ createdAt: -1 }).skip((safePage - 1) * 25).limit(25)
+        .select('-payload').populate('integrationId', 'name endpointUrl').lean(),
+      this.deliveries.countDocuments(filter),
+      this.deliveries.aggregate([{ $match: filter }, { $group: { _id: '$status', count: { $sum: 1 } } }]),
+    ]);
+    return { items, counts: Object.fromEntries(counts.map((row: any) => [row._id, row.count])), pagination: { page: safePage, limit: 25, total, totalPages: Math.ceil(total / 25) } };
+  }
+
+  async retryWebhookDelivery(tenantId: string, id: string) {
+    this.identity(tenantId);
+    if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid delivery ID');
+    const row = await this.deliveries.findOneAndUpdate(
+      tenantFilter(tenantId, { _id: new Types.ObjectId(id), status: { $in: ['FAILED', 'DEAD'] } }),
+      { $set: { status: 'PENDING', attempts: 0, lastError: '', nextAttemptAt: new Date() } },
+      { new: true },
+    ).select('-payload').lean();
+    if (!row) throw new ConflictException('Only failed or dead-letter deliveries can be manually retried');
+    return { id: String(row._id), status: row.status, queuedAt: row.nextAttemptAt };
+  }
+
   async updateWebhook(tenantId: string, id: string, dto: UpdateWebhookDto) {
     this.identity(tenantId);
     if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid integration ID');

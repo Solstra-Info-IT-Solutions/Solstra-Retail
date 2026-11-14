@@ -97,7 +97,11 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
   async createAutomationRule(tenantId: string, userId: string, dto: CreateAutomationRuleDto) {
     this.identity(tenantId, userId);
     if (!EVENT_TYPES.includes(dto.eventType)) throw new BadRequestException('Unsupported automation event');
-    if (dto.actionType === 'WEBHOOK' && !dto.config?.integrationId) throw new BadRequestException('Select a webhook integration for this action');
+    if (dto.actionType === 'WEBHOOK') {
+      if (!Types.ObjectId.isValid(String(dto.config?.integrationId || ''))) throw new BadRequestException('Select a valid webhook integration for this action');
+      const integration = await this.integrations.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.config.integrationId), enabled: true })).lean();
+      if (!integration || !integration.events.includes(dto.eventType)) throw new BadRequestException('Webhook must be enabled and subscribed to this automation event');
+    }
     if (dto.actionType === 'NOTIFY' && !String(dto.config?.title || '').trim()) throw new BadRequestException('Notification title is required');
     const row = await this.rules.create({
       tenantId: new Types.ObjectId(tenantId), name: dto.name.trim(), eventType: dto.eventType,
@@ -179,12 +183,27 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       ? [{ _id: new Types.ObjectId(input.userId) }]
       : await this.users.find(tenantFilter(tenantId, { isActive: true })).select('_id').lean();
     if (!recipients.length) return { created: 0 };
-    const rows = await this.notifications.insertMany(recipients.map((recipient: any) => ({
-      tenantId: new Types.ObjectId(tenantId), userId: recipient._id,
-      title: input.title, body: input.body,
-      severity: input.severity || 'INFO', category: input.category, sourceId: input.sourceId || '',
-    })));
-    return { created: rows.length };
+    let created = 0;
+    for (const recipient of recipients) {
+      const document = {
+        tenantId: new Types.ObjectId(tenantId), userId: recipient._id,
+        title: input.title, body: input.body,
+        severity: input.severity || 'INFO', category: input.category, sourceId: input.sourceId || '',
+      };
+      if (input.sourceId) {
+        try {
+          const result = await this.notifications.updateOne(
+            tenantFilter(tenantId, { userId: recipient._id, title: input.title, category: input.category, sourceId: input.sourceId }),
+            { $setOnInsert: document }, { upsert: true },
+          );
+          if (result.upsertedCount) created += 1;
+        } catch (error: any) { if (error?.code !== 11000) throw error; }
+      } else {
+        await this.notifications.create(document);
+        created += 1;
+      }
+    }
+    return { created };
   }
 
   async listNotifications(tenantId: string, userId: string, unreadOnly = false, page = 1) {

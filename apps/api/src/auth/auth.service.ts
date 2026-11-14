@@ -1,5 +1,5 @@
 import {
-  ConflictException, Injectable, UnauthorizedException,
+  BadRequestException, ConflictException, Injectable, NotFoundException, UnauthorizedException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { JwtService } from '@nestjs/jwt';
@@ -10,6 +10,8 @@ import { User, UserDocument } from './schemas/user.schema';
 import { Tenant, TenantDocument } from '../tenants/schemas/tenant.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { UpdateUserPermissionsDto } from './dto/update-user-permissions.dto';
+import { Types } from 'mongoose';
 
 const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -78,6 +80,27 @@ export class AuthService {
     return this.issueToken(user, tenant);
   }
 
+  async listTenantUsers(tenantId: string) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    return this.users.find({ tenantId: new Types.ObjectId(tenantId) })
+      .select('_id name email role permissions isActive createdAt updatedAt')
+      .sort({ createdAt: 1 }).lean();
+  }
+
+  async updateUserPermissions(tenantId: string, userId: string, dto: UpdateUserPermissionsDto) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid tenant or user ID');
+    }
+    const permissions = [...new Set(dto.permissions)];
+    const user = await this.users.findOneAndUpdate(
+      { _id: new Types.ObjectId(userId), tenantId: new Types.ObjectId(tenantId), role: 'staff' },
+      { $set: { permissions } },
+      { new: true, runValidators: true },
+    ).select('_id name email role permissions isActive').lean();
+    if (!user) throw new NotFoundException('Staff user not found in this business');
+    return user;
+  }
+
   private async issueToken(user: UserDocument, tenant: TenantDocument) {
     const accessToken = await this.jwt.signAsync({
       sub: String(user._id),
@@ -88,7 +111,7 @@ export class AuthService {
       accessToken,
       tokenType: 'Bearer',
       expiresIn: this.config.get<string>('JWT_ACCESS_TTL') ?? '15m',
-      user: { id: String(user._id), name: user.name, email: user.email, role: user.role },
+      user: { id: String(user._id), name: user.name, email: user.email, role: user.role, permissions: user.permissions || [] },
       tenant: {
         id: String(tenant._id),
         name: tenant.name,

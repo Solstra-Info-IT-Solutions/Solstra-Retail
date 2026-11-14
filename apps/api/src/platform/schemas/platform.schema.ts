@@ -108,3 +108,15 @@ export type BackupArtifactDocument = HydratedDocument<BackupArtifact>;
 export const BackupArtifactSchema = SchemaFactory.createForClass(BackupArtifact);
 BackupArtifactSchema.index({ tenantId: 1, createdAt: -1 });
 BackupArtifactSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+@Schema({ timestamps: true, collection: 'saas_admin_audit', versionKey: false })
+export class SaasAdminAudit {
+  @Prop(tenantRef) tenantId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true }) actorId!: Types.ObjectId;
+  @Prop({ type: Object, required: true }) previousValues!: Record<string, any>;
+  @Prop({ type: Object, required: true }) newValues!: Record<string, any>;
+  @Prop({ type: String, required: true, trim: true, maxlength: 500 }) reason!: string;
+}
+export type SaasAdminAuditDocument = HydratedDocument<SaasAdminAudit>;
+export const SaasAdminAuditSchema = SchemaFactory.createForClass(SaasAdminAudit);
+SaasAdminAuditSchema.index({ tenantId: 1, createdAt: -1 });

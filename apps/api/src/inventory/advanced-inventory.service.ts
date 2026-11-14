@@ -36,6 +36,7 @@ export class AdvancedInventoryService {
       await session.withTransaction(async () => {
         const product = await this.products.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.productId), isDeleted: false, trackStock: true })).session(session);
         if (!product) throw new NotFoundException('Stock-tracked product not found');
+        if (product.stockQty > 0 && !product.valuationInitialized) throw new ConflictException('Verify opening inventory valuation before receiving additional batches for this product');
         const warehouse = await this.warehouses.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.warehouseId), isDeleted: false, isActive: true })).session(session);
         if (!warehouse) throw new NotFoundException('Active warehouse not found');
         const existing = await this.batches.findOne(tenantFilter(tenantId, { productId: product._id, warehouseId: warehouse._id, batchNumber: dto.batchNumber.trim().toUpperCase() })).session(session);

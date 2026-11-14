@@ -26,8 +26,17 @@ export class PlatformEventInterceptor implements NestInterceptor {
         amount: Number(response?.grandTotal || response?.amount || 0),
         status: String(response?.approvalStatus || response?.status || ''),
       };
+      if (eventType === 'EXPENSE_PENDING_APPROVAL' && !['PENDING_APPROVAL', 'PENDING'].includes(payload.status)) return;
       void this.platform.executeEvent(String(user.tenantId), eventType!, sourceId, payload).catch(() => undefined);
       void this.platform.queueEventForIntegrations(String(user.tenantId), eventType!, sourceId, payload).catch(() => undefined);
+      if (eventType === 'SALE_CREATED') {
+        const productIds = Array.isArray(request.body?.items) ? request.body.items.map((item: any) => String(item.productId)) : [];
+        void this.platform.evaluateLowStock(String(user.tenantId), productIds, sourceId).catch(() => undefined);
+      }
+      if (/\/api\/v1\/inventory\/products\/[^/]+\/movements\/?$/.test(route)) {
+        const productId = String(request.params?.productId || '');
+        void this.platform.evaluateLowStock(String(user.tenantId), [productId], sourceId).catch(() => undefined);
+      }
     }));
   }
 }

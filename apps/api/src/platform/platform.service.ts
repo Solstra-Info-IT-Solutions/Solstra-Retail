@@ -406,8 +406,41 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     return { processed: results.length, results };
   }
 
+  async registerOfflineDevice(tenantId: string, userId: string, dto: RegisterOfflineDeviceDto) {
+    this.identity(tenantId, userId);
+    const row = await this.offlineDevices.findOneAndUpdate(
+      tenantFilter(tenantId, { userId: new Types.ObjectId(userId), deviceId: dto.deviceId }),
+      { $set: { label: dto.label.trim(), lastSeenAt: new Date(), revokedAt: null }, $setOnInsert: { tenantId: new Types.ObjectId(tenantId), userId: new Types.ObjectId(userId), deviceId: dto.deviceId } },
+      { new: true, upsert: true, runValidators: true },
+    ).lean();
+    return { deviceId: row.deviceId, label: row.label, lastSeenAt: row.lastSeenAt, revokedAt: row.revokedAt };
+  }
+
+  async listOfflineDevices(tenantId: string, userId: string) {
+    this.identity(tenantId, userId);
+    return this.offlineDevices.find(tenantFilter(tenantId, { userId: new Types.ObjectId(userId) }))
+      .select('deviceId label lastSeenAt revokedAt createdAt').sort({ lastSeenAt: -1 }).lean();
+  }
+
+  async revokeOfflineDevice(tenantId: string, deviceId: string) {
+    this.identity(tenantId);
+    const row = await this.offlineDevices.findOneAndUpdate(
+      tenantFilter(tenantId, { deviceId, revokedAt: null }),
+      { $set: { revokedAt: new Date() } }, { new: true },
+    ).select('deviceId label revokedAt').lean();
+    if (!row) throw new NotFoundException('Active offline device not found in this workspace');
+    return { deviceId: row.deviceId, label: row.label, revokedAt: row.revokedAt, status: 'REVOKED' };
+  }
+
   async syncOfflineSales(tenantId: string, userId: string, dto: OfflineSyncBatchDto) {
     this.identity(tenantId, userId);
+    if (dto.deviceId) {
+      const device: any = await this.offlineDevices.findOneAndUpdate(
+        tenantFilter(tenantId, { userId: new Types.ObjectId(userId), deviceId: dto.deviceId, revokedAt: null }),
+        { $set: { lastSeenAt: new Date() } }, { new: true },
+      ).lean();
+      if (!device) throw new ForbiddenException('This offline device is not registered or has been revoked. Register the device again before syncing invoices.');
+    }
     const results: any[] = [];
     for (const operation of dto.operations) {
       const payloadSha256 = createHash('sha256').update(JSON.stringify(operation.payload)).digest('hex');

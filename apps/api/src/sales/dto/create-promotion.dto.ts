@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsDateString, IsIn, IsNumber, IsOptional, IsString, Length, Max, MaxLength, Min } from 'class-validator';
+import { IsDateString, IsIn, IsNumber, IsOptional, IsString, Length, MaxLength, Min } from 'class-validator';
 
 export class CreatePromotionDto {
   @IsString()
@@ -21,7 +21,6 @@ export class CreatePromotionDto {
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0.01)
-  @Max(100)
   discountValue!: number;
 
   @IsOptional()

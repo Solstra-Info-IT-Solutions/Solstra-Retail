@@ -13,12 +13,13 @@ type SaaSTenant = { _id:string; name:string; slug:string; status:string; subscri
 type Valuation = { summary: { products: number; valuationPending: number; overAllocated: number; withinAggregateTotals: number }; pending: Array<{productId:string;name:string;stockQty:number}>; discrepancies: Array<{productId:string;name:string;quantityDelta:number;valueDelta:number}> };
 const events = ['MANUAL','SALE_CREATED','LOW_STOCK','EXPENSE_PENDING_APPROVAL'];
 const eventLabel = (value:string) => value.replace(/_/g,' ').toLowerCase().replace(/^./,v=>v.toUpperCase());
+const makeEventKey = () => { const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join(''); };
 export default function PlatformOperationsPage() {
   const [rules,setRules]=useState<Rule[]>([]),[notices,setNotices]=useState<Notice[]>([]),[hooks,setHooks]=useState<Hook[]>([]);
   const [policy,setPolicy]=useState<Policy>({enabled:false,frequency:'DAILY',retentionDays:30});
   const [valuation,setValuation]=useState<Valuation|null>(null),[pendingOffline,setPendingOffline]=useState(0),[backups,setBackups]=useState<Backup[]>([]),[saasTenants,setSaasTenants]=useState<SaaSTenant[]>([]),[saasAudit,setSaasAudit]=useState<any[]>([]),[saasUsage,setSaasUsage]=useState<any|null>(null);
   const [loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
-  const [ruleForm,setRuleForm]=useState({name:'',eventType:'SALE_CREATED',actionType:'NOTIFY',title:'New sale recorded',body:'A sale was successfully created.'});
+  const [ruleForm,setRuleForm]=useState({name:'',eventType:'SALE_CREATED',actionType:'NOTIFY',integrationId:'',title:'New sale recorded',body:'A sale was successfully created.'});
   const [hookForm,setHookForm]=useState({name:'',endpointUrl:'',events:['SALE_CREATED']});
   const [secret,setSecret]=useState('');
   const load=useCallback(async()=>{
@@ -40,11 +41,11 @@ export default function PlatformOperationsPage() {
   useEffect(()=>{void load();},[load]);
   useEffect(()=>{let active=true;Promise.all([api.get<SaaSTenant[]>('/platform/saas/tenants'),api.get('/platform/saas/audit'),api.get('/platform/saas/usage')]).then(([t,a,u])=>{if(active){setSaasTenants(t.data);setSaasAudit(a.data);setSaasUsage(u.data);}}).catch(()=>undefined);return()=>{active=false};},[]);
   async function createRule(e:React.FormEvent){e.preventDefault();setBusy(true);setError('');setMessage('');try{
-    await api.post('/platform/automation/rules',{name:ruleForm.name,eventType:ruleForm.eventType,actionType:'NOTIFY',config:{title:ruleForm.title,body:ruleForm.body,severity:'INFO'}});
+    await api.post('/platform/automation/rules',{name:ruleForm.name,eventType:ruleForm.eventType,actionType:ruleForm.actionType,config:ruleForm.actionType==='WEBHOOK'?{integrationId:ruleForm.integrationId}:{title:ruleForm.title,body:ruleForm.body,severity:'INFO'}});
     setRuleForm(v=>({...v,name:''}));setMessage('Automation rule created.');await load();
   }catch{setError('Automation rule could not be created.')}finally{setBusy(false)}}
   async function trigger(eventType:string){setBusy(true);setError('');setMessage('');try{
-    await api.post('/platform/automation/trigger',{eventType,eventKey:'manual-'+crypto.randomUUID(),payload:{source:'platform-workspace'}});
+    await api.post('/platform/automation/trigger',{eventType,eventKey:'manual-'+makeEventKey(),payload:{source:'platform-workspace'}});
     setMessage('Automation event processed.');await load();
   }catch{setError('Automation event could not be processed.')}finally{setBusy(false)}}
   async function toggleRule(rule:Rule){setBusy(true);try{await api.patch('/platform/automation/rules/'+rule._id,{enabled:!rule.enabled});await load()}catch{setError('Rule status could not be changed.')}finally{setBusy(false)}}
@@ -53,7 +54,7 @@ export default function PlatformOperationsPage() {
   }catch{setError('Webhook could not be created. Confirm HTTPS endpoint and server-side encryption configuration.')}finally{setBusy(false)}}
   async function toggleHook(hook:Hook){setBusy(true);try{await api.patch('/platform/integrations/webhooks/'+hook._id,{enabled:!hook.enabled});await load()}catch{setError('Webhook status could not be changed.')}finally{setBusy(false)}}
   async function deliverHooks(){setBusy(true);try{const r=await api.post<{processed:number}>('/platform/integrations/webhooks/deliver-due');setMessage('Webhook deliveries processed: '+r.data.processed);await load()}catch{setError('Webhook delivery worker failed.')}finally{setBusy(false)}}
-  async function savePolicy(){setBusy(true);try{const r=await api.patch<Policy>('/platform/backups/policy',policy);setPolicy(r.data);setMessage('Backup schedule saved. An external scheduler must call the due-backup endpoint and store the exported archive off-cluster.')}catch{setError('Backup policy could not be saved.')}finally{setBusy(false)}}
+  async function savePolicy(){setBusy(true);try{const r=await api.patch<Policy>('/platform/backups/policy',policy);setPolicy(r.data);setMessage('Backup schedule saved. The application worker runs due backups automatically; copy stored archives to a separate cloud account for disaster recovery.')}catch{setError('Backup policy could not be saved.')}finally{setBusy(false)}}
   async function exportBackup(){setBusy(true);setError('');try{
     const r=await api.post<{archiveBase64:string;fileName:string;checksumSha256:string}>('/platform/backups/export');
     const bytes=Uint8Array.from(atob(r.data.archiveBase64),c=>c.charCodeAt(0));const url=URL.createObjectURL(new Blob([bytes],{type:'application/gzip'}));const a=document.createElement('a');a.href=url;a.download=r.data.fileName;a.click();URL.revokeObjectURL(url);setMessage('Backup exported. SHA-256: '+r.data.checksumSha256);
@@ -72,9 +73,12 @@ export default function PlatformOperationsPage() {
       <section className="platform-card"><h2><Workflow size={18}/> Workflow automation</h2><form onSubmit={createRule} className="platform-form">
         <label>Rule name<input required minLength={3} value={ruleForm.name} onChange={e=>setRuleForm(v=>({...v,name:e.target.value}))} placeholder="Notify on new sale"/></label>
         <label>Trigger<select value={ruleForm.eventType} onChange={e=>setRuleForm(v=>({...v,eventType:e.target.value}))}>{events.map(e=><option key={e} value={e}>{eventLabel(e)}</option>)}</select></label>
-        <label>Notification title<input required value={ruleForm.title} onChange={e=>setRuleForm(v=>({...v,title:e.target.value}))}/></label>
-        <label>Message<textarea value={ruleForm.body} onChange={e=>setRuleForm(v=>({...v,body:e.target.value}))}/></label>
-        <button disabled={busy}>Create notification rule</button>
+        <label>Action<select value={ruleForm.actionType} onChange={e=>setRuleForm(v=>({...v,actionType:e.target.value}))}><option value="NOTIFY">In-app notification</option><option value="WEBHOOK">Webhook delivery</option></select></label>
+        {ruleForm.actionType==='WEBHOOK'?<label>Webhook integration<select required value={ruleForm.integrationId} onChange={e=>setRuleForm(v=>({...v,integrationId:e.target.value}))}><option value="">Select an integration</option>{hooks.filter(h=>h.enabled&&h.events.includes(ruleForm.eventType)).map(h=><option key={h._id} value={h._id}>{h.name}</option>)}</select></label>:<>
+          <label>Notification title<input required value={ruleForm.title} onChange={e=>setRuleForm(v=>({...v,title:e.target.value}))}/></label>
+          <label>Message<textarea value={ruleForm.body} onChange={e=>setRuleForm(v=>({...v,body:e.target.value}))}/></label>
+        </>}
+        <button disabled={busy|| (ruleForm.actionType==='WEBHOOK'&&!ruleForm.integrationId)}>Create automation rule</button>
       </form>
       <div className="platform-list">{rules.map(rule=><article key={rule._id}><div><b>{rule.name}</b><small>{eventLabel(rule.eventType)} · {rule.triggerCount} runs</small></div><button onClick={()=>void toggleRule(rule)} disabled={busy}>{rule.enabled?'Pause':'Enable'}</button></article>)}</div>
       <div className="platform-trigger"><small>Manual test trigger</small>{events.map(event=><button key={event} onClick={()=>void trigger(event)} disabled={busy}>{eventLabel(event)}</button>)}</div></section>

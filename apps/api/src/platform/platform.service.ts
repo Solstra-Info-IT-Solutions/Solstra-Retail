@@ -502,6 +502,8 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
   }
 
   async runScheduledPlatformJobs() {
+    const overdueInvoices = await this.subscriptionInvoices.find({ status: 'DUE', dueAt: { $lte: new Date() } }).select('tenantId').lean();
+    for (const invoice of overdueInvoices) await this.tenants.updateOne({ _id: invoice.tenantId }, { $set: { billingStatus: 'PAST_DUE' } });
     const backups = await this.runScheduledBackupJobs();
     const tenantIds = await this.deliveries.distinct('tenantId', { status: 'PENDING', nextAttemptAt: { $lte: new Date() } });
     let webhookDeliveries = 0;
@@ -774,7 +776,6 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       amountPaise, currency: 'INR', periodStart, periodEnd,
       dueAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), status: 'DUE', requestedBy: new Types.ObjectId(userId),
     });
-    await this.tenants.updateOne({ _id: new Types.ObjectId(tenantId) }, { $set: { billingStatus: 'PAST_DUE' } });
     return invoice.toObject();
   }
 
@@ -796,9 +797,15 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
           { new: true, session },
         ).lean();
         if (!invoice) throw new ConflictException('Subscription invoice is already settled or unavailable');
+        const planLimits: Record<string, { maxUsers: number; maxProducts: number; maxBranches: number }> = {
+          starter: { maxUsers: 3, maxProducts: 1000, maxBranches: 1 },
+          growth: { maxUsers: 10, maxProducts: 5000, maxBranches: 3 },
+          business: { maxUsers: 25, maxProducts: 25000, maxBranches: 10 },
+          enterprise: { maxUsers: 1000, maxProducts: 1000000, maxBranches: 1000 },
+        };
         await this.tenants.updateOne(
           { _id: invoice.tenantId },
-          { $set: { subscriptionPlan: invoice.plan, subscriptionStatus: 'active', billingStatus: 'CURRENT', subscriptionPeriodStart: invoice.periodStart, subscriptionPeriodEnd: invoice.periodEnd } },
+          { $set: { subscriptionPlan: invoice.plan, ...planLimits[invoice.plan], subscriptionStatus: 'active', billingStatus: 'CURRENT', subscriptionPeriodStart: invoice.periodStart, subscriptionPeriodEnd: invoice.periodEnd } },
           { session },
         );
         await this.saasAudit.create([{

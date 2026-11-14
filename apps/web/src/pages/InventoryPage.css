@@ -72,3 +72,7 @@
 @keyframes inventory-rotate{to{transform:rotate(360deg)}}
 .inventory-spin{animation:inventory-rotate 1s linear infinite}
 @media(max-width:760px){.inventory-heading{align-items:flex-start;flex-direction:column}.inventory-heading h1{font-size:23px}.inventory-heading-actions{width:100%}.inventory-heading-actions button{flex:1}.inventory-metrics{grid-template-columns:1fr 1fr}.inventory-panel-heading{align-items:flex-start;flex-direction:column}.inventory-filter{width:100%;justify-content:space-between}.inventory-filter select{flex:1}.inventory-low-grid{grid-template-columns:1fr;padding:4px 15px}.inventory-pagination{align-items:flex-start;flex-direction:column}.inventory-pagination>div{width:100%;justify-content:space-between}}
+
+.inventory-warehouse-panel .inventory-panel-heading{flex-wrap:wrap}.inventory-warehouse-panel .inventory-panel-heading>button{white-space:nowrap}
+.inventory-warehouse-panel .inventory-filter select{min-width:180px}
+@media(max-width:760px){.inventory-warehouse-panel .inventory-panel-heading>button{width:100%}.inventory-warehouse-panel .inventory-filter{width:100%}}

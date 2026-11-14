@@ -8,6 +8,7 @@ describe('ReportsService validation', () => {
     const purchases = { find: jest.fn() };
     const journals = { find: jest.fn() };
     const gstSubmissions = { findOne: jest.fn(), findOneAndUpdate: jest.fn(), countDocuments: jest.fn() };
+    const migrationImportRuns = { create: jest.fn(), findOne: jest.fn(), updateOne: jest.fn(), find: jest.fn(), countDocuments: jest.fn() };
 
     const service = new ReportsService(
       invoices as any,
@@ -22,9 +23,10 @@ describe('ReportsService validation', () => {
       { countDocuments: jest.fn() } as any,
       gstSubmissions as any,
       {} as any,
+      migrationImportRuns as any,
     );
 
-    return { service, invoices, products, purchases, journals, gstSubmissions };
+    return { service, invoices, products, purchases, journals, gstSubmissions, migrationImportRuns };
   };
 
   it('exports posted balanced journals as escaped Tally XML vouchers', async () => {
@@ -339,6 +341,36 @@ describe('ReportsService validation', () => {
     expect(result.hasMore).toBe(true);
     expect(result.pageSha256).toBe(createHash('sha256').update(JSON.stringify([rows[0]])).digest('hex'));
     expect(result.integrityAlgorithm).toBe('SHA-256');
+  });
+
+  it('rejects master-data import rows containing unsupported fields', async () => {
+    const { service } = createService();
+    await expect(service.previewMasterDataImport('507f1f77bcf86cd799439011', {
+      entity: 'customers', runKey: 'customer-import-001',
+      rows: [{ name: 'Customer One', loyaltyPoints: 5000 }],
+    } as any)).resolves.toMatchObject({ commitAllowed: false, errors: [{ row: 1 }] });
+  });
+
+  it('previews and commits tenant-scoped customer master data with idempotent run keys', async () => {
+    const { service, migrationImportRuns } = createService();
+    const customers: any = {
+      findOne: jest.fn(() => ({ select: () => ({ lean: async () => null }) })),
+      create: jest.fn().mockResolvedValue({ _id: '507f1f77bcf86cd799439088' }),
+    };
+    service.customers = customers;
+    migrationImportRuns.create.mockResolvedValue({ _id: '507f1f77bcf86cd799439099' });
+    migrationImportRuns.updateOne.mockResolvedValue({ modifiedCount: 1 });
+    const dto = { entity: 'customers', runKey: 'customer-import-002', rows: [{ name: 'Customer One', phone: '9876543210', email: 'one@example.com' }] };
+    const preview = await service.previewMasterDataImport('507f1f77bcf86cd799439011', dto as any);
+    expect(preview.commitAllowed).toBe(true);
+    const result = await service.commitMasterDataImport('507f1f77bcf86cd799439011', dto as any);
+    expect(result).toMatchObject({ status: 'COMPLETED', createdCount: 1, skippedCount: 0, replayed: false });
+    expect(customers.create).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: expect.anything(), name: 'Customer One', email: 'one@example.com',
+    }));
+    expect(migrationImportRuns.create).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'COMMITTING', entity: 'customers', runKey: 'customer-import-002',
+    }));
   });
 
 });

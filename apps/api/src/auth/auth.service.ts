@@ -108,7 +108,7 @@ export class AuthService {
     }
   }
 
-  async listTenantUsers(tenantId: string) {
+  async listTenantUsers(tenantId: string): Promise<any[]> {
     if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
     const users = await this.users.find({ tenantId: new Types.ObjectId(tenantId) })
       .select('_id name email role permissions isActive createdAt updatedAt')

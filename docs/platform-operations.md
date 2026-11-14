@@ -260,3 +260,38 @@ The Advanced Inventory workspace exposes batch receipts and expiry lists, serial
 - A batch left in `PROCESSING` for more than five minutes can be reclaimed using the same sequence and identical payload. Individual invoice idempotency keys remain the authoritative duplicate protection.
 - A batch is not marked successful when one or more invoices fail. Mixed results are `PARTIAL`; all failed/conflicted results are `FAILED`; any still-processing operation keeps the batch in `PROCESSING`.
 - The server still validates stock, prices, permissions and tax at sync time. These controls do not implement automatic cross-device stock conflict resolution; rejected invoices require user review.
+
+
+## Enterprise integration readiness and remaining provider setup
+
+- Owner/admin endpoint `GET /api/v1/platform/integrations/provider-readiness` reports credential-presence and tenant communication-provider counts for Razorpay, Zoho Books, QuickBooks, Shopify, WooCommerce, email, SMS and WhatsApp. It never returns credential values.
+- Razorpay subscription checkout and signed payment-captured webhook processing are implemented. Configure test keys first, verify order amount/currency and webhook signature in the Razorpay sandbox, then replace them with production keys using the deployment secret manager.
+- TallyPrime is supported as XML interchange, not live OAuth (TallyPrime's local/hosted integration model requires a separately deployed connector and mapped ledgers). Zoho Books and QuickBooks OAuth credentials and Shopify/WooCommerce credentials are readiness checks only in this release; authorization-code exchange, refresh-token lifecycle, vendor API synchronization, webhook subscriptions and field mapping still require provider-specific connector implementation and sandbox validation. Do not interpret `configured: true` as a connected account.
+- Email/SMS/WhatsApp delivery currently uses the tenant's HTTPS webhook adapter. The adapter must call the actual vendor API, apply opt-in/suppression/template rules and send signed delivery receipts. This release does not embed certified Twilio, Meta WhatsApp Cloud API, SendGrid or other provider SDKs.
+
+## Isolated disaster-recovery restore rehearsal
+
+- Set `DR_RESTORE_MONGO_URI` to a separately managed MongoDB deployment. The application rejects a target whose hostname matches the configured production `MONGODB_URI`.
+- `POST /api/v1/platform/backups/:id/restore-drill` restores the selected archive into a randomly named temporary database on that separate host, checks each restored collection count and verifies that the tenant record is present, then drops the temporary database in a `finally` cleanup path.
+- A result of `PASSED` means the temporary isolated restore and post-restore checks completed. `VALIDATED_ONLY` means the archive passed local checksum/format/tenant checks but no isolated target was configured. `FAILED` means validation or isolated restore failed.
+- Use a dedicated least-privilege DR user allowed to create/drop only the drill database namespace. Test with non-production data first. Confirm the target has enough capacity and that network access is restricted. A successful smoke restore is not a full application failover rehearsal: test indexes, migrations, application startup, read/write flows, recovery time and recovery point objectives separately.
+
+## External operational alert delivery
+
+- Owner/admin endpoint `POST /api/v1/platform/operations/alerts/dispatch` evaluates current operational metrics and posts active alerts to `OPERATIONS_ALERT_WEBHOOK_URL` using bearer authentication and HMAC-SHA256 in `x-solstra-alert-signature`.
+- Configure both `OPERATIONS_ALERT_WEBHOOK_URL` and `OPERATIONS_ALERT_WEBHOOK_TOKEN` in the deployment secret manager. The endpoint uses the same HTTPS/public-host validation as other outbound integrations, does not follow redirects and times out after 10 seconds.
+- The endpoint sends only active alerts; it returns `NO_ACTIVE_ALERTS` without contacting the receiver when the current metrics contain no alerts. Schedule this endpoint from a trusted external monitor or call it from an operator workflow. The receiver must verify the HMAC over the exact raw body and route alerts to the on-call system.
+- This is an outbound alert delivery hook, not a hosted monitoring service. Infrastructure metrics, alert deduplication/escalation policies, paging schedules and provider credentials remain the responsibility of the monitoring platform.
+
+## Historical transaction migration boundary
+
+- Existing migration APIs support customer/supplier master-data imports, product catalogue imports, and cursor-paginated exports of issued sales, non-cancelled purchases and posted journals.
+- Historical transaction export is not an operational transaction import: importing old sales/purchases directly as current invoices would incorrectly affect stock, receivables/payables, tax-period controls and accounting journals. Do not replay historical source transactions through live create endpoints.
+- For cutover, reconcile source-system invoice/payment/credit-note/purchase totals by period, GSTIN, document number and ledger; import master data; post approved opening stock and opening balances through the audited workflows; then retain source transaction exports as immutable migration evidence. A dedicated staging-to-cutover workflow with source-specific mapping, duplicate resolution, transaction reconstruction and accountant sign-off is still required before historical sales/purchases can become native operational records.
+
+## Offline multi-device stock conflict handling
+
+- Every offline invoice is revalidated by the normal server-side sales workflow at sync time; current stock, warehouse allocation, pricing, promotions, permissions and tax are authoritative. The client-side stock snapshot is informational only.
+- A sale that conflicts with current stock is rejected and remains available for operator review; device sequence replay and per-invoice idempotency prevent duplicate creation. Do not automatically retry a stock-conflicted invoice with a new idempotency key.
+- This release does not reserve inventory for disconnected devices or provide an automatic conflict-resolution UI for choosing substitute warehouse/quantities. Until a reservation/merge workflow is deployed, use one active offline-selling device per warehouse or keep high-risk stock-controlled sales online.
+

@@ -60,6 +60,29 @@ describe('ReportsService validation', () => {
     expect(invoices.aggregate).not.toHaveBeenCalled();
   });
 
+  it('rejects invalid tenant context in GST e-invoice preflight and accounting interchange export', async () => {
+    const { service, invoices } = createService();
+    await expect(service.gstEinvoiceReadiness('invalid-tenant', {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.accountingJournalCsvExport('invalid-tenant', {})).rejects.toBeInstanceOf(BadRequestException);
+    expect(invoices.aggregate).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid tenant context and oversized questions before running business assistant queries', async () => {
+    const { service, invoices } = createService();
+    await expect(service.answerBusinessQuestion('invalid-tenant', 'show sales')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.answerBusinessQuestion('507f1f77bcf86cd799439011', 'x'.repeat(301))).rejects.toBeInstanceOf(BadRequestException);
+    expect(invoices.aggregate).not.toHaveBeenCalled();
+  });
+
+  it('returns supported report topics instead of executing arbitrary business queries', async () => {
+    const { service, invoices } = createService();
+    const result = await service.answerBusinessQuestion('507f1f77bcf86cd799439011', 'delete every customer record');
+    expect(result.interpretation).toBe('Question not matched to a supported report');
+    expect(result.supportedTopics).toContain('sales');
+    expect(result.disclaimer).toContain('does not execute arbitrary database queries');
+    expect(invoices.aggregate).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid tenant context in dashboard summary', async () => {
     const { service } = createService();
 

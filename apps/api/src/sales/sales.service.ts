@@ -1165,6 +1165,8 @@ if (existingPayment) {
               throw new ConflictException(`Opening inventory valuation is required before restocking "${original.name}".`);
             }
             const newQty = previousQty + requested.quantity;
+            let movementPreviousQty = previousQty;
+            let movementNewQty = newQty;
             const returnedUnitCostPaise = invoice.costingVersion === 1
               ? this.toPaise(original.unitCostAtSale || 0)
               : this.toPaise(product.averageCost || 0);
@@ -1178,6 +1180,8 @@ if (existingPayment) {
               const warehousePreviousQty = warehouseStock?.quantity || 0;
               const warehousePreviousValuePaise = this.toPaise(warehouseStock?.inventoryValue || 0);
               const warehouseNextQty = warehousePreviousQty + requested.quantity;
+              movementPreviousQty = warehousePreviousQty;
+              movementNewQty = warehouseNextQty;
               const warehouseNextValuePaise = warehousePreviousValuePaise + returnedCostPaise;
               if (warehouseStock) {
                 const restoredWarehouse = await this.warehouseStocks.findOneAndUpdate(
@@ -1232,8 +1236,8 @@ if (existingPayment) {
                   ...(invoice.warehouseId ? { warehouseId: invoice.warehouseId } : {}),
                   type: 'SALE_RETURN',
                   quantityDelta: requested.quantity,
-                  previousQty,
-                  newQty,
+                  previousQty: movementPreviousQty,
+                  newQty: movementNewQty,
                   reason: `Credit note ${creditNumber}: ${reason}`.slice(
                     0,
                     250,
@@ -1722,6 +1726,8 @@ if (existingPayment) {
             throw new ConflictException('Opening inventory valuation is required before restoring stock for this invoice.');
           }
           const newQty = previousQty + quantity;
+          let movementPreviousQty = previousQty;
+          let movementNewQty = newQty;
           const restoredValuePaise = invoice.costingVersion === 1
             ? (restoreValuesPaise.get(productId) || 0)
             : this.toPaise(product.averageCost || 0) * quantity;
@@ -1733,6 +1739,8 @@ if (existingPayment) {
             const warehousePreviousQty = warehouseStock?.quantity || 0;
             const warehousePreviousValuePaise = this.toPaise(warehouseStock?.inventoryValue || 0);
             const warehouseNextQty = warehousePreviousQty + quantity;
+            movementPreviousQty = warehousePreviousQty;
+            movementNewQty = warehouseNextQty;
             const warehouseNextValuePaise = warehousePreviousValuePaise + restoredValuePaise;
             if (warehouseStock) {
               const restoredWarehouse = await this.warehouseStocks.findOneAndUpdate(
@@ -1795,8 +1803,8 @@ if (existingPayment) {
                 ...(invoice.warehouseId ? { warehouseId: invoice.warehouseId } : {}),
                 type: 'SALE_RETURN',
                 quantityDelta: quantity,
-                previousQty,
-                newQty,
+                previousQty: movementPreviousQty,
+                newQty: movementNewQty,
                 reason: `Cancellation ${invoice.invoiceNumber}: ${reason}`.slice(
                   0,
                   250,

@@ -408,11 +408,20 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
 
   async registerOfflineDevice(tenantId: string, userId: string, dto: RegisterOfflineDeviceDto) {
     this.identity(tenantId, userId);
-    const row = await this.offlineDevices.findOneAndUpdate(
-      tenantFilter(tenantId, { userId: new Types.ObjectId(userId), deviceId: dto.deviceId }),
-      { $set: { label: dto.label.trim(), lastSeenAt: new Date(), revokedAt: null }, $setOnInsert: { tenantId: new Types.ObjectId(tenantId), userId: new Types.ObjectId(userId), deviceId: dto.deviceId } },
-      { new: true, upsert: true, runValidators: true },
-    ).lean();
+    const filter = tenantFilter(tenantId, { userId: new Types.ObjectId(userId), deviceId: dto.deviceId });
+    const existing: any = await this.offlineDevices.findOne(filter).lean();
+    if (existing?.revokedAt) throw new ForbiddenException('This device was revoked. Clear its local device registration and enroll it as a new device.');
+    let row: any;
+    if (existing) {
+      row = await this.offlineDevices.findOneAndUpdate(filter, { $set: { label: dto.label.trim(), lastSeenAt: new Date() } }, { new: true, runValidators: true }).lean();
+    } else {
+      try {
+        row = await this.offlineDevices.create({ tenantId: new Types.ObjectId(tenantId), userId: new Types.ObjectId(userId), deviceId: dto.deviceId, label: dto.label.trim(), lastSeenAt: new Date() });
+      } catch (error: any) {
+        if (error?.code === 11000) throw new ConflictException('Device enrollment raced with another request; retry');
+        throw error;
+      }
+    }
     return { deviceId: row.deviceId, label: row.label, lastSeenAt: row.lastSeenAt, revokedAt: row.revokedAt };
   }
 

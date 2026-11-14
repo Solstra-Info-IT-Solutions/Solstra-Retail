@@ -98,6 +98,24 @@ export class PlatformController {
   }
 
   @Roles('owner', 'admin')
+  @Get('backups')
+  listBackups(@Req() req: AuthenticatedRequest) {
+    return this.platform.listBackupArtifacts(req.user.tenantId);
+  }
+
+  @Roles('owner', 'admin')
+  @Get('backups/:id/download')
+  downloadBackup(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.platform.downloadBackupArtifact(req.user.tenantId, id);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('backups/run-due')
+  runDueBackup(@Req() req: AuthenticatedRequest) {
+    return this.platform.runScheduledBackupJobs();
+  }
+
+  @Roles('owner', 'admin')
   @Post('backups/verify')
   verifyBackup(@Req() req: AuthenticatedRequest, @Body() dto: VerifyBackupDto) {
     return this.platform.verifyBackup(req.user.tenantId, dto);

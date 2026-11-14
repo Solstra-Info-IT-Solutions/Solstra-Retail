@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import './AdvancedInsightsPanel.css';
 import { BrainCircuit, Boxes, AlertTriangle, TrendingUp } from 'lucide-react';
 
 type Analytics = {

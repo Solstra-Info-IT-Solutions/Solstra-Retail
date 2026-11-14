@@ -1,4 +1,5 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
 import { api } from '../api/client';
 import { Cloud, CreditCard, MessageSquare, RefreshCw, Send, ShieldCheck } from 'lucide-react';
 

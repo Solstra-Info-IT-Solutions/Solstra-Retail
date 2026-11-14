@@ -1,5 +1,6 @@
 ﻿import {
   Body,
+  BadRequestException,
   Controller,
   Get,
   Param,
@@ -17,6 +18,9 @@ import { CancelSaleDto } from './dto/cancel-sale.dto';
 import { AddSalePaymentDto } from './dto/add-sale-payment.dto';
 import { CreateCreditNoteDto } from './dto/create-credit-note.dto';
 import { AddCreditNoteRefundDto } from './dto/add-credit-note-refund.dto';
+import { CreatePromotionDto } from './dto/create-promotion.dto';
+import { UpdatePromotionStatusDto } from './dto/update-promotion-status.dto';
+import { CreateWarrantyClaimDto, ReviewWarrantyClaimDto } from './dto/warranty-claim.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 
@@ -99,6 +103,71 @@ export class SalesController {
       dto,
     );
   }
+  @Roles('owner', 'admin')
+  @Post('promotions')
+  createPromotion(@Req() req: AuthenticatedRequest, @Body() dto: CreatePromotionDto) {
+    return this.salesService.createPromotion(req.user.tenantId, req.user.userId, dto);
+  }
+
+  @Permissions('sales.view')
+  @Get('promotions')
+  listPromotions(@Req() req: AuthenticatedRequest) {
+    return this.salesService.listPromotions(req.user.tenantId);
+  }
+
+  @Roles('owner', 'admin')
+  @Patch('promotions/:id/status')
+  updatePromotionStatus(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdatePromotionStatusDto,
+  ) {
+    return this.salesService.updatePromotionStatus(req.user.tenantId, req.user.userId, id, dto);
+  }
+
+  @Roles('owner', 'admin')
+  @Get('warranty-claims')
+  listWarrantyClaims(
+    @Req() req: AuthenticatedRequest,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+  ) {
+    const parsedPage = page === undefined ? 1 : Number(page);
+    const parsedLimit = limit === undefined ? 20 : Number(limit);
+    if (!Number.isInteger(parsedPage) || parsedPage < 1 || !Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+      throw new BadRequestException('Invalid warranty claim pagination');
+    }
+    return this.salesService.listWarrantyClaims(req.user.tenantId, parsedPage, parsedLimit, status);
+  }
+
+  @Roles('owner', 'admin')
+  @Patch('warranty-claims/:claimId')
+  reviewWarrantyClaim(
+    @Req() req: AuthenticatedRequest,
+    @Param('claimId') claimId: string,
+    @Body() dto: ReviewWarrantyClaimDto,
+  ) {
+    return this.salesService.reviewWarrantyClaim(req.user.tenantId, req.user.userId, claimId, dto);
+  }
+
+  @Permissions('sales.view')
+  @Get(':id/warranties')
+  findInvoiceWarranties(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.salesService.findInvoiceWarranties(req.user.tenantId, id);
+  }
+
+  @Roles('owner', 'admin')
+  @Post(':id/warranties/:warrantyId/claims')
+  createWarrantyClaim(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('warrantyId') warrantyId: string,
+    @Body() dto: CreateWarrantyClaimDto,
+  ) {
+    return this.salesService.createWarrantyClaim(req.user.tenantId, req.user.userId, id, warrantyId, dto);
+  }
+
   @Permissions('sales.view')
   @Get(':id/credit-notes')
   findCreditNotes(

@@ -1,6 +1,6 @@
 import {useCallback,useEffect,useState} from 'react';
 import type {FormEvent} from 'react';
-import {Plus,RefreshCw,Wallet,Repeat,CheckCircle2,AlertTriangle} from 'lucide-react';
+import {Plus,RefreshCw,Repeat} from 'lucide-react';
 import {api} from '../api/client';import {useAuth} from '../auth/AuthContext';import './ExpensesPage.css';
 type Expense={_id:string;title:string;category:string;description?:string;amount:number;expenseDate:string;payee?:string;reference?:string;attachmentUrl?:string;status:'UNPAID'|'PARTIALLY_PAID'|'PAID';approvalStatus:'PENDING_APPROVAL'|'APPROVED'|'REJECTED';paidAmount:number;dueAmount:number;createdBy:string;approvalHistory?:Array<{decision:string;reason:string;reviewedAt:string}>};
 type Schedule={_id:string;title:string;category:string;amount:number;frequency:'MONTHLY'|'QUARTERLY'|'YEARLY';nextRunAt:string;status:'ACTIVE'|'PAUSED'|'COMPLETED';payee?:string};

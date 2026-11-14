@@ -483,9 +483,17 @@ export class ReportsService {
 
   async commitMasterDataImport(tenantId: string, dto: MigrationImportDto) {
     if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    const payloadSha256 = createHash('sha256').update(JSON.stringify({ entity: dto.entity, rows: dto.rows })).digest('hex');
+    const priorRun: any = await this.migrationImportRuns.findOne(tenantFilter(tenantId, { runKey: dto.runKey })).lean();
+    if (priorRun) {
+      if (priorRun.payloadSha256 !== payloadSha256 || priorRun.entity !== dto.entity) {
+        throw new BadRequestException('Import run key was already used with a different payload');
+      }
+      if (['COMPLETED', 'PARTIAL', 'FAILED'].includes(priorRun.status)) return { ...priorRun, replayed: true };
+      throw new BadRequestException('This import run is already processing. Review the import run history before starting a new run key.');
+    }
     const preview = await this.previewMasterDataImport(tenantId, dto);
     if (!preview.commitAllowed) throw new BadRequestException({ message: 'Import contains validation errors or existing duplicates', preview });
-    const payloadSha256 = createHash('sha256').update(JSON.stringify({ entity: dto.entity, rows: dto.rows })).digest('hex');
     let run: any;
     try {
       run = await this.migrationImportRuns.create({

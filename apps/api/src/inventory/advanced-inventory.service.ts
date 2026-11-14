@@ -8,9 +8,11 @@ import { WarehouseStock } from './schemas/warehouse-stock.schema';
 import { InventoryMovement } from './schemas/inventory-movement.schema';
 import { InventoryBatch } from './schemas/inventory-batch.schema';
 import { InventorySerial } from './schemas/inventory-serial.schema';
+import { SalesInvoice } from '../sales/schemas/sales-invoice.schema';
 import { Stocktake } from './schemas/stocktake.schema';
 import { AccountingService } from '../accounting/accounting.service';
 import { ReceiveBatchDto, RegisterSerialsDto, CreateStocktakeDto } from './dto/advanced-inventory.dto';
+import { TransitionSerialDto } from './dto/transition-serial.dto';
 
 @Injectable()
 export class AdvancedInventoryService {
@@ -22,6 +24,7 @@ export class AdvancedInventoryService {
     @InjectModel(InventoryMovement.name) private readonly movements: Model<InventoryMovement>,
     @InjectModel(InventoryBatch.name) private readonly batches: Model<InventoryBatch>,
     @InjectModel(InventorySerial.name) private readonly serials: Model<InventorySerial>,
+    @InjectModel(SalesInvoice.name) private readonly invoices: Model<SalesInvoice>,
     @InjectModel(Stocktake.name) private readonly stocktakes: Model<Stocktake>,
     private readonly accounting: AccountingService,
   ) {}
@@ -120,6 +123,48 @@ export class AdvancedInventoryService {
     if (productId) { if (!Types.ObjectId.isValid(productId)) throw new BadRequestException('Invalid product ID'); filter.productId = new Types.ObjectId(productId); }
     if (status) { if (!['IN_STOCK','SOLD','RETURNED','DAMAGED'].includes(status)) throw new BadRequestException('Invalid serial status'); filter.status = status; }
     return this.serials.find(filter).sort({ createdAt: -1 }).limit(500).populate('productId', 'name sku').populate('warehouseId', 'name code').lean();
+  }
+
+  async transitionSerial(tenantId: string, userId: string, serialId: string, dto: TransitionSerialDto) {
+    if (![tenantId, userId, serialId].every(Types.ObjectId.isValid)) throw new BadRequestException('Invalid tenant, user or serial ID');
+    const session = await this.connection.startSession();
+    try {
+      let updated: any;
+      await session.withTransaction(async () => {
+        const serial = await this.serials.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(serialId) })).session(session);
+        if (!serial) throw new NotFoundException('Inventory serial not found');
+        const from = serial.status;
+        const to = dto.status;
+        const allowed: Record<string, string[]> = {
+          IN_STOCK: ['SOLD', 'DAMAGED'],
+          SOLD: ['RETURNED'],
+          RETURNED: ['IN_STOCK', 'DAMAGED'],
+          DAMAGED: [],
+        };
+        if (!allowed[from]?.includes(to)) throw new ConflictException(`Serial cannot transition from ${from} to ${to}`);
+        let saleInvoiceId: Types.ObjectId | undefined;
+        if (to === 'SOLD') {
+          if (!dto.saleInvoiceId || !Types.ObjectId.isValid(dto.saleInvoiceId)) throw new BadRequestException('A valid sale invoice is required when issuing a serial');
+          const invoice = await this.invoices.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.saleInvoiceId) })).select('_id').session(session).lean();
+          if (!invoice) throw new NotFoundException('Sale invoice not found in this workspace');
+          saleInvoiceId = invoice._id as Types.ObjectId;
+          serial.saleInvoiceId = saleInvoiceId;
+          serial.soldAt = new Date();
+        } else if (dto.saleInvoiceId && (!serial.saleInvoiceId || String(serial.saleInvoiceId) !== dto.saleInvoiceId)) {
+          throw new ConflictException('The supplied invoice does not match the serial sale history');
+        }
+        serial.status = to;
+        serial.lifecycleHistory = [
+          ...(serial.lifecycleHistory || []),
+          { from, to, reason: dto.reason.trim(), actorId: new Types.ObjectId(userId), ...(saleInvoiceId ? { saleInvoiceId } : {}), changedAt: new Date() },
+        ];
+        await serial.save({ session });
+        updated = serial;
+      });
+      return updated;
+    } finally {
+      await session.endSession();
+    }
   }
 
   async createStocktake(tenantId: string, userId: string, dto: CreateStocktakeDto) {

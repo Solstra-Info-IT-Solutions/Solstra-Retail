@@ -9,6 +9,7 @@ import { InventoryMovement } from './schemas/inventory-movement.schema';
 import { InventoryBatch } from './schemas/inventory-batch.schema';
 import { InventorySerial } from './schemas/inventory-serial.schema';
 import { Stocktake } from './schemas/stocktake.schema';
+import { AccountingService } from '../accounting/accounting.service';
 import { ReceiveBatchDto, RegisterSerialsDto, CreateStocktakeDto } from './dto/advanced-inventory.dto';
 
 @Injectable()
@@ -22,6 +23,7 @@ export class AdvancedInventoryService {
     @InjectModel(InventoryBatch.name) private readonly batches: Model<InventoryBatch>,
     @InjectModel(InventorySerial.name) private readonly serials: Model<InventorySerial>,
     @InjectModel(Stocktake.name) private readonly stocktakes: Model<Stocktake>,
+    private readonly accounting: AccountingService,
   ) {}
 
   async receiveBatch(tenantId: string, userId: string, dto: ReceiveBatchDto) {
@@ -70,25 +72,35 @@ export class AdvancedInventoryService {
     const filter: any = tenantFilter(tenantId, { status: 'ACTIVE', expiresAt: { $gt: new Date() } });
     if (productId) { if (!Types.ObjectId.isValid(productId)) throw new BadRequestException('Invalid product ID'); filter.productId = new Types.ObjectId(productId); }
     if (warehouseId) { if (!Types.ObjectId.isValid(warehouseId)) throw new BadRequestException('Invalid warehouse ID'); filter.warehouseId = new Types.ObjectId(warehouseId); }
-    return this.batches.find(filter).sort({ expiresAt: 1, createdAt: 1 }).populate('productId', 'name sku').populate('warehouseId', 'name code').lean();
+    return this.batches.find(filter).sort({ expiresAt: 1, createdAt: 1 }).limit(500).populate('productId', 'name sku').populate('warehouseId', 'name code').lean();
   }
 
   async registerSerials(tenantId: string, userId: string, dto: RegisterSerialsDto) {
     if (![tenantId, userId, dto.productId, dto.warehouseId].every(Types.ObjectId.isValid)) throw new BadRequestException('Invalid tenant, user, product or warehouse ID');
-    const product = await this.products.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.productId), isDeleted: false, trackStock: true })).lean();
-    if (!product) throw new NotFoundException('Stock-tracked product not found');
-    const warehouse = await this.warehouses.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.warehouseId), isDeleted: false, isActive: true })).lean();
-    if (!warehouse) throw new NotFoundException('Active warehouse not found');
     const names = dto.serials.map(x => x.serialNumber.trim().toUpperCase());
     if (new Set(names).size !== names.length) throw new BadRequestException('Duplicate serial numbers in this request');
-    const stock = await this.warehouseStocks.findOne(tenantFilter(tenantId, { productId: product._id, warehouseId: warehouse._id })).lean();
-    if (!stock || stock.quantity < names.length) throw new ConflictException('Registered serial count cannot exceed available warehouse stock');
+    const session = await this.connection.startSession();
     try {
-      return await this.serials.insertMany(names.map(serialNumber => ({ tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouse._id, serialNumber, createdBy: new Types.ObjectId(userId) })), { ordered: true });
+      let inserted: any[] = [];
+      await session.withTransaction(async () => {
+        const product = await this.products.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.productId), isDeleted: false, trackStock: true })).session(session);
+        if (!product) throw new NotFoundException('Stock-tracked product not found');
+        const warehouse = await this.warehouses.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(dto.warehouseId), isDeleted: false, isActive: true })).session(session);
+        if (!warehouse) throw new NotFoundException('Active warehouse not found');
+        const stock = await this.warehouseStocks.findOne(tenantFilter(tenantId, { productId: product._id, warehouseId: warehouse._id })).session(session);
+        if (!stock || stock.quantity < names.length) throw new ConflictException('Registered serial count cannot exceed available warehouse stock');
+        inserted = await this.serials.insertMany(names.map(serialNumber => ({
+          tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouse._id,
+          serialNumber, createdBy: new Types.ObjectId(userId),
+        })), { ordered: true, session });
+      });
+      return inserted;
     } catch (error: any) {
-      if (error?.code === 11000) throw new ConflictException('One or more serial numbers already exist in this business');
+      if (error?.code === 11000 || error?.writeErrors?.some((item: any) => item.code === 11000)) {
+        throw new ConflictException('One or more serial numbers already exist in this business');
+      }
       throw error;
-    }
+    } finally { await session.endSession(); }
   }
 
   async listSerials(tenantId: string, productId?: string, status?: string) {

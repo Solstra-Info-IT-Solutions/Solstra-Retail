@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   ServiceUnavailableException,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -35,6 +36,8 @@ import { GstEInvoiceSubmission } from './schemas/gst-einvoice-submission.schema'
 import { GstComplianceSubmission } from './schemas/gst-compliance-submission.schema';
 import { MigrationImportRun } from './schemas/migration-import-run.schema';
 import { MigrationImportDto } from './dto/migration-import.dto';
+import { HistoricalTransactionImportDto } from './dto/historical-transaction-import.dto';
+import { HistoricalTransactionImportRun, HistoricalTransactionRecord } from './schemas/historical-transaction-import.schema';
 
 type DateRange = {
   start: Date;
@@ -82,6 +85,12 @@ export class ReportsService {
 
     @InjectModel(MigrationImportRun.name)
     private readonly migrationImportRuns: Model<any>,
+
+    @Optional() @InjectModel(HistoricalTransactionImportRun.name)
+    private readonly historicalImportRuns?: Model<any>,
+
+    @Optional() @InjectModel(HistoricalTransactionRecord.name)
+    private readonly historicalRecords?: Model<any>,
   ) {}
 
   private resolveRange(dto: ReportDateRangeDto): DateRange {
@@ -456,6 +465,166 @@ export class ReportsService {
       return value;
     });
     return { normalized, errors };
+  }
+
+  private normalizeHistoricalTransactionRows(dto: HistoricalTransactionImportDto) {
+    const errors: Array<{ row: number; message: string }> = [];
+    const normalized: any[] = [];
+    const seen = new Set<string>();
+    dto.rows.forEach((row, index) => {
+      const rowNumber = index + 1;
+      const sourceId = String(row.sourceId ?? row.externalId ?? '').trim();
+      const documentNumber = String(row.documentNumber ?? row.invoiceNumber ?? row.purchaseNumber ?? '').trim();
+      const rawDate = row.sourceDate ?? row.documentDate ?? row.date;
+      const sourceDate = new Date(String(rawDate || ''));
+      const rawTotal = row.totalAmount ?? row.grandTotal;
+      const rawTaxable = row.taxableValue ?? row.subtotal ?? rawTotal;
+      const rawTax = row.taxAmount ?? row.totalTax ?? row.gstTotal ?? 0;
+      const total = Number(rawTotal);
+      const taxable = Number(rawTaxable);
+      const tax = Number(rawTax);
+      if (!sourceId || sourceId.length > 120) errors.push({ row: rowNumber, message: 'sourceId/externalId is required and must be at most 120 characters' });
+      if (!documentNumber || documentNumber.length > 120) errors.push({ row: rowNumber, message: 'A documentNumber/invoiceNumber/purchaseNumber is required' });
+      if (!rawDate || !Number.isFinite(sourceDate.getTime())) errors.push({ row: rowNumber, message: 'A valid sourceDate/documentDate/date is required' });
+      if (rawTotal === undefined || !Number.isFinite(total) || total < 0 || total > 1_000_000_000_000) errors.push({ row: rowNumber, message: 'totalAmount/grandTotal must be a valid non-negative amount' });
+      if (!Number.isFinite(taxable) || taxable < 0 || !Number.isFinite(tax) || tax < 0 || tax > total) errors.push({ row: rowNumber, message: 'Taxable value and tax amount must be valid non-negative amounts not exceeding the document total' });
+      const key = dto.entity + ':' + sourceId;
+      if (sourceId && seen.has(key)) errors.push({ row: rowNumber, message: 'Duplicate sourceId within this import batch' });
+      seen.add(key);
+      if (sourceId && documentNumber && Number.isFinite(sourceDate.getTime()) && Number.isFinite(total) && total >= 0 && Number.isFinite(taxable) && taxable >= 0 && Number.isFinite(tax) && tax >= 0 && tax <= total) {
+        const normalizedRow = {
+          sourceId, documentNumber, sourceDate,
+          taxableValuePaise: Math.round(taxable * 100),
+          taxAmountPaise: Math.round(tax * 100),
+          totalAmountPaise: Math.round(total * 100),
+          currency: String(row.currency || 'INR').trim().toUpperCase(),
+          counterpartyName: String(dto.entity === 'SALES' ? (row.customerName ?? row.counterpartyName ?? '') : (row.supplierName ?? row.counterpartyName ?? '')).trim().slice(0, 160),
+          counterpartyReference: String(dto.entity === 'SALES' ? (row.customerGstin ?? row.counterpartyReference ?? '') : (row.supplierGstin ?? row.counterpartyReference ?? '')).trim().slice(0, 120),
+          payloadSha256: createHash('sha256').update(JSON.stringify(row)).digest('hex'),
+        };
+        if (normalizedRow.currency !== 'INR') errors.push({ row: rowNumber, message: 'Only INR historical transaction imports are currently supported' });
+        else normalized.push(normalizedRow);
+      }
+    });
+    return { normalized, errors };
+  }
+
+  async previewHistoricalTransactionImport(tenantId: string, dto: HistoricalTransactionImportDto) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    if (!this.historicalRecords) throw new ServiceUnavailableException('Historical migration storage is not configured');
+    const { normalized, errors } = this.normalizeHistoricalTransactionRows(dto);
+    const existing = normalized.length ? await this.historicalRecords.find(tenantFilter(tenantId, {
+      sourceSystem: dto.sourceSystem.trim(), entity: dto.entity,
+      sourceId: { $in: normalized.map(row => row.sourceId) },
+    })).select('sourceId documentNumber').lean() : [];
+    const existingIds = new Set(existing.map((row: any) => String(row.sourceId)));
+    const duplicates = normalized.flatMap((row, index) => existingIds.has(row.sourceId)
+      ? [{ row: index + 1, sourceId: row.sourceId, documentNumber: row.documentNumber, reason: 'Already imported from this source system' }]
+      : []);
+    const totalPaise = normalized.reduce((sum, row) => sum + row.totalAmountPaise, 0);
+    const expectedTotalPaise = dto.expectedTotalAmount === undefined ? null : Math.round(dto.expectedTotalAmount * 100);
+    return {
+      entity: dto.entity, sourceSystem: dto.sourceSystem.trim(), runKey: dto.runKey,
+      totalRows: dto.rows.length, validRows: normalized.length - errors.length,
+      actualDocumentCount: normalized.length, actualTotalAmount: totalPaise / 100,
+      expectedDocumentCount: dto.expectedDocumentCount ?? dto.rows.length,
+      expectedTotalAmount: expectedTotalPaise === null ? null : expectedTotalPaise / 100,
+      countDifference: (dto.expectedDocumentCount ?? dto.rows.length) - normalized.length,
+      amountDifference: expectedTotalPaise === null ? null : (expectedTotalPaise - totalPaise) / 100,
+      errors, duplicates,
+      commitAllowed: errors.length === 0 && duplicates.length === 0 &&
+        (dto.expectedDocumentCount === undefined || dto.expectedDocumentCount === normalized.length) &&
+        (expectedTotalPaise === null || expectedTotalPaise === totalPaise),
+      postingPolicy: 'ARCHIVE_ONLY: records are preserved for migration evidence and reconciliation; no stock, receivables, payables, GST returns, payments or accounting journals are posted.',
+    };
+  }
+
+  async commitHistoricalTransactionImport(tenantId: string, dto: HistoricalTransactionImportDto) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    if (!this.historicalImportRuns || !this.historicalRecords) throw new ServiceUnavailableException('Historical migration storage is not configured');
+    const payloadSha256 = createHash('sha256').update(JSON.stringify({
+      entity: dto.entity, sourceSystem: dto.sourceSystem.trim(), rows: dto.rows,
+      expectedDocumentCount: dto.expectedDocumentCount ?? null, expectedTotalAmount: dto.expectedTotalAmount ?? null,
+    })).digest('hex');
+    let run: any = await this.historicalImportRuns.findOne(tenantFilter(tenantId, { runKey: dto.runKey })).lean();
+    if (run) {
+      if (run.payloadSha256 !== payloadSha256 || run.entity !== dto.entity || run.sourceSystem !== dto.sourceSystem.trim()) {
+        throw new BadRequestException('Historical import run key was already used with a different payload');
+      }
+      if (run.status === 'COMPLETED') return { ...run, replayed: true };
+    } else {
+      const preview = await this.previewHistoricalTransactionImport(tenantId, dto);
+      if (!preview.commitAllowed) throw new BadRequestException({ message: 'Historical import failed validation or source control-total reconciliation', preview });
+      run = await this.historicalImportRuns.create({
+        tenantId: new Types.ObjectId(tenantId), runKey: dto.runKey, entity: dto.entity,
+        sourceSystem: dto.sourceSystem.trim(), payloadSha256, status: 'COMMITTING',
+        expectedDocumentCount: dto.expectedDocumentCount ?? dto.rows.length,
+        expectedTotalPaise: dto.expectedTotalAmount === undefined ? 0 : Math.round(dto.expectedTotalAmount * 100),
+        expectedTotalProvided: dto.expectedTotalAmount !== undefined,
+      });
+    }
+    const { normalized, errors } = this.normalizeHistoricalTransactionRows(dto);
+    if (errors.length) throw new BadRequestException({ message: 'Historical import payload is no longer valid', errors });
+    let importedCount = 0;
+    const failures: Array<{ row: number; message: string }> = [];
+    for (let index = 0; index < normalized.length; index += 1) {
+      const row = normalized[index];
+      try {
+        await this.historicalRecords.updateOne(
+          tenantFilter(tenantId, { sourceSystem: dto.sourceSystem.trim(), entity: dto.entity, sourceId: row.sourceId }),
+          { $setOnInsert: { ...row, tenantId: new Types.ObjectId(tenantId), importRunId: run._id, sourceSystem: dto.sourceSystem.trim(), entity: dto.entity } },
+          { upsert: true, setDefaultsOnInsert: true },
+        );
+        importedCount += 1;
+      } catch (error: any) {
+        failures.push({ row: index + 1, message: error?.code === 11000 ? 'Source record was concurrently imported by another run' : String(error?.message || 'Import row failed').slice(0, 250) });
+      }
+    }
+    const records = await this.historicalRecords.find(tenantFilter(tenantId, { importRunId: run._id })).select('totalAmountPaise').lean();
+    const actualTotalPaise = records.reduce((sum: number, row: any) => sum + Number(row.totalAmountPaise || 0), 0);
+    const status = failures.length ? (records.length ? 'PARTIAL' : 'FAILED') : 'COMPLETED';
+    const updated = await this.historicalImportRuns.findOneAndUpdate(
+      tenantFilter(tenantId, { _id: run._id }),
+      { $set: { status, importedCount: records.length, importedTotalPaise: actualTotalPaise, errors: failures, completedAt: new Date() } },
+      { new: true },
+    ).lean();
+    return { ...updated, importedCount: records.length, importedTotalAmount: actualTotalPaise / 100, replayed: Boolean(run.status === 'COMMITTING') };
+  }
+
+  async historicalTransactionImportRuns(tenantId: string, page = 1) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    if (!this.historicalImportRuns) throw new ServiceUnavailableException('Historical migration storage is not configured');
+    const safePage = Number.isInteger(page) && page > 0 ? Math.min(page, 10000) : 1;
+    const filter = tenantFilter(tenantId, {});
+    const [items, total] = await Promise.all([
+      this.historicalImportRuns.find(filter).sort({ createdAt: -1 }).skip((safePage - 1) * 20).limit(20).lean(),
+      this.historicalImportRuns.countDocuments(filter),
+    ]);
+    return { items, pagination: { page: safePage, limit: 20, total, totalPages: Math.ceil(total / 20) } };
+  }
+
+  async reconcileHistoricalTransactionImport(tenantId: string, runKey: string) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
+    if (!this.historicalImportRuns || !this.historicalRecords) throw new ServiceUnavailableException('Historical migration storage is not configured');
+    const run: any = await this.historicalImportRuns.findOne(tenantFilter(tenantId, { runKey })).lean();
+    if (!run) throw new BadRequestException('Historical import run not found');
+    const [aggregate] = await this.historicalRecords.aggregate([
+      { $match: tenantFilter(tenantId, { importRunId: run._id }) },
+      { $group: { _id: null, documentCount: { $sum: 1 }, totalAmountPaise: { $sum: '$totalAmountPaise' }, taxableValuePaise: { $sum: '$taxableValuePaise' }, taxAmountPaise: { $sum: '$taxAmountPaise' } } },
+    ]);
+    const documentCount = Number(aggregate?.documentCount || 0);
+    const totalAmountPaise = Number(aggregate?.totalAmountPaise || 0);
+    const expectedCount = Number(run.expectedDocumentCount || 0);
+    const expectedTotalPaise = Number(run.expectedTotalPaise || 0);
+    return {
+      runKey, sourceSystem: run.sourceSystem, entity: run.entity, status: run.status,
+      expected: { documentCount: expectedCount, totalAmount: run.expectedTotalProvided ? expectedTotalPaise / 100 : null },
+      imported: { documentCount, totalAmount: totalAmountPaise / 100, taxableValue: Number(aggregate?.taxableValuePaise || 0) / 100, taxAmount: Number(aggregate?.taxAmountPaise || 0) / 100 },
+      difference: { documentCount: expectedCount - documentCount, totalAmount: run.expectedTotalProvided ? (expectedTotalPaise - totalAmountPaise) / 100 : null },
+      reconciled: documentCount === expectedCount && (!run.expectedTotalProvided || expectedTotalPaise === totalAmountPaise),
+      ledgerPostingImpact: 'NONE',
+      note: 'Archive-only migration evidence. This does not recreate native invoices, payments, inventory movements, GST submissions or accounting journals.',
+    };
   }
 
   async previewMasterDataImport(tenantId: string, dto: MigrationImportDto) {

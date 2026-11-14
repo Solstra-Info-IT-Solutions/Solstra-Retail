@@ -6,7 +6,7 @@ import { PlatformService } from './platform.service';
 import {
   BackupPolicyDto, CreateAutomationRuleDto, CreateWebhookDto, OfflineSyncBatchDto,
   TriggerAutomationDto, UpdateAutomationRuleDto, UpdateSaasTenantDto,
-  UpdateWebhookDto, VerifyBackupDto,
+  UpdateWebhookDto, VerifyBackupDto, CreateCommunicationProviderDto, SendCommunicationDto, RecordSubscriptionPaymentDto,
 } from './dto/platform.dto';
 
 type AuthenticatedRequest = Request & { user: { tenantId: string; userId: string; role: string } };
@@ -113,6 +113,81 @@ export class PlatformController {
   @Post('backups/verify')
   verifyBackup(@Req() req: AuthenticatedRequest, @Body() dto: VerifyBackupDto) {
     return this.platform.verifyBackup(req.user.tenantId, dto);
+  }
+
+  @Roles('owner', 'admin')
+  @Get('communications/providers')
+  listCommunicationProviders(@Req() req: AuthenticatedRequest) {
+    return this.platform.listCommunicationProviders(req.user.tenantId);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('communications/providers')
+  createCommunicationProvider(@Req() req: AuthenticatedRequest, @Body() dto: CreateCommunicationProviderDto) {
+    return this.platform.createCommunicationProvider(req.user.tenantId, dto);
+  }
+
+  @Roles('owner', 'admin')
+  @Patch('communications/providers/:id')
+  updateCommunicationProvider(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body('enabled') enabled: boolean) {
+    return this.platform.updateCommunicationProvider(req.user.tenantId, id, enabled);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('communications/send')
+  queueCommunication(@Req() req: AuthenticatedRequest, @Body() dto: SendCommunicationDto) {
+    return this.platform.queueCommunication(req.user.tenantId, req.user.userId, dto);
+  }
+
+  @Roles('owner', 'admin')
+  @Get('communications/deliveries')
+  listCommunicationDeliveries(@Req() req: AuthenticatedRequest, @Query('page') page = '1') {
+    return this.platform.listCommunicationDeliveries(req.user.tenantId, Number(page));
+  }
+
+  @Roles('owner', 'admin')
+  @Post('communications/deliver-due')
+  runCommunicationDeliveries(@Req() req: AuthenticatedRequest, @Query('limit') limit = '20') {
+    return this.platform.runCommunicationDeliveries(req.user.tenantId, Number(limit));
+  }
+
+  @Roles('owner', 'admin')
+  @Get('billing/invoices')
+  listSubscriptionInvoices(@Req() req: AuthenticatedRequest) {
+    return this.platform.listSubscriptionInvoices(req.user.tenantId);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('billing/invoices')
+  requestSubscriptionInvoice(@Req() req: AuthenticatedRequest) {
+    return this.platform.requestSubscriptionInvoice(req.user.tenantId, req.user.userId);
+  }
+
+  @Get('saas/plans')
+  listSubscriptionPlans() {
+    return this.platform.listPlatformSubscriptionPlans();
+  }
+
+  @Get('saas/billing/invoices')
+  listPlatformSubscriptionInvoices(@Req() req: AuthenticatedRequest) {
+    return this.platform.listPlatformSubscriptionInvoices(req.user.userId);
+  }
+
+  @Patch('saas/billing/invoices/:id/paid')
+  recordSubscriptionPayment(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: RecordSubscriptionPaymentDto) {
+    return this.platform.recordSubscriptionPayment(req.user.userId, id, dto);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('backups/:id/replicate')
+  replicateBackup(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.platform.replicateBackupArtifact(req.user.tenantId, id);
+  }
+
+  @Roles('owner', 'admin')
+  @Get('backups/replication-events')
+  listBackupReplicationEvents(@Req() req: AuthenticatedRequest, @Query('artifactId') artifactId?: string) {
+    return this.platform.listBackupReplicationEvents(req.user.tenantId, artifactId);
   }
 
   @Roles('owner', 'admin')

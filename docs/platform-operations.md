@@ -141,3 +141,30 @@ The Advanced Inventory workspace exposes batch receipts and expiry lists, serial
 - A replication receiver must return JSON `{ "status": "STORED", "sha256": "<exact x-solstra-backup-sha256>", "tenantId": "<exact x-solstra-tenant-id>" }` after durable storage.
 - Solstra marks replication successful only when the receiver confirms the exact archive checksum and tenant identity. A generic HTTP 200 or mismatched acknowledgement is treated as replication failure and remains retryable.
 - Receiver acknowledgement still does not prove a full restore. Keep independent storage retention, access controls, immutable/versioned copies and scheduled isolated restore rehearsals.
+
+
+## Offline POS idempotency conflict protection
+
+- Each offline sale sync record stores a SHA-256 fingerprint of its validated request payload alongside the tenant-scoped idempotency key.
+- Reusing the same key with a different payload returns `CONFLICT`; it is not silently replayed or processed as a new sale.
+- The browser queue marks a conflicting item as blocked and excludes it from automatic retries. Staff must inspect the original queued invoice and create a fresh key only when intentionally creating a distinct invoice.
+- Older sync records without a payload fingerprint remain replayable for already-succeeded operations; the first retry of a legacy failed/processing record binds it to the payload being retried.
+
+## Demand forecast baseline
+
+- `GET /api/v1/reports/analytics/demand-forecast?horizonDays=30` supports 7–90 day horizons.
+- Uses 90 days of tenant-scoped issued invoice item quantities, weighting the latest 30-day daily rate at 70% and the preceding 60-day rate at 30%; adds seven days of safety stock and compares against current aggregate product stock.
+- Returns expected demand, recent trend, safety stock and suggested reorder quantity. It is statistical decision support, not a trained ML model or automatic purchase order.
+- Credit-note returns are not yet subtracted from demand history, and branch/warehouse stock and supplier lead times are not modeled by this endpoint. Continue to use warehouse-specific replenishment policies for operational purchasing.
+
+## GST e-invoice IRN cancellation
+
+- Owner/admin users can submit a preflight-ready B2B invoice through `POST /api/v1/reports/gst/einvoice/:invoiceId/submit`, review the register at `GET /api/v1/reports/gst/einvoice-submissions`, and request cancellation through `POST /api/v1/reports/gst/einvoice/:invoiceId/cancel` with a 10–500 character reason.
+- Submission payloads are SHA-256 fingerprinted. A changed invoice payload cannot be resubmitted under the same invoice identity after an attempt has been recorded.
+- Cancellation is accepted only for a provider-acknowledged IRN and is marked cancelled only when the configured GSP adapter returns `status: CANCELLED` and a cancellation reference. Repeated cancellation requests return the recorded acknowledgement.
+- A signed QR payload is stored only when returned by the adapter. Solstra does not generate IRNs, QR signatures or statutory cancellation eligibility; GSP/IRP credentials, provider-specific payload mapping and statutory time-limit checks remain external responsibilities.
+
+## Backup replication operator controls
+
+- Platform Operations now exposes manual off-site replication for stored tenant backup artifacts and displays the append-only replication event history alongside restore-drill results.
+- A successful event requires the configured receiver to acknowledge durable storage with the exact checksum and tenant ID. A local restore drill validates the stored archive but does not restore it into a separate live database.

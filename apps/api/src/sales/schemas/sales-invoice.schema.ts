@@ -63,6 +63,9 @@ export class InvoiceLineItem {
 
   @Prop({ required: true, min: 0 })
   lineTotal!: number;
+
+  @Prop({ type: [String], default: [] })
+  serialNumbers!: string[];
 }
 
 export const InvoiceLineItemSchema =

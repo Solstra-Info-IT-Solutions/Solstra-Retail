@@ -8,7 +8,7 @@ describe('ReportsService validation', () => {
     const purchases = { find: jest.fn() };
     const journals = { find: jest.fn() };
     const gstSubmissions = { findOne: jest.fn(), findOneAndUpdate: jest.fn(), countDocuments: jest.fn() };
-    const migrationImportRuns = { create: jest.fn(), findOne: jest.fn(), updateOne: jest.fn(), find: jest.fn(), countDocuments: jest.fn() };
+    const migrationImportRuns = { create: jest.fn(), findOne: jest.fn(() => ({ lean: async (): Promise<any> => null })), updateOne: jest.fn(), find: jest.fn(), countDocuments: jest.fn() };
 
     const service = new ReportsService(
       invoices as any,
@@ -47,6 +47,24 @@ describe('ReportsService validation', () => {
     expect(result.content).toContain('Cash &amp; Bank');
     expect(result.content).toContain('<AMOUNT>-100.00</AMOUNT>');
     expect(result.content).toContain('<AMOUNT>100.00</AMOUNT>');
+  });
+
+  it('replays a completed master-data migration run before duplicate preflight', async () => {
+    const { service, migrationImportRuns } = createService();
+    const completed = {
+      runKey: 'legacy-import-001', entity: 'customers',
+      payloadSha256: require('crypto').createHash('sha256')
+        .update(JSON.stringify({ entity: 'customers', rows: [{ name: 'Existing Customer' }] })).digest('hex'),
+      status: 'COMPLETED', createdCount: 1, skippedCount: 0,
+    };
+    migrationImportRuns.findOne.mockReturnValue({ lean: async () => completed });
+    const preview = jest.spyOn(service, 'previewMasterDataImport');
+    const result: any = await service.commitMasterDataImport('507f1f77bcf86cd799439011', {
+      entity: 'customers', runKey: 'legacy-import-001', rows: [{ name: 'Existing Customer' }],
+    } as any);
+    expect(result.replayed).toBe(true);
+    expect(result.status).toBe('COMPLETED');
+    expect(preview).not.toHaveBeenCalled();
   });
 
   it('rejects invalid migration export entity, cursor and tenant context', async () => {

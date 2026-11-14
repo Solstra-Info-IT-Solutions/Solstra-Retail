@@ -460,22 +460,34 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         throw new ConflictException('Another offline batch is still processing for this device. Retry after it is acknowledged.');
       }
       if (dto.batchSequence <= currentSequence) {
-        if (dto.batchSequence === currentSequence && syncDevice.lastSyncPayloadSha256 === batchPayloadSha256) {
-          if (syncDevice.lastSyncStatus === 'SUCCEEDED' && syncDevice.lastSyncResult) {
-            return { accepted: dto.operations.length, batchSequence: dto.batchSequence, replayed: true, ...syncDevice.lastSyncResult };
-          }
-          return { accepted: dto.operations.length, batchSequence: dto.batchSequence, replayed: true, results: [], batchStatus: 'PROCESSING' };
+        if (dto.batchSequence !== currentSequence || syncDevice.lastSyncPayloadSha256 !== batchPayloadSha256) {
+          throw new ConflictException('Offline sync sequence is stale or was already used by a different batch. Refresh device sync state before retrying.');
         }
-        throw new ConflictException('Offline sync sequence is stale or was already used by a different batch. Refresh device sync state before retrying.');
+        if (syncDevice.lastSyncStatus !== 'PROCESSING' && syncDevice.lastSyncResult) {
+          return { ...syncDevice.lastSyncResult, batchSequence: dto.batchSequence, replayed: true };
+        }
+        const staleBefore = new Date(Date.now() - 5 * 60 * 1000);
+        const recovered = await this.offlineDevices.updateOne(
+          tenantFilter(tenantId, {
+            _id: syncDevice._id, revokedAt: null, lastSyncSequence: dto.batchSequence,
+            lastSyncPayloadSha256: batchPayloadSha256, lastSyncStatus: 'PROCESSING',
+            lastSyncStartedAt: { $lte: staleBefore },
+          }),
+          { $set: { lastSyncStartedAt: new Date(), lastSyncResult: null } },
+        );
+        if (!recovered.modifiedCount) {
+          throw new ConflictException('The matching offline batch is still processing. Retry after it is acknowledged.');
+        }
+      } else {
+        const claim: any = await this.offlineDevices.updateOne(
+          tenantFilter(tenantId, {
+            _id: syncDevice._id, revokedAt: null,
+            $or: [{ lastSyncSequence: currentSequence }, ...(currentSequence === 0 ? [{ lastSyncSequence: { $exists: false } }] : [])],
+          }),
+          { $set: { lastSyncSequence: dto.batchSequence, lastSyncPayloadSha256: batchPayloadSha256, lastSyncStatus: 'PROCESSING', lastSyncStartedAt: new Date(), lastSyncResult: null } },
+        );
+        if (!claim.modifiedCount) throw new ConflictException('Another sync batch advanced this device. Retry with a fresh batch sequence.');
       }
-      const claim: any = await this.offlineDevices.updateOne(
-        tenantFilter(tenantId, {
-          _id: syncDevice._id, revokedAt: null,
-          $or: [{ lastSyncSequence: currentSequence }, ...(currentSequence === 0 ? [{ lastSyncSequence: { $exists: false } }] : [])],
-        }),
-        { $set: { lastSyncSequence: dto.batchSequence, lastSyncPayloadSha256: batchPayloadSha256, lastSyncStatus: 'PROCESSING', lastSyncStartedAt: new Date(), lastSyncResult: null } },
-      );
-      if (!claim.modifiedCount) throw new ConflictException('Another sync batch advanced this device. Retry with a fresh batch sequence.');
     }
     const results: any[] = [];
     for (const operation of dto.operations) {
@@ -520,11 +532,20 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         results.push({ idempotencyKey: operation.idempotencyKey, status: 'FAILED', error: message });
       }
     }
-    const response = { accepted: dto.operations.length, results };
+    const succeededCount = results.filter(item => item.status === 'SUCCEEDED').length;
+    const failedCount = results.filter(item => item.status === 'FAILED' || item.status === 'CONFLICT').length;
+    const processingCount = results.filter(item => item.status === 'PROCESSING').length;
+    const batchStatus = processingCount > 0 ? 'PROCESSING'
+      : failedCount === 0 ? 'SUCCEEDED'
+      : succeededCount > 0 ? 'PARTIAL' : 'FAILED';
+    const response = { accepted: dto.operations.length, results, batchStatus };
     if (syncDevice && dto.batchSequence !== undefined) {
       await this.offlineDevices.updateOne(
         tenantFilter(tenantId, { _id: syncDevice._id, lastSyncSequence: dto.batchSequence, lastSyncPayloadSha256: batchPayloadSha256 }),
-        { $set: { lastSyncStatus: 'SUCCEEDED', lastSyncResult: response, lastSyncAcknowledgedAt: new Date(), lastSeenAt: new Date() } },
+        { $set: {
+          lastSyncStatus: batchStatus, lastSyncResult: response,
+          lastSyncAcknowledgedAt: batchStatus === 'PROCESSING' ? null : new Date(), lastSeenAt: new Date(),
+        } },
       );
       return { ...response, batchSequence: dto.batchSequence, replayed: false };
     }

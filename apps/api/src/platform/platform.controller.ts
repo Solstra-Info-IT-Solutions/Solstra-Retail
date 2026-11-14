@@ -70,6 +70,24 @@ export class PlatformController {
   }
 
   @Roles('owner', 'admin')
+  @Post('integrations/webhooks/:id/rotate-secret')
+  rotateWebhookSecret(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.platform.rotateWebhookSecret(req.user.tenantId, id);
+  }
+
+  @Roles('owner', 'admin')
+  @Get('integrations/webhook-deliveries')
+  listWebhookDeliveries(@Req() req: AuthenticatedRequest, @Query('integrationId') integrationId?: string, @Query('page') page = '1') {
+    return this.platform.listWebhookDeliveries(req.user.tenantId, integrationId, Number(page));
+  }
+
+  @Roles('owner', 'admin')
+  @Post('integrations/webhook-deliveries/:id/retry')
+  retryWebhookDelivery(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.platform.retryWebhookDelivery(req.user.tenantId, id);
+  }
+
+  @Roles('owner', 'admin')
   @Post('integrations/webhooks/deliver-due')
   deliverWebhooks(@Req() req: AuthenticatedRequest, @Query('limit') limit = '20') {
     return this.platform.runWebhookDeliveries(req.user.tenantId, Number(limit));

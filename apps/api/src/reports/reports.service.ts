@@ -1308,6 +1308,39 @@ export class ReportsService {
     };
   }
 
+  async tallyXmlExport(tenantId: string, dto: ReportDateRangeDto) {
+    this.validateTenant(tenantId);
+    const { start, end } = this.resolveRange(dto);
+    const journals = await this.journals.find(tenantFilter(tenantId, {
+      status: 'POSTED', postingDate: { $gte: start, $lte: end },
+    })).select('entryNumber postingDate narration lines').sort({ postingDate: 1, entryNumber: 1 }).limit(2000).lean();
+    const xml = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+    const vouchers = (journals as any[]).map(entry => {
+      const date = new Date(entry.postingDate);
+      const dateKey = String(date.getFullYear()) + String(date.getMonth() + 1).padStart(2, '0') + String(date.getDate()).padStart(2, '0');
+      const lines = (entry.lines || []).map((line: any) => {
+        const debit = Number(line.debit || 0), credit = Number(line.credit || 0);
+        if (!Number.isFinite(debit) || !Number.isFinite(credit) || debit < 0 || credit < 0 || (debit > 0 && credit > 0)) {
+          throw new BadRequestException('Journal contains an invalid ledger line; resolve it before Tally export');
+        }
+        const amount = debit > 0 ? -debit : credit;
+        return `<ALLLEDGERENTRIES.LIST><LEDGERNAME>${xml(line.accountName || line.accountCode || 'Unmapped Ledger')}</LEDGERNAME><ISDEEMEDPOSITIVE>${debit > 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE><AMOUNT>${amount.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>`;
+      }).join('');
+      const totalDebit = (entry.lines || []).reduce((sum: number, line: any) => sum + Number(line.debit || 0), 0);
+      const totalCredit = (entry.lines || []).reduce((sum: number, line: any) => sum + Number(line.credit || 0), 0);
+      if (Math.abs(totalDebit - totalCredit) > 0.01) throw new BadRequestException('Unbalanced posted journal found; correct accounting before export');
+      return `<VOUCHER VCHTYPE="Journal" ACTION="Create"><DATE>${dateKey}</DATE><VOUCHERTYPENAME>Journal</VOUCHERTYPENAME><VOUCHERNUMBER>${xml(entry.entryNumber)}</VOUCHERNUMBER><NARRATION>${xml(entry.narration || '')}</NARRATION>${lines}</VOUCHER>`;
+    }).join('');
+    return {
+      filename: 'solstra-tally-journal-export.xml',
+      contentType: 'application/xml; charset=utf-8',
+      content: `<?xml version="1.0" encoding="UTF-8"?><ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>REPLACE_WITH_TALLY_COMPANY</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC><REQUESTDATA>${vouchers}</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>`,
+      voucherCount: journals.length,
+      truncated: journals.length === 2000,
+      note: 'Tally XML voucher draft only. Map company and ledger names, validate voucher types/sign conventions against the target Tally release, and import into a test company before production. This is an export file, not live synchronization.',
+    };
+  }
+
   async answerBusinessQuestion(tenantId: string, question: string) {
     this.validateTenant(tenantId);
     const normalized = String(question || '').trim().toLowerCase();
@@ -1321,8 +1354,37 @@ export class ReportsService {
     else if (/yesterday/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 1); from = localIso(d); to = from; period = 'YESTERDAY'; }
     else if (/last\s+7\s+days|past\s+week/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 6); from = localIso(d); period = 'LAST_7_DAYS'; }
     else if (/last\s+30\s+days|past\s+month/.test(normalized)) { const d = new Date(now); d.setDate(d.getDate() - 29); from = localIso(d); period = 'LAST_30_DAYS'; }
-    else if (/last\\s+month/.test(normalized)) { from = localIso(new Date(now.getFullYear(), now.getMonth() - 1, 1)); to = localIso(new Date(now.getFullYear(), now.getMonth(), 0)); period = 'LAST_MONTH'; }
+    else if (/last\s+month/.test(normalized)) { from = localIso(new Date(now.getFullYear(), now.getMonth() - 1, 1)); to = localIso(new Date(now.getFullYear(), now.getMonth(), 0)); period = 'LAST_MONTH'; }
+    if (/compare|versus|vs/.test(normalized) && /this month/.test(normalized)) { from = localIso(new Date(now.getFullYear(), now.getMonth(), 1)); to = localIso(now); period = 'THIS_MONTH_TO_DATE'; }
     const range = { from, to };
+    if (/compare|versus|vs/.test(normalized) && /sales|revenue|turnover/.test(normalized)) {
+      const current = await this.salesReport(tenantId, range);
+      let previousFrom = '', previousTo = '';
+      if (period === 'THIS_MONTH_TO_DATE') {
+        previousFrom = localIso(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+        previousTo = localIso(new Date(now.getFullYear(), now.getMonth(), 0));
+      } else if (period === 'LAST_7_DAYS') {
+        const priorEnd = new Date(now); priorEnd.setDate(priorEnd.getDate() - 7);
+        const priorStart = new Date(priorEnd); priorStart.setDate(priorStart.getDate() - 6);
+        previousFrom = localIso(priorStart); previousTo = localIso(priorEnd);
+      } else if (period === 'LAST_30_DAYS') {
+        const priorEnd = new Date(now); priorEnd.setDate(priorEnd.getDate() - 30);
+        const priorStart = new Date(priorEnd); priorStart.setDate(priorStart.getDate() - 29);
+        previousFrom = localIso(priorStart); previousTo = localIso(priorEnd);
+      } else {
+        throw new BadRequestException('Sales comparison supports this month-to-date, last 7 days or last 30 days only');
+      }
+      const previous = await this.salesReport(tenantId, { from: previousFrom, to: previousTo });
+      const delta = Math.round((current.netSalesRupees - previous.netSalesRupees) * 100) / 100;
+      const percent = previous.netSalesRupees ? Math.round((delta / previous.netSalesRupees) * 10000) / 100 : null;
+      return {
+        mode: 'RULE_BASED_COMPARATIVE_ANALYSIS', question, period,
+        comparison: { current: { from, to, invoiceCount: current.invoiceCount, netSalesRupees: current.netSalesRupees }, previous: { from: previousFrom, to: previousTo, invoiceCount: previous.invoiceCount, netSalesRupees: previous.netSalesRupees } },
+        change: { amountRupees: delta, percent, direction: delta > 0 ? 'UP' : delta < 0 ? 'DOWN' : 'UNCHANGED' },
+        answer: `Net sales ${delta > 0 ? 'increased' : delta < 0 ? 'decreased' : 'were unchanged'} by ₹${Math.abs(delta).toFixed(2)} compared with the previous period${percent === null ? '' : ' (' + (delta > 0 ? '+' : '') + percent.toFixed(2) + '%)'}.`,
+        disclaimer: 'Like-for-like calendar periods are compared using issued invoices less credit notes. This is descriptive analysis, not a forecast.',
+      };
+    }
     if (/low\s*stock|reorder|out of stock/.test(normalized)) {
       const result = await this.inventoryReport(tenantId, range);
       return { mode: 'RULE_BASED_NATURAL_LANGUAGE_QUERY', question, interpretation: 'Inventory items at or below reorder threshold', period, answer: `${result.lowStockCount} products are currently listed at or below their low-stock threshold.`, data: { lowStockCount: result.lowStockCount, products: result.lowStockProducts }, disclaimer: 'Stock levels can change immediately after this query; confirm current warehouse stock before purchasing.' };

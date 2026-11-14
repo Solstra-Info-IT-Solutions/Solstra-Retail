@@ -37,6 +37,28 @@ const money = (value = 0) => new Intl.NumberFormat('en-IN', {
 }).format(Number(value) || 0);
 const optional = (value: string) => value.trim() || undefined;
 
+function parseImportCsv(source: string) {
+  const rows: string[][] = [];
+  let row: string[] = [], cell = '', quoted = false;
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    if (char === '"' && quoted && source[i + 1] === '"') { cell += '"'; i++; }
+    else if (char === '"') quoted = !quoted;
+    else if (char === ',' && !quoted) { row.push(cell.trim()); cell = ''; }
+    else if ((char === '\n' || char === '\r') && !quoted) {
+      if (char === '\r' && source[i + 1] === '\n') i++;
+      row.push(cell.trim()); if (row.some(value => value !== '')) rows.push(row);
+      row = []; cell = '';
+    } else cell += char;
+  }
+  row.push(cell.trim()); if (row.some(value => value !== '')) rows.push(row);
+  if (quoted || rows.length < 2) throw new Error('CSV must contain a header and at least one product row.');
+  const headers = rows[0].map(value => value.replace(/^\uFEFF/, '').trim());
+  const required = ['name', 'purchasePrice', 'sellingPrice', 'mrp'];
+  if (required.some(key => !headers.includes(key))) throw new Error('CSV headers must include name, purchasePrice, sellingPrice and mrp.');
+  return rows.slice(1).map(values => Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ''])));
+}
+
 export default function ProductsPage() {
   const { user } = useAuth();
   const canManage = user?.role === 'owner' || user?.role === 'admin';
@@ -56,6 +78,11 @@ export default function ProductsPage() {
   const [valuationCosts, setValuationCosts] = useState<Record<string, string>>({});
   const [valuationReasons, setValuationReasons] = useState<Record<string, string>>({});
   const [valuationSaving, setValuationSaving] = useState('');
+  const [importRows, setImportRows] = useState<Record<string, unknown>[]>([]);
+  const [importPreview, setImportPreview] = useState<{totalRows:number;validRows:number;invalidRows:number;rows:Array<{rowNumber:number;valid:boolean;errors:string[]}>;note:string}|null>(null);
+  const [importMessage, setImportMessage] = useState('');
+  const [importBusy, setImportBusy] = useState(false);
+
 
   const loadProducts = useCallback(async () => {
     setLoading(true); setError('');
@@ -122,6 +149,31 @@ export default function ProductsPage() {
     } finally { setSaving(false); }
   }
 
+  async function previewCatalogueImport(file?: File) {
+    if (!file) return;
+    setImportBusy(true); setImportMessage(''); setImportPreview(null);
+    try {
+      const rows = parseImportCsv(await file.text());
+      const response = await api.post('/products/import/preview', { rows });
+      setImportRows(rows); setImportPreview(response.data);
+    } catch (error: unknown) {
+      const message = (error as {response?:{data?:{message?:string|string[]}}}).response?.data?.message;
+      setImportMessage(Array.isArray(message) ? message.join(', ') : message || (error instanceof Error ? error.message : 'CSV preview failed.'));
+    } finally { setImportBusy(false); }
+  }
+  async function commitCatalogueImport() {
+    if (!importRows.length || !importPreview?.validRows) return;
+    setImportBusy(true); setImportMessage('');
+    try {
+      const response = await api.post('/products/import/commit', { rows: importRows });
+      setImportMessage(`Import finished: ${response.data.createdCount} created, ${response.data.failedCount} failed. Opening stock was not imported.`);
+      setImportPreview(null); setImportRows([]); await loadProducts();
+    } catch (error: unknown) {
+      const message = (error as {response?:{data?:{message?:string|string[]}}}).response?.data?.message;
+      setImportMessage(Array.isArray(message) ? message.join(', ') : message || 'Catalogue import failed.');
+    } finally { setImportBusy(false); }
+  }
+
   async function initializeValuation(product: Product) {
     const unitCost = Number(valuationCosts[product._id]);
     const reason = (valuationReasons[product._id] || '').trim();
@@ -175,6 +227,13 @@ export default function ProductsPage() {
         </div>
         <span>{total.toLocaleString('en-IN')} product{total === 1 ? '' : 's'}</span>
       </div>
+      {canManage && <section className="products-import-card">
+        <div><strong>Import product catalogue</strong><p>Upload CSV with name, purchasePrice, sellingPrice and mrp. Opening stock is deliberately excluded.</p></div>
+        <label className="products-secondary">Choose CSV<input type="file" accept=".csv,text/csv" disabled={importBusy} onChange={event=>{void previewCatalogueImport(event.target.files?.[0]);event.target.value='';}}/></label>
+        {importBusy && <span>Processing import…</span>}
+        {importPreview && <div className="products-import-preview"><b>{importPreview.validRows} valid · {importPreview.invalidRows} need correction · {importPreview.totalRows} rows</b>{importPreview.rows.filter(row=>!row.valid).slice(0,5).map(row=><small key={row.rowNumber}>Row {row.rowNumber}: {row.errors.join('; ')}</small>)}<button className="products-primary" onClick={()=>void commitCatalogueImport()} disabled={importBusy||!importPreview.validRows}>Import valid rows</button></div>}
+        {importMessage && <p className="products-stock-note">{importMessage}</p>}
+      </section>}
       {error && <div className="products-error">{error}</div>}
 
       <div className="products-table-card"><div className="products-table-wrap">

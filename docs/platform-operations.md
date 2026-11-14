@@ -44,7 +44,7 @@ The Advanced Inventory workspace exposes batch receipts and expiry lists, serial
 
 - Reports expose `GET /api/v1/reports/gst/einvoice-readiness?from=YYYY-MM-DD&to=YYYY-MM-DD` for issued B2B invoices. It checks seller/recipient GSTIN format, invoice number length, state codes, recipient name, HSN/UQC/quantity/taxable values and GST component reconciliation.
 - The preflight is a data-quality checklist only. It does not decide statutory e-invoice applicability/turnover thresholds or generate IRNs itself. The separate GSP adapter workflow can submit approved invoice payloads and retain returned IRN/acknowledgement metadata when a certified provider is configured; it does not itself certify statutory applicability or produce a signed QR code.
-- `GET /api/v1/reports/accounting/journal-export?from=YYYY-MM-DD&to=YYYY-MM-DD` downloads posted journal lines as a generic accounting interchange CSV. Map ledger codes/names and reconcile opening balances before importing into Tally or another accounting package. It is not an official Tally XML or live sync connector.
+- `GET /api/v1/reports/accounting/journal-export?from=YYYY-MM-DD&to=YYYY-MM-DD` downloads posted journal lines as a generic accounting interchange CSV. Map ledger codes/names and reconcile opening balances before importing into Tally or another accounting package. A separate Tally XML voucher export is also available as an import draft; neither file is a live synchronization connector.
 
 ## Natural-language business assistant
 
@@ -115,3 +115,29 @@ The Advanced Inventory workspace exposes batch receipts and expiry lists, serial
 - Owner/admin can query `GET /api/v1/platform/operations/metrics` for tenant-scoped API/database status, webhook and communication queue counts, offline sync backlog, latest backup age, latest replication status and actionable alerts.
 - Alerts currently identify database disconnection, dead-letter deliveries, missing/stale backups and failed latest backup replication.
 - Metrics are a polling API for an external monitoring system or the Platform Operations workspace. Configure an external monitor to poll periodically and route critical alerts to an on-call channel; this endpoint does not itself deliver PagerDuty/email/SMS alerts or replace infrastructure monitoring.
+
+
+## Tally accounting interchange
+
+- Owner/admin and report-authorized users can download posted journals as XML using `GET /api/v1/reports/accounting/tally-xml?from=YYYY-MM-DD&to=YYYY-MM-DD`.
+- The export includes posted voucher date/number/narration and debit/credit ledger entries. Unbalanced journals or invalid negative/two-sided ledger lines are rejected. Export is capped at 2,000 vouchers and reports truncation.
+- The file is an interchange draft, not a live Tally connector or a guarantee of compatibility with every Tally release. Replace the company placeholder, map ledger names, validate voucher types/sign conventions and import into a test company first. Reconcile opening balances and voucher totals before production use.
+
+## Product catalogue migration
+
+- Owner/admin can submit up to 200 product rows to `POST /api/v1/products/import/preview` as `{ "rows": [...] }`, then submit the same corrected rows to `POST /api/v1/products/import/commit`.
+- Required fields: `name`, `purchasePrice`, `sellingPrice`, `mrp`. Optional fields include `sku`, `barcode`, `description`, `gstRate`, `hsnCode`, `unit` and `trackStock`.
+- Preview checks field constraints, GST rates, duplicate SKUs within the file and existing tenant SKUs. Commit creates valid products independently and returns row-level failures. SKU uniqueness makes safe retry of already-created rows possible.
+- Import intentionally creates products with zero opening stock. Opening quantity and valuation must be reconciled and posted through the separate controlled inventory valuation workflow. Do not include customer data, credentials or secrets in import rows.
+
+## Comparative business assistant
+
+- Ask the existing assistant to `compare sales this month vs last month`, `compare sales last 7 days` or `compare revenue last 30 days`.
+- It compares issued invoice net sales after credit notes over the selected period with the immediately preceding complete period, returning INR amount and percentage movement.
+- The assistant remains deterministic and allowlisted. It does not send business data to an external LLM, issue arbitrary database queries, forecast sales or execute mutations.
+
+## Off-site backup receiver acknowledgement
+
+- A replication receiver must return JSON `{ "status": "STORED", "sha256": "<exact x-solstra-backup-sha256>", "tenantId": "<exact x-solstra-tenant-id>" }` after durable storage.
+- Solstra marks replication successful only when the receiver confirms the exact archive checksum and tenant identity. A generic HTTP 200 or mismatched acknowledgement is treated as replication failure and remains retryable.
+- Receiver acknowledgement still does not prove a full restore. Keep independent storage retention, access controls, immutable/versioned copies and scheduled isolated restore rehearsals.

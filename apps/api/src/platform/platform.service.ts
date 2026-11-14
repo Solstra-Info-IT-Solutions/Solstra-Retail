@@ -1018,7 +1018,12 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     try {
       const response = await fetch(endpoint, { method: 'POST', redirect: 'manual', signal: controller.signal, headers: { authorization: 'Bearer ' + token, 'content-type': 'application/gzip', 'x-solstra-backup-file': artifact.fileName, 'x-solstra-backup-sha256': checksum, 'x-solstra-tenant-id': tenantId }, body: new Uint8Array(bytes) });
       if (!response.ok) throw new Error('Replication target returned HTTP ' + response.status);
-      await this.backupReplicationEvents.create({ tenantId: new Types.ObjectId(tenantId), artifactId: artifact._id, status: 'SUCCEEDED', message: 'Off-site backup replication acknowledged by configured target.', replicatedAt: new Date() });
+      let acknowledgement: any;
+      try { acknowledgement = await response.json(); } catch { throw new Error('Replication receiver must return a JSON storage acknowledgement'); }
+      if (acknowledgement?.status !== 'STORED' || acknowledgement?.sha256 !== checksum || String(acknowledgement?.tenantId || '') !== tenantId) {
+        throw new Error('Replication receiver acknowledgement did not confirm the exact checksum and tenant');
+      }
+      await this.backupReplicationEvents.create({ tenantId: new Types.ObjectId(tenantId), artifactId: artifact._id, status: 'SUCCEEDED', message: 'Off-site receiver confirmed durable storage for the exact tenant archive checksum.', replicatedAt: new Date() });
       return { status: 'SUCCEEDED', checksumSha256: checksum };
     } catch (error: any) {
       await this.backupReplicationEvents.create({ tenantId: new Types.ObjectId(tenantId), artifactId: artifact._id, status: 'FAILED', message: String(error?.message || 'Replication failed').slice(0, 500) });

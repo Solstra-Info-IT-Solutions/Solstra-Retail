@@ -159,6 +159,18 @@ export class ReportsController {
   }
 
   @Permissions('reports.view')
+  @Get('reports/accounting/tally-xml')
+  async tallyXmlExport(@Req() req: AuthenticatedRequest, @Query() query: ReportDateRangeDto, @Res() response: Response) {
+    const file = await this.reportsService.tallyXmlExport(req.user.tenantId, query);
+    return response.status(200).set({
+      'Content-Type': file.contentType,
+      'Content-Disposition': `attachment; filename="${file.filename}"`,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    }).send(file.content);
+  }
+
+  @Permissions('reports.view')
   @Get('reports/gst/export/:report')
   async gstCsvExport(
     @Req() req: AuthenticatedRequest,

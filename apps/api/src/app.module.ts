@@ -1,4 +1,4 @@
-﻿
+﻿ 
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -15,6 +15,7 @@ import { PurchasesModule } from './purchases/purchases.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
 import { ReportsModule } from './reports/reports.module';
 import { AccountingModule } from './accounting/accounting.module';
+import { ExpensesModule } from './expenses/expenses.module';
 import { TrialGuard } from './common/guards/trial.guard';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -26,7 +27,6 @@ import { HealthController } from './health.controller';
       isGlobal: true,
       envFilePath: ['apps/api/.env', '.env'],
     }),
-
     MongooseModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
@@ -34,42 +34,15 @@ import { HealthController } from './health.controller';
         autoIndex: config.get<string>('NODE_ENV') !== 'production',
       }),
     }),
-
-    AuthModule,
-    TenantsModule,
-    ProductsModule,
-    InventoryModule,
-    SalesModule,
-    CustomersModule,
-    CategoriesModule,
-    PurchasesModule,
-    SuppliersModule,
-    ReportsModule,
-    AccountingModule,
+    AuthModule, TenantsModule, ProductsModule, InventoryModule, SalesModule,
+    CustomersModule, CategoriesModule, PurchasesModule, SuppliersModule,
+    ReportsModule, AccountingModule, ExpensesModule,
   ],
-
   controllers: [HealthController],
-
   providers: [
-    {
-      provide: APP_GUARD,
-      useClass: JwtAuthGuard,
-    },
-    {
-      provide: APP_GUARD,
-      useClass: RolesGuard,
-    },
-    {
-      provide: APP_GUARD,
-      useClass: TrialGuard,
-    },
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
+    { provide: APP_GUARD, useClass: TrialGuard },
   ],
 })
 export class AppModule {}
-
-
-
-
-
-
-

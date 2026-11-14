@@ -1,0 +1,174 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import { tenantFilter } from '../common/tenant-scoped.service';
+import { AccountingService } from '../accounting/accounting.service';
+import { CreateExpenseDto } from './dto/create-expense.dto';
+import { AddExpensePaymentDto } from './dto/add-expense-payment.dto';
+import { ListExpensesDto } from './dto/list-expenses.dto';
+import { Expense, ExpenseDocument } from './schemas/expense.schema';
+
+@Injectable()
+export class ExpensesService {
+  constructor(
+    @InjectModel(Expense.name) private readonly expenses: Model<ExpenseDocument>,
+    private readonly accounting: AccountingService,
+  ) {}
+
+  async create(tenantId: string, userId: string, dto: CreateExpenseDto) {
+    this.validateIdentity(tenantId, userId);
+    const title = dto.title?.trim();
+    const category = dto.category?.trim();
+    const amountPaise = this.toPaise(dto.amount);
+    if (!title || !category || title.length > 120 || category.length > 60 || amountPaise <= 0) {
+      throw new BadRequestException('A valid title, category and positive amount are required');
+    }
+    const expenseDate = dto.expenseDate ? new Date(dto.expenseDate) : new Date();
+    if (Number.isNaN(expenseDate.getTime())) throw new BadRequestException('Invalid expense date');
+    const session = await this.expenses.db.startSession();
+    let created: ExpenseDocument | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const [expense] = await this.expenses.create([{
+          tenantId: new Types.ObjectId(tenantId), createdBy: new Types.ObjectId(userId),
+          title, category, description: dto.description?.trim() || '',
+          amount: amountPaise / 100, expenseDate,
+          payee: dto.payee?.trim() || '', reference: dto.reference?.trim() || '',
+          attachmentUrl: dto.attachmentUrl?.trim() || '',
+          status: 'UNPAID', paidAmount: 0, dueAmount: amountPaise / 100, payments: [],
+        }], { session });
+        await this.accounting.postOperationalJournal({
+          tenantId, userId, postingDate: expenseDate,
+          narration: `Expense: ${title}`, sourceType: 'EXPENSE', sourceId: expense._id.toString(),
+          lines: [
+            { accountCode: '5200', debit: amountPaise / 100, credit: 0, description: category },
+            { accountCode: '2000', debit: 0, credit: amountPaise / 100, description: dto.payee?.trim() || title },
+          ],
+          session,
+        });
+        created = expense;
+      });
+    } finally {
+      await session.endSession();
+    }
+    if (!created) throw new Error('Expense could not be created');
+    return created;
+  }
+
+  async addPayment(tenantId: string, userId: string, id: string, dto: AddExpensePaymentDto) {
+    this.validateIdentity(tenantId, userId);
+    if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid expense ID');
+    const key = dto.idempotencyKey?.trim();
+    const amountPaise = this.toPaise(dto.amount);
+    if (!key || !/^[0-9a-f-]{36}$/i.test(key) || amountPaise <= 0) {
+      throw new BadRequestException('A valid idempotency key and positive payment amount are required');
+    }
+    const session = await this.expenses.db.startSession();
+    let result: ExpenseDocument | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const expense = await this.expenses.findOne(
+          tenantFilter(tenantId, { _id: new Types.ObjectId(id) }),
+        ).session(session);
+        if (!expense) throw new NotFoundException('Expense not found');
+        if (expense.payments.some((payment) => payment.idempotencyKey === key)) {
+          result = expense;
+          return;
+        }
+        const duePaise = this.toPaise(expense.dueAmount);
+        if (amountPaise > duePaise) throw new BadRequestException('Payment exceeds the outstanding expense amount');
+        const method = dto.method;
+        const cashOrBank = method === 'CASH' ? '1000' : '1010';
+        const paidAt = new Date();
+        expense.payments.push({
+          idempotencyKey: key, method, amount: amountPaise / 100,
+          reference: dto.reference?.trim() || '', paidAt, paidBy: new Types.ObjectId(userId),
+        } as any);
+        expense.paidAmount = this.toPaise(expense.paidAmount + amountPaise / 100) / 100;
+        expense.dueAmount = (duePaise - amountPaise) / 100;
+        expense.status = expense.dueAmount === 0 ? 'PAID' : 'PARTIALLY_PAID';
+        await expense.save({ session });
+        await this.accounting.postOperationalJournal({
+          tenantId, userId, postingDate: paidAt,
+          narration: `Payment for expense: ${expense.title}`,
+          sourceType: 'PAYMENT', sourceId: `EXPENSE:${expense._id.toString()}:${key}`,
+          lines: [
+            { accountCode: '2000', debit: amountPaise / 100, credit: 0, description: expense.title },
+            { accountCode: cashOrBank, debit: 0, credit: amountPaise / 100, description: method },
+          ],
+          session,
+        });
+        result = expense;
+      });
+    } finally {
+      await session.endSession();
+    }
+    if (!result) throw new Error('Expense payment could not be recorded');
+    return result;
+  }
+
+  async findAll(tenantId: string, query: ListExpensesDto) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant ID');
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const filter: Record<string, any> = {};
+    if (query.status) filter.status = query.status;
+    if (query.from || query.to) {
+      const from = query.from ? new Date(query.from) : null;
+      const to = query.to ? new Date(query.to) : null;
+      if ((from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime())) || (from && to && from > to)) {
+        throw new BadRequestException('Invalid expense date range');
+      }
+      filter.expenseDate = {};
+      if (from) filter.expenseDate.$gte = from;
+      if (to) filter.expenseDate.$lte = to;
+    }
+    if (query.search?.trim()) {
+      const escaped = query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = [
+        { title: { $regex: escaped, $options: 'i' } },
+        { category: { $regex: escaped, $options: 'i' } },
+        { payee: { $regex: escaped, $options: 'i' } },
+        { reference: { $regex: escaped, $options: 'i' } },
+      ];
+    }
+    const scoped = tenantFilter(tenantId, filter);
+    const [items, total, summary] = await Promise.all([
+      this.expenses.find(scoped).sort({ expenseDate: -1, createdAt: -1 })
+        .skip((page - 1) * limit).limit(limit).lean(),
+      this.expenses.countDocuments(scoped),
+      this.expenses.aggregate([
+        { $match: tenantFilter(tenantId, {}) },
+        { $group: {
+          _id: null, totalAmount: { $sum: '$amount' },
+          paidAmount: { $sum: '$paidAmount' }, dueAmount: { $sum: '$dueAmount' },
+          expenseCount: { $sum: 1 },
+        } },
+      ]),
+    ]);
+    return {
+      items, summary: summary[0] ?? { totalAmount: 0, paidAmount: 0, dueAmount: 0, expenseCount: 0 },
+      pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  async findOne(tenantId: string, id: string) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid tenant or expense ID');
+    }
+    const expense = await this.expenses.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(id) })).lean();
+    if (!expense) throw new NotFoundException('Expense not found');
+    return expense;
+  }
+
+  private toPaise(value: number): number {
+    if (!Number.isFinite(value)) throw new BadRequestException('Invalid monetary amount');
+    return Math.round((value + Number.EPSILON) * 100);
+  }
+
+  private validateIdentity(tenantId: string, userId: string) {
+    if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid tenant or user identity');
+    }
+  }
+}

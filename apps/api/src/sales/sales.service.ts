@@ -1564,12 +1564,13 @@ if (existingPayment) {
                   sourceId: { $in: previousCreditNoteIds.map((id: any) => String(id)) },
                 })).session(session).lean()
               : [];
-            const earnedPoints = Number(earned.points || 0);\n            const previouslyClawedBack = previousClawbacks.reduce((sum: number, row: any) => sum + row.points, 0);
+            const earnedPoints = Number(earned.points || 0);
+            const previouslyClawedBack = previousClawbacks.reduce((sum: number, row: any) => sum + row.points, 0);
             const cumulativeReturnedTaxablePaise = previousNotes.reduce((sum: number, note: any) => sum + this.toPaise(note.taxableValue || 0), 0) + taxableTotalPaise;
             const originalTaxablePaise = this.toPaise(invoice.taxableValue);
-            const targetClawback = Math.min(earned.points, cumulativeReturnedTaxablePaise >= originalTaxablePaise
-              ? earned.points
-              : Math.floor(earned.points * cumulativeReturnedTaxablePaise / originalTaxablePaise));
+            const targetClawback = Math.min(earnedPoints, cumulativeReturnedTaxablePaise >= originalTaxablePaise
+              ? earnedPoints
+              : Math.floor(earnedPoints * cumulativeReturnedTaxablePaise / originalTaxablePaise));
             const requestedClawback = Math.max(0, targetClawback - previouslyClawedBack);
             if (requestedClawback > 0) {
               const customer = await this.customers.findOne(tenantFilter(tenantId, { _id: invoice.customerId, isDeleted: false })).session(session);

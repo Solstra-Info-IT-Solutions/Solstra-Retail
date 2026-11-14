@@ -511,7 +511,15 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
         webhookDeliveries += result.processed;
       } catch { /* Failed delivery attempts remain queued with retry metadata. */ }
     }
-    return { backups, webhookDeliveries };
+    const communicationTenants = await this.communicationDeliveries.distinct('tenantId', { status: 'PENDING', nextAttemptAt: { $lte: new Date() } });
+    let communicationDeliveries = 0;
+    for (const tenantId of communicationTenants.slice(0, 20)) {
+      try {
+        const result = await this.runCommunicationDeliveries(String(tenantId), 20);
+        communicationDeliveries += result.processed;
+      } catch { /* Failed communication attempts retain retry state. */ }
+    }
+    return { backups, webhookDeliveries, communicationDeliveries };
   }
 
   async runScheduledBackupJobs() {
@@ -541,8 +549,13 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       const tenantId = String(policy.tenantId);
       try {
         const archive = await this.exportTenantBackup(tenantId);
-        await this.storeBackupArtifact(tenantId, archive, Number(policy.retentionDays || 30));
-        await this.backupPolicies.updateOne({ _id: policy._id, tenantId: policy.tenantId }, { $set: { lastRunAt: new Date(), lastStatus: 'STORED_IN_CLUSTER' } });
+        const artifact = await this.storeBackupArtifact(tenantId, archive, Number(policy.retentionDays || 30));
+        let replicationStatus = 'OFFSITE_NOT_CONFIGURED';
+        try {
+          const replication = await this.replicateBackupArtifact(tenantId, String(artifact._id));
+          replicationStatus = replication.status;
+        } catch { replicationStatus = 'OFFSITE_FAILED'; }
+        await this.backupPolicies.updateOne({ _id: policy._id, tenantId: policy.tenantId }, { $set: { lastRunAt: new Date(), lastStatus: replicationStatus === 'SUCCEEDED' ? 'REPLICATED_OFFSITE' : replicationStatus === 'OFFSITE_FAILED' ? 'STORED_IN_CLUSTER_REPLICATION_FAILED' : 'STORED_IN_CLUSTER_OFFSITE_NOT_CONFIGURED' } });
         processed += 1;
       } catch (error: any) {
         await this.backupPolicies.updateOne({ _id: policy._id, tenantId: policy.tenantId }, { $set: { lastStatus: 'FAILED', nextRunAt: new Date(Date.now() + 15 * 60 * 1000) } });

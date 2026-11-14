@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { ShieldCheck, UserPlus, RefreshCw, Save } from 'lucide-react';
+import { UserPlus, RefreshCw, Save } from 'lucide-react';
 import { api } from '../api/client';
 import './StaffPage.css';
 

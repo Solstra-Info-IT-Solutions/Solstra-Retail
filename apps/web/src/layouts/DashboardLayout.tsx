@@ -1,7 +1,7 @@
 ﻿import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
-  LayoutDashboard, ShoppingCart, Package, Users, Warehouse,
+  LayoutDashboard, ShoppingCart, Package, Users, Warehouse, Boxes,
   Truck, ClipboardList, BarChart3, ReceiptText, Building2,
   Menu, X, LogOut, Search, Languages, ShieldCheck, History, Receipt, BadgePercent, Settings2, type LucideIcon
 } from 'lucide-react';
@@ -15,6 +15,7 @@ const navigation: Array<{ label: string; path: string; icon: LucideIcon; permiss
   { label: 'Promotions', path: '/promotions', icon: BadgePercent, adminOnly: true },
   { label: 'Products', path: '/products', icon: Package, permission: 'products.view' },
   { label: 'Inventory', path: '/inventory', icon: Warehouse, permission: 'inventory.view' },
+  { label: 'Advanced Inventory', path: '/inventory/advanced', icon: Boxes, permission: 'inventory.view' },
   { label: 'Customers', path: '/customers', icon: Users, permission: 'customers.view' },
   { label: 'Suppliers', path: '/suppliers', icon: Truck, permission: 'suppliers.view' },
   { label: 'Purchases', path: '/purchases', icon: ClipboardList, permission: 'purchases.view' },

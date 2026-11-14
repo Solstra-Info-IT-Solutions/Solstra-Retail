@@ -1367,7 +1367,7 @@ describe('Authentication HTTP E2E', () => {
 
     await tenants.updateOne(
       { _id: owner.body.tenant.id },
-      { $set: { stateCode: '09' } },
+      { $set: { stateCode: '09', gstin: '09ABCDE1234F1Z5' } },
     );
     const product = await request(app.getHttpServer())
       .post('/api/v1/products')

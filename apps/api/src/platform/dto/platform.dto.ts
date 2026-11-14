@@ -26,6 +26,7 @@ export class OfflineSaleOperationDto {
 }
 export class OfflineSyncBatchDto {
   @IsOptional() @IsUUID() deviceId?: string;
+  @IsOptional() @IsInt() @Min(1) batchSequence?: number;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => OfflineSaleOperationDto) operations!: OfflineSaleOperationDto[];
 }
 export class RegisterOfflineDeviceDto {

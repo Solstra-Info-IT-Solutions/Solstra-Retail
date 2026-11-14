@@ -197,3 +197,28 @@ The Advanced Inventory workspace exposes batch receipts and expiry lists, serial
 
 - Owner/admin endpoint `GET /api/v1/platform/operations/security-posture` checks database connectivity/replica-set detection and presence of encryption, JWT, backup receiver, GST GSP and payment webhook configuration.
 - The dashboard reports configuration presence only. It is not a penetration test, key-strength/rotation audit, external provider connectivity test or compliance certification.
+
+## Communication provider credential rotation
+
+- Owner/admin can rotate a configured communication provider credential with `POST /api/v1/platform/communications/providers/:id/rotate-secret` and body `{ "apiToken": "<replacement-token>" }`.
+- The replacement token is encrypted with AES-256-GCM and the old token is invalidated immediately. The API never returns stored credentials. Update the provider-side token before the next queued delivery.
+- This endpoint rotates credentials only; it does not certify provider connectivity or validate the new token against the external service.
+
+## Migration export integrity manifest
+
+- Every migration export page includes `totalMatching`, `pageSha256` and `integrityAlgorithm: SHA-256` metadata.
+- The Reports workspace verifies each page checksum in the browser before adding records to the downloaded file. The resulting V2 JSON contains a per-page manifest, source record count and a complete/partial indicator.
+- A partial export (20,000-record UI cap or changed source count during paging) must not be treated as a complete migration. Re-run or continue from the API cursor and reconcile source totals at cutover.
+
+## Sequenced multi-device offline sync
+
+- Updated browser clients attach a monotonically increasing `batchSequence` to each device sync request. The server binds each accepted sequence to a SHA-256 fingerprint of the entire operation batch and stores the acknowledged result on the tenant/user/device record.
+- An exact retry of the most recently acknowledged sequence replays the stored result without recreating invoices. Reusing a sequence with different content, or sending an older sequence, is rejected as a conflict.
+- Per-invoice tenant-scoped idempotency keys remain the final duplicate-sale protection. A later batch sequence can retry invoices whose prior per-operation result was FAILED.
+- Legacy clients may omit `batchSequence` during the compatibility window; their per-invoice idempotency behavior remains unchanged.
+
+## API request rate limiting
+
+- The API applies a process-local fixed-window rate limit before authentication: 10 requests per 15 minutes per client IP for login/register/refresh routes, and 300 requests per minute per client IP for other HTTP methods. Health checks are excluded.
+- Responses expose `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` and `Retry-After` headers.
+- This in-memory limiter protects a single API process. Multi-instance deployments must add a shared Redis/API-gateway limiter and configure trusted proxy handling at the ingress; this guard is not a distributed quota or DDoS mitigation service.

@@ -8,9 +8,24 @@ describe('ExpensesService', () => {
 
   const createService = () => {
     const expenses = { db: { startSession: jest.fn() } };
+    const journals = { find: jest.fn() };
     const accounting = { postOperationalJournal: jest.fn() };
-    return { service: new ExpensesService(expenses as any, accounting as any), expenses, accounting };
+    return { service: new ExpensesService(expenses as any, accounting as any, journals as any), expenses, accounting, journals };
   };
+
+  it('rejects an invalid tenant before querying the expense reconciliation', async () => {
+    const { service, journals } = createService();
+    await expect(service.reconciliation('invalid-tenant', {} as any))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(journals.find).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid reconciliation date range before querying data', async () => {
+    const { service, journals } = createService();
+    await expect(service.reconciliation(tenantId, { from: 'not-a-date' } as any))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(journals.find).not.toHaveBeenCalled();
+  });
 
   it('rejects invalid tenant and user identities before opening a transaction', async () => {
     const { service, expenses } = createService();

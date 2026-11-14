@@ -11,7 +11,6 @@ describe('ReportsService validation', () => {
     const service = new ReportsService(
       invoices as any,
       {} as any,
-      {} as any,
       products as any,
       {} as any,
       {} as any,

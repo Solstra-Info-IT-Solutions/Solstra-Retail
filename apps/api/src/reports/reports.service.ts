@@ -148,6 +148,67 @@ export class ReportsService {
     return result[0]?.total ?? 0;
   }
 
+  async migrationReadiness(tenantId: string) {
+    if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant context');
+    const tenantObjectId = new Types.ObjectId(tenantId);
+    const [inventory, journalIssues, purchaseQuality, accountCount] = await Promise.all([
+      this.products.aggregate([
+        { $match: tenantFilter(tenantId, { isDeleted: false }) },
+        { $group: {
+          _id: null,
+          activeProducts: { $sum: 1 },
+          stockedProducts: { $sum: { $cond: [{ $gt: ['$stockQty', 0] }, 1, 0] } },
+          pendingValuationProducts: { $sum: { $cond: [{ $and: [{ $gt: ['$stockQty', 0] }, { $ne: ['$valuationInitialized', true] }] }, 1, 0] } },
+          quantityWithoutVerifiedValuation: { $sum: { $cond: [{ $and: [{ $gt: ['$stockQty', 0] }, { $ne: ['$valuationInitialized', true] }] }, '$stockQty', 0] } },
+          aggregateInventoryValue: { $sum: '$inventoryValue' },
+        } },
+      ]),
+      this.journals.find(tenantFilter(tenantId, {
+        status: 'POSTED',
+        $expr: { $gt: [{ $abs: { $subtract: ['$totalDebit', '$totalCredit'] } }, 0.01] },
+      })).select('entryNumber postingDate totalDebit totalCredit sourceType sourceId').limit(50).lean(),
+      this.purchases.countDocuments(tenantFilter(tenantId, {
+        status: { $ne: 'CANCELLED' },
+        $or: [{ supplierInvoiceDate: null }, { supplierInvoiceDate: { $exists: false } }],
+      })),
+      this.accounts.countDocuments(tenantFilter(tenantId, { isActive: true })),
+    ]);
+    const stock = inventory[0] || {
+      activeProducts: 0, stockedProducts: 0, pendingValuationProducts: 0,
+      quantityWithoutVerifiedValuation: 0, aggregateInventoryValue: 0,
+    };
+    const checks = [
+      { key: 'OPENING_INVENTORY_VALUATION', status: stock.pendingValuationProducts ? 'ACTION_REQUIRED' : 'READY', affectedRecords: stock.pendingValuationProducts, description: 'Positive-stock products without verified opening valuation' },
+      { key: 'POSTED_JOURNAL_BALANCE', status: journalIssues.length ? 'ACTION_REQUIRED' : 'READY', affectedRecords: journalIssues.length, description: 'Posted journal entries with debit/credit imbalance above ₹0.01 (first 50 shown)' },
+      { key: 'PURCHASE_INVOICE_DATES', status: purchaseQuality ? 'REVIEW' : 'READY', affectedRecords: purchaseQuality, description: 'Purchases without supplier invoice date; confirm legacy date before GST migration' },
+      { key: 'CHART_OF_ACCOUNTS', status: accountCount ? 'READY' : 'ACTION_REQUIRED', affectedRecords: accountCount ? 0 : 1, description: 'Active chart-of-accounts records available for opening balance mapping' },
+    ];
+    return {
+      tenantId: tenantObjectId,
+      generatedAt: new Date(),
+      mode: 'READ_ONLY_MIGRATION_PREFLIGHT',
+      summary: {
+        activeProducts: stock.activeProducts,
+        stockedProducts: stock.stockedProducts,
+        pendingValuationProducts: stock.pendingValuationProducts,
+        quantityWithoutVerifiedValuation: stock.quantityWithoutVerifiedValuation,
+        aggregateInventoryValue: stock.aggregateInventoryValue,
+        postedJournalImbalances: journalIssues.length,
+        purchasesMissingSupplierInvoiceDate: purchaseQuality,
+        activeAccounts: accountCount,
+        actionRequired: checks.filter(check => check.status === 'ACTION_REQUIRED').length,
+        reviewRequired: checks.filter(check => check.status === 'REVIEW').length,
+      },
+      checks,
+      journalIssues,
+      limitations: [
+        'This preflight is read-only and does not import, rewrite or post historical transactions.',
+        'Historical opening balances must be approved and posted through the controlled opening-balance workflow after source-ledger reconciliation.',
+        'Journal imbalance results are capped at 50; resolve every exception before migration sign-off.',
+      ],
+    };
+  }
+
   async dashboardSummary(tenantId: string) {
     if (!Types.ObjectId.isValid(tenantId)) {
       throw new BadRequestException('Invalid tenant context');

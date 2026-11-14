@@ -168,7 +168,7 @@ export class AdvancedInventoryService {
             if (product.stockQty === 0) product.inventoryValue = 0;
             else product.averageCost = product.inventoryValue / product.stockQty;
             await product.save({ session });
-            const [movement] = await this.movements.create([{ tenantId: take.tenantId, productId: line.productId, warehouseId: take.warehouseId, type: 'ADJUSTMENT', quantityDelta: delta, previousQty: currentQty, newQty: line.countedQty, reason: 'Stocktake ' + take.reference, performedBy: new Types.ObjectId(userId) }], { session });
+            await this.movements.create([{ tenantId: take.tenantId, productId: line.productId, warehouseId: take.warehouseId, type: 'ADJUSTMENT', quantityDelta: delta, previousQty: currentQty, newQty: line.countedQty, reason: 'Stocktake ' + take.reference, performedBy: new Types.ObjectId(userId) }], { session });
             const adjustmentValuePaise = Math.round(Math.abs(delta) * unitCost * 100);
             if (adjustmentValuePaise > 0) {
               const increase = delta > 0;

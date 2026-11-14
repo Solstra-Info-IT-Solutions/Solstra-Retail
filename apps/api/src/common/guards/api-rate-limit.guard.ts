@@ -22,21 +22,20 @@ export class ApiRateLimitGuard implements CanActivate {
     const routeGroup = isAuthentication ? 'AUTH' : String(request.method || 'GET').toUpperCase();
     const key = routeGroup + ':' + identity;
     let bucket = this.buckets.get(key);
+    if (!bucket && this.buckets.size >= 20_000) {
+      for (const [bucketKey, value] of this.buckets) {
+        if (value.resetAt <= now) this.buckets.delete(bucketKey);
+      }
+      if (this.buckets.size >= 20_000) {
+        throw new TooManyRequestsException('API rate-limit capacity is temporarily exhausted. Retry shortly.');
+      }
+    }
 
     if (!bucket || bucket.resetAt <= now) {
       bucket = { count: 0, resetAt: now + (isAuthentication ? 15 * this.windowMs : this.windowMs) };
       this.buckets.set(key, bucket);
     }
     bucket.count += 1;
-
-    if (this.buckets.size >= 20_000) {
-      for (const [bucketKey, value] of this.buckets) {
-        if (value.resetAt <= now) this.buckets.delete(bucketKey);
-      }
-      if (this.buckets.size >= 20_000 && !this.buckets.has(key)) {
-        throw new TooManyRequestsException('API rate-limit capacity is temporarily exhausted. Retry shortly.');
-      }
-    }
 
     const remaining = Math.max(0, limit - bucket.count);
     response.setHeader('X-RateLimit-Limit', String(limit));

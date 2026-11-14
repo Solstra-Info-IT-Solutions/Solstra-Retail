@@ -8,7 +8,7 @@ describe('PlatformService security boundaries', () => {
   const createService = (allowedUsers = '') => new PlatformService(
     {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
     {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
-    {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
     { get: jest.fn().mockReturnValue(allowedUsers) } as any,
   );
 
@@ -50,6 +50,23 @@ describe('PlatformService security boundaries', () => {
     const service = createService();
     await expect(service.handleRazorpayWebhook(Buffer.from('{}'), undefined))
       .rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('rejects unsigned communication delivery receipts', async () => {
+    const service = createService();
+    await expect(service.recordCommunicationReceipt('507f1f77bcf86cd799439013', Buffer.from('{}'), undefined))
+      .rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('rejects invalid tenant context before operational metrics queries', async () => {
+    const service = createService();
+    await expect(service.operationsMetrics('invalid-tenant')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.listBackupRestoreDrills('invalid-tenant')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects invalid backup artifact IDs before restore drill reads', async () => {
+    const service = createService();
+    await expect(service.runBackupRestoreDrill(tenantId, 'invalid-id')).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('denies SaaS-wide access when no platform operator allowlist is configured', async () => {

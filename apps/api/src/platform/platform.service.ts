@@ -20,7 +20,7 @@ import { User } from '../auth/schemas/user.schema';
 import { Product } from '../products/schemas/product.schema';
 import { WarehouseStock } from '../inventory/schemas/warehouse-stock.schema';
 import {
-  AutomationExecution, AutomationRule, BackupArtifact, BackupPolicy, OfflineSyncRecord, PlatformNotification, SaasAdminAudit,
+  AutomationExecution, AutomationRule, BackupArtifact, BackupPolicy, BackupRestoreDrill, OfflineSyncRecord, PlatformNotification, SaasAdminAudit,
   WebhookDelivery, WebhookIntegration, CommunicationProvider, CommunicationDelivery, SubscriptionInvoice, BackupReplicationEvent,
 } from './schemas/platform.schema';
 import {
@@ -67,6 +67,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     @InjectModel(CommunicationDelivery.name) private readonly communicationDeliveries: Model<any>,
     @InjectModel(SubscriptionInvoice.name) private readonly subscriptionInvoices: Model<any>,
     @InjectModel(BackupReplicationEvent.name) private readonly backupReplicationEvents: Model<any>,
+    @InjectModel(BackupRestoreDrill.name) private readonly backupRestoreDrills: Model<any>,
     private readonly sales: SalesService,
     private readonly config: ConfigService,
   ) {}
@@ -734,6 +735,42 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     return { items, pagination: { page: safePage, limit: 20, total, totalPages: Math.ceil(total / 20) } };
   }
 
+  async recordCommunicationReceipt(deliveryId: string, rawBody: Buffer | undefined, signature: string | undefined) {
+    if (!Types.ObjectId.isValid(deliveryId) || !rawBody?.length || !signature || !/^[a-f0-9]{64}$/i.test(signature)) {
+      throw new ForbiddenException('Invalid communication delivery receipt signature');
+    }
+    const delivery: any = await this.communicationDeliveries.findOne({ _id: new Types.ObjectId(deliveryId) }).lean();
+    if (!delivery) throw new NotFoundException('Communication delivery not found');
+    const provider: any = await this.communicationProviders.findOne(tenantFilter(String(delivery.tenantId), { _id: delivery.providerId, enabled: true }))
+      .select('+encryptedSecret +secretIv +secretTag').lean();
+    if (!provider) throw new ForbiddenException('Communication provider is unavailable');
+    const secret = this.decryptSecret(provider, await this.encryptionKey());
+    const expected = createHmac('sha256', secret).update(rawBody).digest();
+    const received = Buffer.from(signature, 'hex');
+    if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
+      throw new ForbiddenException('Invalid communication delivery receipt signature');
+    }
+    let event: any;
+    try { event = JSON.parse(rawBody.toString('utf8')); } catch { throw new BadRequestException('Invalid communication receipt payload'); }
+    if (String(event.deliveryId || '') !== deliveryId || !['delivered', 'failed'].includes(String(event.status || '').toLowerCase())) {
+      throw new BadRequestException('Communication receipt does not match the delivery or has an unsupported status');
+    }
+    const delivered = String(event.status).toLowerCase() === 'delivered';
+    const updated = await this.communicationDeliveries.findOneAndUpdate(
+      { _id: delivery._id, tenantId: delivery.tenantId, status: { $in: ['DELIVERED', 'PENDING', 'DELIVERING', 'FAILED'] } },
+      { $set: {
+        status: delivered ? 'DELIVERED' : 'FAILED',
+        providerMessageId: String(event.providerMessageId || '').slice(0, 160),
+        deliveredAt: delivered ? new Date() : null,
+        failedAt: delivered ? null : new Date(),
+        lastError: delivered ? '' : String(event.reason || 'Provider reported delivery failure').slice(0, 500),
+      } },
+      { new: true },
+    ).select('_id status providerMessageId deliveredAt failedAt').lean();
+    if (!updated) throw new ConflictException('Communication delivery is no longer eligible for receipt updates');
+    return updated;
+  }
+
   async runCommunicationDeliveries(tenantId: string, limit = 20) {
     this.identity(tenantId);
     const safeLimit = Math.min(50, Math.max(1, Math.floor(limit) || 20));
@@ -987,6 +1024,105 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       await this.backupReplicationEvents.create({ tenantId: new Types.ObjectId(tenantId), artifactId: artifact._id, status: 'FAILED', message: String(error?.message || 'Replication failed').slice(0, 500) });
       throw new ServiceUnavailableException('Off-site backup replication failed; the in-cluster backup remains available for retry');
     } finally { clearTimeout(timeout); }
+  }
+
+  async runBackupRestoreDrill(tenantId: string, artifactId: string) {
+    this.identity(tenantId);
+    if (!Types.ObjectId.isValid(artifactId)) throw new BadRequestException('Invalid backup artifact ID');
+    const artifact: any = await this.backupArtifacts.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(artifactId) })).lean();
+    if (!artifact) throw new NotFoundException('Backup artifact not found in this workspace');
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      const stream = this.gridFsBucket().openDownloadStream(artifact.gridFsId);
+      stream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      stream.once('end', resolve);
+      stream.once('error', reject);
+    });
+    const compressed = Buffer.concat(chunks);
+    const checksum = createHash('sha256').update(compressed).digest('hex');
+    let status = 'FAILED';
+    let message = 'Backup restore drill failed validation';
+    let collectionCount = 0;
+    let documentCount = 0;
+    try {
+      if (checksum !== artifact.checksumSha256) throw new Error('Stored archive checksum does not match artifact metadata');
+      const archive: any = JSON.parse(gunzipSync(compressed).toString('utf8'));
+      if (archive?.format !== 'SOLSTRA_RETAIL_TENANT_BACKUP_V1' || String(archive?.tenantId) !== tenantId || !archive?.collections || typeof archive.collections !== 'object') {
+        throw new Error('Archive format or tenant identity validation failed');
+      }
+      const collections = Object.entries(archive.collections);
+      collectionCount = collections.length;
+      for (const [name, rows] of collections) {
+        if (!/^[a-zA-Z0-9_]+$/.test(name) || !Array.isArray(rows)) throw new Error('Archive contains an invalid collection entry');
+        for (const row of rows as any[]) {
+          if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('Archive contains a malformed document');
+          if (row.tenantId && String(row.tenantId) !== tenantId) throw new Error('Archive contains a document from another workspace');
+          documentCount += 1;
+        }
+      }
+      status = 'PASSED';
+      message = 'Checksum, gzip, archive format, tenant identity, collection structure and document ownership checks passed. No live database records were changed.';
+    } catch (error: any) {
+      message = String(error?.message || message).slice(0, 500);
+    }
+    const drill = await this.backupRestoreDrills.create({
+      tenantId: new Types.ObjectId(tenantId), artifactId: artifact._id, status, message,
+      collectionCount, documentCount, checksumSha256: checksum,
+    });
+    return { id: String(drill._id), artifactId, status, message, collectionCount, documentCount, checksumSha256: checksum, testedAt: drill.createdAt };
+  }
+
+  async listBackupRestoreDrills(tenantId: string, artifactId?: string) {
+    this.identity(tenantId);
+    const filter: any = tenantFilter(tenantId, {});
+    if (artifactId) {
+      if (!Types.ObjectId.isValid(artifactId)) throw new BadRequestException('Invalid backup artifact ID');
+      filter.artifactId = new Types.ObjectId(artifactId);
+    }
+    return this.backupRestoreDrills.find(filter).sort({ createdAt: -1 }).limit(100).lean();
+  }
+
+  async operationsMetrics(tenantId: string) {
+    this.identity(tenantId);
+    const filter = (extra: Record<string, any> = {}) => tenantFilter(tenantId, extra);
+    const now = new Date();
+    const [pendingWebhooks, deadWebhooks, pendingCommunications, deadCommunications, failedCommunications, latestBackupResult, latestReplicationResult, pendingOffline, failedOffline] = await Promise.all([
+      this.deliveries.countDocuments(filter({ status: { $in: ['PENDING', 'DELIVERING'] } })),
+      this.deliveries.countDocuments(filter({ status: 'DEAD' })),
+      this.communicationDeliveries.countDocuments(filter({ status: { $in: ['PENDING', 'DELIVERING'] } })),
+      this.communicationDeliveries.countDocuments(filter({ status: 'DEAD' })),
+      this.communicationDeliveries.countDocuments(filter({ status: 'FAILED' })),
+      this.backupArtifacts.findOne(filter({})).sort({ createdAt: -1 }).select('createdAt checksumSha256 compressedBytes').lean(),
+      this.backupReplicationEvents.findOne(filter({})).sort({ createdAt: -1 }).select('status createdAt message artifactId').lean(),
+      this.syncRecords.countDocuments(filter({ status: 'PROCESSING' })),
+      this.syncRecords.countDocuments(filter({ status: 'FAILED' })),
+    ]);
+    const latestBackup: any = latestBackupResult;
+    const latestReplication: any = latestReplicationResult;
+    const backupAgeMinutes = latestBackup?.createdAt ? Math.max(0, Math.floor((now.getTime() - new Date(latestBackup.createdAt).getTime()) / 60000)) : null;
+    return {
+      generatedAt: now,
+      service: { status: this.connection.readyState === 1 ? 'READY' : 'DEGRADED', database: this.connection.readyState === 1 ? 'CONNECTED' : 'DISCONNECTED' },
+      queues: {
+        webhooks: { pending: pendingWebhooks, dead: deadWebhooks },
+        communications: { pending: pendingCommunications, failed: failedCommunications, dead: deadCommunications },
+        offlineSales: { processing: pendingOffline, failed: failedOffline },
+      },
+      backups: {
+        latestCreatedAt: latestBackup?.createdAt || null,
+        latestAgeMinutes: backupAgeMinutes,
+        latestChecksum: latestBackup?.checksumSha256 || null,
+        latestCompressedBytes: latestBackup?.compressedBytes || 0,
+        latestReplication: latestReplication ? { status: latestReplication.status, createdAt: latestReplication.createdAt, message: latestReplication.message } : null,
+      },
+      alerts: [
+        ...(this.connection.readyState !== 1 ? [{ severity: 'CRITICAL', code: 'DATABASE_DISCONNECTED', message: 'MongoDB connection is not ready.' }] : []),
+        ...(deadWebhooks ? [{ severity: 'WARNING', code: 'WEBHOOK_DEAD_LETTER', count: deadWebhooks, message: 'Webhook deliveries exhausted retry attempts.' }] : []),
+        ...(deadCommunications ? [{ severity: 'WARNING', code: 'COMMUNICATION_DEAD_LETTER', count: deadCommunications, message: 'Communication deliveries exhausted retry attempts.' }] : []),
+        ...(backupAgeMinutes === null ? [{ severity: 'WARNING', code: 'BACKUP_NOT_FOUND', message: 'No tenant backup artifact has been created.' }] : backupAgeMinutes > 60 * 48 ? [{ severity: 'WARNING', code: 'BACKUP_STALE', ageMinutes: backupAgeMinutes, message: 'Latest backup is older than 48 hours.' }] : []),
+        ...(latestReplication?.status === 'FAILED' ? [{ severity: 'WARNING', code: 'BACKUP_REPLICATION_FAILED', message: latestReplication.message }] : []),
+      ],
+    };
   }
 
   async listBackupReplicationEvents(tenantId: string, artifactId?: string) {

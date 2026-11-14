@@ -135,6 +135,14 @@ export class PlatformController {
     return this.platform.updateCommunicationProvider(req.user.tenantId, id, dto.enabled);
   }
 
+  @Public()
+  @SkipTrial()
+  @Post('communications/callback/:deliveryId')
+  communicationReceipt(@Req() req: AuthenticatedRequest, @Param('deliveryId') deliveryId: string) {
+    const signature = req.headers['x-solstra-communication-signature'];
+    return this.platform.recordCommunicationReceipt(deliveryId, req.rawBody, Array.isArray(signature) ? signature[0] : signature);
+  }
+
   @Roles('owner', 'admin')
   @Post('communications/send')
   queueCommunication(@Req() req: AuthenticatedRequest, @Body() dto: SendCommunicationDto) {
@@ -198,6 +206,24 @@ export class PlatformController {
   @Post('backups/:id/replicate')
   replicateBackup(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.platform.replicateBackupArtifact(req.user.tenantId, id);
+  }
+
+  @Roles('owner', 'admin')
+  @Post('backups/:id/restore-drill')
+  runBackupRestoreDrill(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.platform.runBackupRestoreDrill(req.user.tenantId, id);
+  }
+
+  @Roles('owner', 'admin')
+  @Get('backups/restore-drills')
+  listBackupRestoreDrills(@Req() req: AuthenticatedRequest, @Query('artifactId') artifactId?: string) {
+    return this.platform.listBackupRestoreDrills(req.user.tenantId, artifactId);
+  }
+
+  @Roles('owner', 'admin')
+  @Get('operations/metrics')
+  operationsMetrics(@Req() req: AuthenticatedRequest) {
+    return this.platform.operationsMetrics(req.user.tenantId);
   }
 
   @Roles('owner', 'admin')

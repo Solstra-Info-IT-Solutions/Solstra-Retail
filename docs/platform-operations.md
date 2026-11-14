@@ -29,7 +29,7 @@ GridFS is in the same MongoDB deployment, so these snapshots protect against som
 
 ## SaaS operator controls
 
-Cross-tenant tenant listing, plan changes, suspension and usage summaries are protected by `PLATFORM_ADMIN_USER_IDS`. Changes require a reason and create append-only `saas_admin_audit` records. Workspace user, product and branch creation is checked against the configured tenant capacity fields. Subscription invoices can be requested by workspace owners/admins. The current release supports manual platform-operator payment reconciliation at fixed monthly plan rates (Starter ₹499, Growth ₹1,499, Business ₹3,999; Enterprise by quotation). It does not collect payment automatically, calculate GST on subscription invoices or integrate a payment gateway.
+Cross-tenant tenant listing, plan changes, suspension and usage summaries are protected by `PLATFORM_ADMIN_USER_IDS`. Changes require a reason and create append-only `saas_admin_audit` records. Workspace user, product and branch creation is checked against the configured tenant capacity fields. Subscription invoices can be requested by workspace owners/admins. The current release supports manual platform-operator payment reconciliation at fixed monthly plan rates (Starter ₹499, Growth ₹1,499, Business ₹3,999; Enterprise by quotation) and optional Razorpay checkout/webhook settlement. It does not support recurring mandate auto-debit or calculate GST on subscription invoices.
 
 ## Inventory valuation reconciliation
 
@@ -43,7 +43,7 @@ The Advanced Inventory workspace exposes batch receipts and expiry lists, serial
 ## GST e-invoice preparation and external accounting interchange
 
 - Reports expose `GET /api/v1/reports/gst/einvoice-readiness?from=YYYY-MM-DD&to=YYYY-MM-DD` for issued B2B invoices. It checks seller/recipient GSTIN format, invoice number length, state codes, recipient name, HSN/UQC/quantity/taxable values and GST component reconciliation.
-- The preflight is a data-quality checklist only. It does not decide statutory e-invoice applicability/turnover thresholds and does not generate IRNs, signed QR codes, acknowledgements or e-way bills. Live IRP submission requires an approved GSP integration, sandbox certification, credentials and production approval.
+- The preflight is a data-quality checklist only. It does not decide statutory e-invoice applicability/turnover thresholds or generate IRNs itself. The separate GSP adapter workflow can submit approved invoice payloads and retain returned IRN/acknowledgement metadata when a certified provider is configured; it does not itself certify statutory applicability or produce a signed QR code.
 - `GET /api/v1/reports/accounting/journal-export?from=YYYY-MM-DD&to=YYYY-MM-DD` downloads posted journal lines as a generic accounting interchange CSV. Map ledger codes/names and reconcile opening balances before importing into Tally or another accounting package. It is not an official Tally XML or live sync connector.
 
 ## Natural-language business assistant
@@ -86,3 +86,32 @@ The Advanced Inventory workspace exposes batch receipts and expiry lists, serial
 - `GET /api/v1/health` remains a liveness probe.
 - `GET /api/v1/health/ready` is a readiness probe and returns HTTP 503 until the MongoDB connection is ready and the required database configuration is present.
 - Use readiness for load-balancer/orchestrator traffic gating. It intentionally does not expose connection strings, secrets, or tenant data.
+
+
+## GST return and e-way bill GSP submissions
+
+- Owner/admin submission history is available at `GET /api/v1/reports/gst/submissions?page=1`.
+- Submit a completed GSTR-1 period using `POST /api/v1/reports/gst/submissions/GSTR1/YYYY-MM`; submit GSTR-3B with `GSTR3B/YYYY-MM`. The selected month must be fully ended. GSTR-3B submission is blocked when inward purchase tax classification is incomplete.
+- Submit an issued invoice for e-way bill processing using `POST /api/v1/reports/gst/submissions/EWAY_BILL/:invoiceId`. The adapter receives the invoice and any transport metadata already present on its source record. Provider/GSP must validate transporter, vehicle, distance, movement type and current statutory applicability before IRP generation.
+- These workflows send a normalized Solstra adapter contract to `GST_GSP_ADAPTER_URL` with `GST_GSP_ADAPTER_TOKEN`. The GSP adapter must translate the payload to the current GSTN/GSP schema and return an acknowledgement number plus provider reference.
+- Payload SHA-256 and idempotency keys prevent duplicate successful submissions. A changed payload for an already submitted period/source is blocked and requires the provider's formal amendment workflow.
+- This is a connector framework, not direct GSTN certification or a filing-ready legal determination. Verify sandbox certification, GSTN schema versions, filing eligibility, tax calculations, transport data and provider callbacks before production use.
+
+## Communication delivery receipts
+
+- Provider adapters receive a stable delivery ID and tenant ID in message metadata. After accepting a message, providers should POST a JSON receipt to `POST /api/v1/platform/communications/callback/:deliveryId`.
+- Sign the exact raw callback body with HMAC-SHA256 using the configured provider API token and send the lowercase hex digest in `x-solstra-communication-signature`.
+- The callback body must include `deliveryId`, `status` (`delivered` or `failed`), and may include `providerMessageId` and `reason`.
+- The API verifies the signature with timing-safe comparison and updates delivery status, provider message reference and delivery/failure timestamp. Do not send customer message content in provider callbacks.
+
+## Backup restore drills
+
+- Owner/admin can run `POST /api/v1/platform/backups/:id/restore-drill` for an existing tenant backup. Results are listed at `GET /api/v1/platform/backups/restore-drills`.
+- A drill verifies stored SHA-256, gzip decompression, archive format, tenant identity, collection structure and per-document tenant ownership. The result records counts and checksum.
+- A successful drill is an archive-integrity validation only. It does not write to a production database or prove application-level restore compatibility. Perform a full restore rehearsal in an isolated MongoDB deployment before production disaster-recovery sign-off.
+
+## Operational metrics and alerts
+
+- Owner/admin can query `GET /api/v1/platform/operations/metrics` for tenant-scoped API/database status, webhook and communication queue counts, offline sync backlog, latest backup age, latest replication status and actionable alerts.
+- Alerts currently identify database disconnection, dead-letter deliveries, missing/stale backups and failed latest backup replication.
+- Metrics are a polling API for an external monitoring system or the Platform Operations workspace. Configure an external monitor to poll periodically and route critical alerts to an on-call channel; this endpoint does not itself deliver PagerDuty/email/SMS alerts or replace infrastructure monitoring.

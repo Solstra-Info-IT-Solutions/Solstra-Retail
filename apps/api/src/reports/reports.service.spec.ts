@@ -16,6 +16,7 @@ describe('ReportsService validation', () => {
       purchases as any,
       {} as any,
       {} as any,
+      {} as any,
     );
 
     return { service, invoices, purchases };
@@ -88,6 +89,22 @@ describe('ReportsService validation', () => {
     const { service } = createService();
     await expect(service.migrationReadiness('invalid-tenant')).rejects.toBeInstanceOf(BadRequestException);
     await expect(service.submitGstEInvoice('invalid-tenant', 'invalid-invoice')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects invalid tenant and unsupported GST compliance submissions before external calls', async () => {
+    const { service, invoices } = createService();
+    await expect(service.submitGstCompliance('invalid-tenant', 'GSTR1', '2026-10')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.submitGstCompliance('507f1f77bcf86cd799439011', 'UNKNOWN', '2026-10')).rejects.toBeInstanceOf(BadRequestException);
+    expect(invoices.aggregate).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed and not-yet-closed GST return periods before reading source records', async () => {
+    const { service, invoices } = createService();
+    await expect(service.submitGstCompliance('507f1f77bcf86cd799439011', 'GSTR1', '2026-13'))
+      .rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.submitGstCompliance('507f1f77bcf86cd799439011', 'GSTR3B', '2999-01'))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(invoices.aggregate).not.toHaveBeenCalled();
   });
 
   it('rejects invalid tenant context in dashboard summary', async () => {

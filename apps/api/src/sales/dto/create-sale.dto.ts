@@ -99,4 +99,9 @@ export class CreateSaleDto {
   @IsString()
   @Matches(/^SR[A-F0-9]{12}$/)
   rewardVoucherCode?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Z0-9_-]{3,40}$/i)
+  promotionCode?: string;
 }

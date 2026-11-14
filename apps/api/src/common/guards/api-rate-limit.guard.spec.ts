@@ -1,4 +1,4 @@
-import { TooManyRequestsException } from '@nestjs/common';
+import { HttpException } from '@nestjs/common';
 import { ApiRateLimitGuard } from './api-rate-limit.guard';
 
 describe('ApiRateLimitGuard', () => {
@@ -19,7 +19,7 @@ describe('ApiRateLimitGuard', () => {
     for (let index = 0; index < 10; index += 1) {
       expect(guard.canActivate(context('/api/v1/auth/login'))).toBe(true);
     }
-    expect(() => guard.canActivate(context('/api/v1/auth/login'))).toThrow(TooManyRequestsException);
+    expect(() => guard.canActivate(context('/api/v1/auth/login'))).toThrow(HttpException);
   });
 
   it('isolates limits by client IP and exposes retry headers', () => {

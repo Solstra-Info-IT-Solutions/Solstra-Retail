@@ -10,6 +10,9 @@ import { Supplier, SupplierDocument } from '../suppliers/schemas/supplier.schema
 import {
   InventoryMovement, InventoryMovementDocument,
 } from '../inventory/schemas/inventory-movement.schema';
+import { Warehouse } from '../branches/schemas/warehouse.schema';
+import { Branch } from '../branches/schemas/branch.schema';
+import { WarehouseStock, WarehouseStockDocument } from '../inventory/schemas/warehouse-stock.schema';
 import { Purchase, PurchaseDocument } from './schemas/purchase.schema';
 import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { ReceivePurchaseDto } from './dto/receive-purchase.dto';

@@ -1238,13 +1238,19 @@ describe('Authentication HTTP E2E', () => {
       .get('/api/v1/expenses/reconciliation?from=2026-11-01&to=2026-11-30')
       .set(headers);
     expect(expenseReconciliation.status).toBe(200);
-    expect(expenseReconciliation.body.summary).toEqual(expect.objectContaining({
-      expenseAmount: 250,
-      journalExpenseAmount: 250,
-      paidAmount: 250,
-      journalPaymentAmount: 250,
-      balanced: true,
+    expect(expenseReconciliation.body.expenses).toEqual(expect.objectContaining({
+      expected: 250,
+      posted: 250,
+      difference: 0,
+      reconciled: true,
     }));
+    expect(expenseReconciliation.body.payments).toEqual(expect.objectContaining({
+      expected: 250,
+      posted: 250,
+      difference: 0,
+      reconciled: true,
+    }));
+    expect(expenseReconciliation.body.discrepancyCount).toBe(0);
 
     const trialBalance = await request(app.getHttpServer())
       .get('/api/v1/reports/trial-balance')

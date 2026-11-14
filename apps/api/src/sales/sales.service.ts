@@ -1163,6 +1163,35 @@ if (existingPayment) {
             const returnedCostPaise = returnedUnitCostPaise * requested.quantity;
             restockedCostPaise += returnedCostPaise;
 
+            if (invoice.warehouseId) {
+              const warehouseStock = await this.warehouseStocks.findOne(tenantFilter(tenantId, {
+                warehouseId: invoice.warehouseId, productId: product._id,
+              })).session(session);
+              const warehousePreviousQty = warehouseStock?.quantity || 0;
+              const warehousePreviousValuePaise = this.toPaise(warehouseStock?.inventoryValue || 0);
+              const warehouseNextQty = warehousePreviousQty + requested.quantity;
+              const warehouseNextValuePaise = warehousePreviousValuePaise + returnedCostPaise;
+              if (warehouseStock) {
+                const restoredWarehouse = await this.warehouseStocks.findOneAndUpdate(
+                  tenantFilter(tenantId, { _id: warehouseStock._id, quantity: warehousePreviousQty }),
+                  { $set: {
+                    quantity: warehouseNextQty,
+                    inventoryValue: this.fromPaise(warehouseNextValuePaise),
+                    averageCost: this.fromPaise(Math.round(warehouseNextValuePaise / warehouseNextQty)),
+                  } },
+                  { new: true, session, runValidators: true },
+                );
+                if (!restoredWarehouse) throw new ConflictException(`Warehouse stock changed while returning "${original.name}". Please retry.`);
+              } else {
+                await this.warehouseStocks.create([{
+                  tenantId: new Types.ObjectId(tenantId), warehouseId: invoice.warehouseId,
+                  productId: product._id, quantity: warehouseNextQty,
+                  inventoryValue: this.fromPaise(warehouseNextValuePaise),
+                  averageCost: this.fromPaise(Math.round(warehouseNextValuePaise / warehouseNextQty)),
+                }], { session });
+              }
+            }
+
             const updatedProduct = await this.products.findOneAndUpdate(
               tenantFilter(tenantId, {
                 _id: product._id,
@@ -1192,6 +1221,7 @@ if (existingPayment) {
                 {
                   tenantId: new Types.ObjectId(tenantId),
                   productId: product._id,
+                  ...(invoice.warehouseId ? { warehouseId: invoice.warehouseId } : {}),
                   type: 'SALE_RETURN',
                   quantityDelta: requested.quantity,
                   previousQty,
@@ -1688,6 +1718,35 @@ if (existingPayment) {
             ? (restoreValuesPaise.get(productId) || 0)
             : this.toPaise(product.averageCost || 0) * quantity;
 
+          if (invoice.warehouseId) {
+            const warehouseStock = await this.warehouseStocks.findOne(tenantFilter(tenantId, {
+              warehouseId: invoice.warehouseId, productId: product._id,
+            })).session(session);
+            const warehousePreviousQty = warehouseStock?.quantity || 0;
+            const warehousePreviousValuePaise = this.toPaise(warehouseStock?.inventoryValue || 0);
+            const warehouseNextQty = warehousePreviousQty + quantity;
+            const warehouseNextValuePaise = warehousePreviousValuePaise + restoredValuePaise;
+            if (warehouseStock) {
+              const restoredWarehouse = await this.warehouseStocks.findOneAndUpdate(
+                tenantFilter(tenantId, { _id: warehouseStock._id, quantity: warehousePreviousQty }),
+                { $set: {
+                  quantity: warehouseNextQty,
+                  inventoryValue: this.fromPaise(warehouseNextValuePaise),
+                  averageCost: this.fromPaise(Math.round(warehouseNextValuePaise / warehouseNextQty)),
+                } },
+                { new: true, session, runValidators: true },
+              );
+              if (!restoredWarehouse) throw new ConflictException('Warehouse stock changed while cancelling this invoice');
+            } else {
+              await this.warehouseStocks.create([{
+                tenantId: new Types.ObjectId(tenantId), warehouseId: invoice.warehouseId,
+                productId: product._id, quantity: warehouseNextQty,
+                inventoryValue: this.fromPaise(warehouseNextValuePaise),
+                averageCost: this.fromPaise(Math.round(warehouseNextValuePaise / warehouseNextQty)),
+              }], { session });
+            }
+          }
+
           const updated = await this.products.findOneAndUpdate(
             tenantFilter(tenantId, {
               _id: product._id,
@@ -1725,6 +1784,7 @@ if (existingPayment) {
               {
                 tenantId: new Types.ObjectId(tenantId),
                 productId: product._id,
+                ...(invoice.warehouseId ? { warehouseId: invoice.warehouseId } : {}),
                 type: 'SALE_RETURN',
                 quantityDelta: quantity,
                 previousQty,

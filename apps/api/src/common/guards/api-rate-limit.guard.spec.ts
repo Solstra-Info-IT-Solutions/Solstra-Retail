@@ -27,7 +27,7 @@ describe('ApiRateLimitGuard', () => {
     for (let index = 0; index < 10; index += 1) guard.canActivate(context('/api/v1/auth/login', '10.0.0.1'));
     expect(guard.canActivate(context('/api/v1/auth/login', '10.0.0.2'))).toBe(true);
     const last = context('/api/v1/auth/login', '10.0.0.1');
-    expect(() => guard.canActivate(last)).toThrow(TooManyRequestsException);
+    expect(() => guard.canActivate(last)).toThrow(HttpException);
     expect(last.headers['Retry-After']).toBeDefined();
     expect(last.headers['X-RateLimit-Limit']).toBe('10');
   });

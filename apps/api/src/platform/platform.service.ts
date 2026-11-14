@@ -683,6 +683,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
 
   async runScheduledPlatformJobs() {
     const expiredSubscriptions = await this.expirePaidSubscriptions();
+    const escalatedOperationalAlerts = await this.processOperationalAlertEscalations();
     let expiredBatches = 0;
     if (this.connection.db) {
       const expiredResult = await this.connection.db.collection('inventory_batches').updateMany(
@@ -1455,6 +1456,87 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
       },
       note: 'Credential presence is not OAuth authorization, provider connectivity, sandbox certification, or successful production delivery. Never expose credential values through this endpoint.',
     };
+  }
+
+  async listOperationalAlerts(tenantId: string) {
+    this.identity(tenantId);
+    if (!this.connection.db) throw new ServiceUnavailableException('Database connection is unavailable');
+    const collection = this.connection.db.collection('operational_alert_states');
+    await collection.createIndex({ tenantId: 1, code: 1 }, { unique: true });
+    const metrics = await this.operationsMetrics(tenantId);
+    const now = new Date();
+    const activeCodes = metrics.alerts.map((alert: any) => alert.code);
+    for (const alert of metrics.alerts as any[]) {
+      await collection.updateOne(
+        { tenantId: new Types.ObjectId(tenantId), code: alert.code },
+        {
+          $setOnInsert: { firstSeenAt: now, acknowledgedAt: null, acknowledgedBy: null, escalationSentAt: null },
+          $set: { severity: alert.severity, message: alert.message, count: alert.count ?? 1, lastSeenAt: now, status: 'OPEN' },
+        },
+        { upsert: true },
+      );
+    }
+    await collection.updateMany(
+      { tenantId: new Types.ObjectId(tenantId), status: { $in: ['OPEN', 'ACKNOWLEDGED'] }, ...(activeCodes.length ? { code: { $nin: activeCodes } } : {}) },
+      { $set: { status: 'RESOLVED', resolvedAt: now } },
+    );
+    const items = await collection.find({ tenantId: new Types.ObjectId(tenantId) })
+      .sort({ status: 1, severity: 1, lastSeenAt: -1 }).limit(100).toArray();
+    return { items, summary: {
+      open: items.filter((item: any) => item.status === 'OPEN').length,
+      acknowledged: items.filter((item: any) => item.status === 'ACKNOWLEDGED').length,
+      resolved: items.filter((item: any) => item.status === 'RESOLVED').length,
+    }, escalationPolicy: { acknowledgeWithinMinutes: 30, repeatEscalation: false } };
+  }
+
+  async acknowledgeOperationalAlert(tenantId: string, userId: string, code: string, note = '') {
+    this.identity(tenantId, userId);
+    if (!/^[A-Z0-9_]{3,80}$/.test(code)) throw new BadRequestException('Invalid operational alert code');
+    if (typeof note !== 'string' || note.trim().length > 500) throw new BadRequestException('Acknowledgement note must be 500 characters or fewer');
+    if (!this.connection.db) throw new ServiceUnavailableException('Database connection is unavailable');
+    await this.listOperationalAlerts(tenantId);
+    const collection = this.connection.db.collection('operational_alert_states');
+    const result = await collection.findOneAndUpdate(
+      { tenantId: new Types.ObjectId(tenantId), code, status: 'OPEN' },
+      { $set: { status: 'ACKNOWLEDGED', acknowledgedAt: new Date(), acknowledgedBy: new Types.ObjectId(userId), acknowledgementNote: note.trim() } },
+      { returnDocument: 'after' },
+    );
+    if (!result) {
+      const existing = await collection.findOne({ tenantId: new Types.ObjectId(tenantId), code });
+      if (!existing) throw new NotFoundException('Operational alert not found');
+      if (existing.status === 'ACKNOWLEDGED') return { alert: existing, alreadyAcknowledged: true };
+      throw new ConflictException('Only an open operational alert can be acknowledged');
+    }
+    return { alert: result, alreadyAcknowledged: false };
+  }
+
+  private async processOperationalAlertEscalations() {
+    if (!this.connection.db) return 0;
+    const tenants = await this.tenants.find({ status: 'active' }).select('_id').limit(100).lean();
+    const collection = this.connection.db.collection('operational_alert_states');
+    const cutoff = new Date(Date.now() - 30 * 60 * 1000);
+    let escalated = 0;
+    for (const tenant of tenants as any[]) {
+      const rows = await collection.find({
+        tenantId: tenant._id, status: 'OPEN', firstSeenAt: { $lte: cutoff }, escalationSentAt: null,
+      }).limit(20).toArray();
+      for (const alert of rows as any[]) {
+        const claim = await collection.updateOne(
+          { _id: alert._id, status: 'OPEN', escalationSentAt: null },
+          { $set: { escalationSentAt: new Date() } },
+        );
+        if (!claim.modifiedCount) continue;
+        await this.createNotification(String(tenant._id), {
+          title: 'Unacknowledged operational alert · ' + alert.code,
+          body: String(alert.message || 'An operational alert requires attention').slice(0, 500),
+          severity: alert.severity === 'CRITICAL' ? 'CRITICAL' : 'WARNING',
+          category: 'OPERATIONS',
+          sourceId: 'OPS_ALERT_ESCALATION:' + alert.code,
+        });
+        escalated += 1;
+      }
+    }
+    return escalated;
   }
 
   async dispatchOperationalAlerts(tenantId: string) {

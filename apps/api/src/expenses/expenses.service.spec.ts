@@ -14,10 +14,10 @@ describe('ExpensesService', () => {
 
   it('rejects invalid tenant and user identities before opening a transaction', async () => {
     const { service, expenses } = createService();
-    await expect(service.create('bad-tenant', userId, {
+    await expect(service.create('bad-tenant', userId, 'owner', {
       title: 'Internet', category: 'Utilities', amount: 500,
     } as any)).rejects.toBeInstanceOf(BadRequestException);
-    await expect(service.create(tenantId, 'bad-user', {
+    await expect(service.create(tenantId, 'bad-user', 'owner', {
       title: 'Internet', category: 'Utilities', amount: 500,
     } as any)).rejects.toBeInstanceOf(BadRequestException);
     expect(expenses.db.startSession).not.toHaveBeenCalled();
@@ -25,7 +25,7 @@ describe('ExpensesService', () => {
 
   it('rejects zero and invalid amounts before opening a transaction', async () => {
     const { service, expenses } = createService();
-    await expect(service.create(tenantId, userId, {
+    await expect(service.create(tenantId, userId, 'owner', {
       title: 'Internet', category: 'Utilities', amount: 0,
     } as any)).rejects.toBeInstanceOf(BadRequestException);
     expect(expenses.db.startSession).not.toHaveBeenCalled();

@@ -131,6 +131,11 @@ export class PlatformController {
     return this.platform.updateSaasTenant(req.user.userId, id, dto);
   }
 
+  @Get('saas/audit')
+  saasAudit(@Req() req: AuthenticatedRequest) {
+    return this.platform.listSaasAdminAudit(req.user.userId);
+  }
+
   @Get('saas/usage')
   saasUsage(@Req() req: AuthenticatedRequest) {
     return this.platform.platformUsageSummary(req.user.userId);

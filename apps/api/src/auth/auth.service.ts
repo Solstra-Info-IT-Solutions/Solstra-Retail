@@ -42,9 +42,16 @@ export class AuthService implements OnModuleInit {
     }
     const passwordHash = await bcrypt.hash(dto.password, 12);
     try {
+      if (dto.gstRegistered && dto.gstin?.slice(0, 2) !== dto.stateCode) {
+        throw new BadRequestException('GSTIN state code must match the registered business state');
+      }
+      if (!dto.gstRegistered && dto.gstin) throw new BadRequestException('GSTIN must be omitted when the business is not GST registered');
+      const { password: _password, ...businessProfile } = dto;
       const request = await this.registrationRequests.create({
+        ...businessProfile,
         name: dto.name.trim(),
         businessName: dto.businessName.trim(),
+        storeName: dto.storeName.trim(),
         email,
         passwordHash,
         status: 'PENDING_APPROVAL',
@@ -70,7 +77,7 @@ export class AuthService implements OnModuleInit {
   async listRegistrationApprovalRequests(userId: string) {
     this.assertPlatformAdmin(userId);
     return this.registrationRequests.find({ status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } })
-      .select('_id name businessName email status createdAt')
+      .select('_id name businessName storeName email ownerPhone alternatePhone businessType businessCategory businessDescription addressLine1 addressLine2 city district state stateCode pincode country gstRegistered gstin gstLegalName gstRegistrationType businessEmail website status createdAt +logoDataUrl')
       .sort({ createdAt: 1 }).limit(200).lean();
   }
 
@@ -101,7 +108,30 @@ export class AuthService implements OnModuleInit {
         const trialEndsAt = new Date(activatedAt.getTime() + TRIAL_DURATION_MS);
         const slugBase = current.businessName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 100) || 'business';
         [tenant] = await this.tenants.create([{
-          name: current.businessName, slug: slugBase + '-' + randomBytes(4).toString('hex'),
+          name: current.businessName,
+          storeName: current.storeName || current.businessName,
+          ownerName: current.name,
+          ownerPhone: current.ownerPhone,
+          alternatePhone: current.alternatePhone || null,
+          businessType: current.businessType,
+          businessCategory: current.businessCategory || '',
+          businessDescription: current.businessDescription || '',
+          businessEmail: current.businessEmail || current.email,
+          website: current.website || '',
+          addressLine1: current.addressLine1,
+          addressLine2: current.addressLine2 || '',
+          city: current.city,
+          district: current.district || '',
+          state: current.state,
+          stateCode: current.stateCode,
+          pincode: current.pincode,
+          country: current.country || 'India',
+          gstRegistered: Boolean(current.gstRegistered),
+          gstin: current.gstRegistered ? current.gstin : null,
+          gstLegalName: current.gstRegistered ? current.gstLegalName || '' : '',
+          gstRegistrationType: current.gstRegistered ? current.gstRegistrationType || '' : '',
+          logoDataUrl: current.logoDataUrl || null,
+          slug: slugBase + '-' + randomBytes(4).toString('hex'),
           status: 'active', subscriptionStatus: 'trial', trialStartedAt: activatedAt, trialEndsAt,
         }], { session });
         [user] = await this.users.create([{
@@ -160,6 +190,32 @@ export class AuthService implements OnModuleInit {
     const request = await this.passwordChangeRequests.findOne({ userId: new Types.ObjectId(userId), tenantId: new Types.ObjectId(tenantId) })
       .select('_id status reviewReason reviewedAt createdAt').sort({ createdAt: -1 }).lean();
     return request || { status: 'NONE' };
+  }
+
+  async getPlatformRegistrationSummary(userId: string) {
+    this.assertPlatformAdmin(userId);
+    const [pending, approved, rejected, expired, totalStores, activeStores, suspendedStores] = await Promise.all([
+      this.registrationRequests.countDocuments({ status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } }),
+      this.registrationRequests.countDocuments({ status: 'APPROVED' }),
+      this.registrationRequests.countDocuments({ status: 'REJECTED' }),
+      this.registrationRequests.countDocuments({ status: 'EXPIRED' }),
+      this.tenants.countDocuments({}),
+      this.tenants.countDocuments({ status: 'active' }),
+      this.tenants.countDocuments({ status: 'suspended' }),
+    ]);
+    return { registrations: { pending, approved, rejected, expired }, stores: { total: totalStores, active: activeStores, suspended: suspendedStores } };
+  }
+
+  async listPlatformStoreDirectory(userId: string) {
+    this.assertPlatformAdmin(userId);
+    const tenants = await this.tenants.find({})
+      .select('+logoDataUrl name storeName slug status subscriptionStatus subscriptionPlan trialStartedAt trialEndsAt gstRegistered gstin gstLegalName gstRegistrationType businessType businessCategory businessDescription businessEmail website ownerName ownerPhone alternatePhone addressLine1 addressLine2 city district state stateCode pincode country createdAt')
+      .sort({ createdAt: -1 }).limit(500).lean();
+    const ids = tenants.map((tenant: any) => tenant._id);
+    const owners = await this.users.find({ tenantId: { $in: ids }, role: 'owner' })
+      .select('tenantId name email isActive createdAt').lean();
+    const ownerByTenant = new Map(owners.map((owner: any) => [String(owner.tenantId), owner]));
+    return tenants.map((tenant: any) => ({ ...tenant, owner: ownerByTenant.get(String(tenant._id)) || null }));
   }
 
   async listPasswordChangeApprovalRequests(userId: string) {

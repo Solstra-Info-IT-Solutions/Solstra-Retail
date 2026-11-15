@@ -15,7 +15,7 @@ export class Tenant {
   @Prop({ type: String, trim: true, default: '', maxlength: 254 }) businessEmail!: string;
   @Prop({ type: String, trim: true, default: '', maxlength: 120 }) website!: string;
   @Prop({ type: String, trim: true, default: '', maxlength: 80 }) ownerName!: string;
-  @Prop({ type: String, trim: true, default: '', match: /^[6-9][0-9]{9}$/ }) ownerPhone!: string;
+  @Prop({ type: String, trim: true, default: null, match: /^[6-9][0-9]{9}$/ }) ownerPhone?: string | null;
   @Prop({ type: String, trim: true, default: null }) alternatePhone?: string | null;
   @Prop({ type: String, trim: true, default: '', maxlength: 80 }) state!: string;
   @Prop({ type: String, trim: true, uppercase: true, default: null, maxlength: 15 }) gstin?: string | null;

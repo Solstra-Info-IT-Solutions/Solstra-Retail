@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { tenantFilter } from '../common/tenant-scoped.service';
@@ -125,7 +125,11 @@ export class ExpensesService {
         ).session(session);
         if (!expense) throw new NotFoundException('Expense not found');
         if (expense.approvalStatus !== 'APPROVED') throw new BadRequestException('Only approved expenses can be paid');
-        if (expense.payments.some((payment) => payment.idempotencyKey === key)) {
+        const existingPayment = expense.payments.find((payment) => payment.idempotencyKey === key);
+        if (existingPayment) {
+          if (!this.samePayment(existingPayment, dto)) {
+            throw new ConflictException('This idempotency key has already been used for a different expense payment');
+          }
           result = expense;
           return;
         }
@@ -320,6 +324,12 @@ export class ExpensesService {
     const expense = await this.expenses.findOne(tenantFilter(tenantId, { _id: new Types.ObjectId(id) })).lean();
     if (!expense) throw new NotFoundException('Expense not found');
     return expense;
+  }
+
+  private samePayment(existing: any, dto: AddExpensePaymentDto): boolean {
+    return existing.method === dto.method
+      && this.toPaise(existing.amount) === this.toPaise(dto.amount)
+      && (existing.reference || '') === (dto.reference?.trim() || '');
   }
 
   private toPaise(value: number): number {

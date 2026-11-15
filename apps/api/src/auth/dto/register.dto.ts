@@ -12,7 +12,7 @@ export class RegisterDto {
   @IsString() @Matches(/^[6-9][0-9]{9}$/) ownerPhone!: string;
   @IsOptional() @IsString() @Matches(/^[6-9][0-9]{9}$/) alternatePhone?: string;
   @IsString() @Length(2, 120) storeName!: string;
-  @IsString() @IsIn(BUSINESS_TYPES) businessType!: typeof BUSINESS_TYPES[number];
+  @IsString() @IsIn([...BUSINESS_TYPES]) businessType!: typeof BUSINESS_TYPES[number];
   @IsOptional() @IsString() @MaxLength(100) businessCategory?: string;
   @IsOptional() @IsString() @MaxLength(1000) businessDescription?: string;
   @IsString() @Length(5, 150) addressLine1!: string;

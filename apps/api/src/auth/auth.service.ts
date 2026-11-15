@@ -47,6 +47,7 @@ export class AuthService implements OnModuleInit {
       }
       if (!dto.gstRegistered && dto.gstin) throw new BadRequestException('GSTIN must be omitted when the business is not GST registered');
       const { password: _password, ...businessProfile } = dto;
+      void _password;
       const request = await this.registrationRequests.create({
         ...businessProfile,
         name: dto.name.trim(),

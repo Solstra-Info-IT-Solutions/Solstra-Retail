@@ -5,7 +5,7 @@ export class RequestPasswordChangeDto {
   currentPassword!: string;
 
   @IsString() @Length(12, 72)
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).+$/, {
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/, {
     message: 'New password must include lowercase, uppercase and a number',
   })
   newPassword!: string;

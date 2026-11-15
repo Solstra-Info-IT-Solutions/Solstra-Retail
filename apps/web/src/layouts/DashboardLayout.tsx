@@ -23,6 +23,7 @@ const navigation: Array<{ label: string; path: string; icon: LucideIcon; permiss
   { label: 'Reports', path: '/reports', icon: BarChart3, permission: 'reports.view' },
   { label: 'Branches & Warehouses', path: '/branches', icon: Building2, adminOnly: true },
   { label: 'Staff & Permissions', path: '/staff', icon: ShieldCheck, adminOnly: true },
+  { label: 'Business Profile', path: '/business-profile', icon: Building2, adminOnly: true },
   { label: 'Audit Trail', path: '/audit', icon: History, adminOnly: true },
   { label: 'Platform Operations', path: '/platform', icon: Settings2, adminOnly: true },
   { label: 'Security Approvals', path: '/platform/approvals', icon: ShieldCheck, adminOnly: true },

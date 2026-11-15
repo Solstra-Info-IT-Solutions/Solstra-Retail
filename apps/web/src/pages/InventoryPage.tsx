@@ -17,9 +17,10 @@ type MovementProduct = { _id: string; name: string; sku?: string } | string;
 type MovementUser = { _id: string; name?: string; email?: string } | string;
 type Movement = {
   _id: string; productId: MovementProduct;
-  type: 'OPENING' | 'IN' | 'OUT' | 'ADJUSTMENT' | 'SALE' | 'SALE_RETURN';
+  type: 'OPENING' | 'IN' | 'OUT' | 'ADJUSTMENT' | 'SALE' | 'SALE_RETURN' | 'TRANSFER_OUT' | 'TRANSFER_IN' | 'VALUATION';
   quantityDelta: number; previousQty: number; newQty: number;
   reason: string; performedBy: MovementUser; createdAt: string;
+  valuation?: { productPreviousValuePaise?: number; productValueDeltaPaise?: number; productNewValuePaise?: number; unitCostPaise?: number };
 };
 type MovementList = {
   items: Movement[];
@@ -257,9 +258,9 @@ export default function InventoryPage() {
         </div>
         <div className="inventory-table-wrap">
           <table className="inventory-table"><thead><tr>
-            <th>PRODUCT</th><th>MOVEMENT</th><th>CHANGE</th><th>PREVIOUS</th><th>NEW STOCK</th><th>REASON</th><th>RECORDED BY</th><th>DATE & TIME</th>
+            <th>PRODUCT</th><th>MOVEMENT</th><th>CHANGE</th><th>PREVIOUS</th><th>NEW STOCK</th><th>VALUE CHANGE</th><th>REASON</th><th>RECORDED BY</th><th>DATE & TIME</th>
           </tr></thead><tbody>
-            {loading ? <tr><td colSpan={8} className="inventory-empty">Loading stock ledger...</td></tr> :
+            {loading ? <tr><td colSpan={9} className="inventory-empty">Loading stock ledger...</td></tr> :
               !movements?.items.length ? <tr><td colSpan={8} className="inventory-empty">
                 <ClipboardList size={30} /><strong>No stock movements found</strong>
                 <span>New stock receipts, issues and adjustments will appear here.</span>
@@ -271,6 +272,11 @@ export default function InventoryPage() {
                   <td><strong className={movement.quantityDelta >= 0 ? 'inventory-positive' : 'inventory-negative'}>
                     {movement.quantityDelta > 0 ? '+' : ''}{number(movement.quantityDelta)}</strong></td>
                   <td>{number(movement.previousQty)}</td><td><strong>{number(movement.newQty)}</strong></td>
+                  <td title={movement.valuation?.productPreviousValuePaise !== undefined && movement.valuation?.productNewValuePaise !== undefined ? `Inventory value: ${money(movement.valuation.productPreviousValuePaise / 100)} → ${money(movement.valuation.productNewValuePaise / 100)}` : 'Historical valuation snapshot unavailable'}>
+                    {movement.valuation?.productValueDeltaPaise !== undefined
+                      ? <strong className={movement.valuation.productValueDeltaPaise >= 0 ? 'inventory-positive' : 'inventory-negative'}>{movement.valuation.productValueDeltaPaise > 0 ? '+' : ''}{money(movement.valuation.productValueDeltaPaise / 100)}</strong>
+                      : <span className="inventory-date">—</span>}
+                  </td>
                   <td className="inventory-reason">{movement.reason}</td><td>{userName(movement.performedBy)}</td>
                   <td className="inventory-date">{dateTime(movement.createdAt)}</td>
                 </tr>

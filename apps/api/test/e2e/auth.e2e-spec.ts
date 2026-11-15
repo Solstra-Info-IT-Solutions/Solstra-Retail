@@ -56,7 +56,6 @@ describe('Authentication HTTP E2E', () => {
     const requestResponse = await request(app.getHttpServer())
       .post('/api/v1/auth/register')
       .set('X-Forwarded-For', testIp())
-       .set('X-Forwarded-For', testIp())
       .send({
         name: 'E2E Test Owner', email, password,
         businessName: `E2E Business ${unique}`,
@@ -166,6 +165,7 @@ describe('Authentication HTTP E2E', () => {
     createdTenantIds.push(String(platformTenant._id));
     app.get(ConfigService).set('PLATFORM_ADMIN_USER_IDS', String(platformAdmin._id));
     const platformLogin = await request(app.getHttpServer()).post('/api/v1/auth/login')
+      .set('X-Forwarded-For', testIp())
       .send({ email: platformAdmin.email, password });
     if (platformLogin.status !== 201) throw new Error('E2E platform operator login failed');
     platformAdminHeaders = { Authorization: `Bearer ${platformLogin.body.accessToken}` };
@@ -216,6 +216,7 @@ describe('Authentication HTTP E2E', () => {
     const email = `approval-${unique}@example.test`;
     const registration = await request(app.getHttpServer())
       .post('/api/v1/auth/register')
+      .set('X-Forwarded-For', testIp())
       .send({ name: 'Approval Test Owner', email, password, businessName: 'Approval Test Store' });
     expect(registration.status).toBe(201);
     expect(registration.body.status).toBe('PENDING_APPROVAL');
@@ -223,7 +224,8 @@ describe('Authentication HTTP E2E', () => {
     expect(await users.exists({ email })).toBeFalsy();
     expect(await tenants.exists({ slug: /approval-test-store/ })).toBeFalsy();
 
-    const blockedLogin = await request(app.getHttpServer()).post('/api/v1/auth/login').send({ email, password });
+    const blockedLogin = await request(app.getHttpServer()).post('/api/v1/auth/login')
+      .set('X-Forwarded-For', testIp()).send({ email, password });
     expect(blockedLogin.status).toBe(401);
 
     const approved = await request(app.getHttpServer())
@@ -235,7 +237,8 @@ describe('Authentication HTTP E2E', () => {
     createdUserIds.push(approved.body.account.id);
     createdTenantIds.push(approved.body.workspace.id);
 
-    const login = await request(app.getHttpServer()).post('/api/v1/auth/login').send({ email, password });
+    const login = await request(app.getHttpServer()).post('/api/v1/auth/login')
+      .set('X-Forwarded-For', testIp()).send({ email, password });
     expect(login.status).toBe(201);
     expect(login.body.accessToken).toEqual(expect.any(String));
     expect(login.body.tenant.trialEndsAt).toEqual(expect.any(String));
@@ -248,6 +251,7 @@ describe('Authentication HTTP E2E', () => {
 
     const duplicate = await request(app.getHttpServer())
       .post('/api/v1/auth/register')
+      .set('X-Forwarded-For', testIp())
       .send({
         name: 'Duplicate Owner',
         email: first.body.user.email,
@@ -265,6 +269,7 @@ describe('Authentication HTTP E2E', () => {
 
     const login = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
+      .set('X-Forwarded-For', testIp())
       .send({
         email: registration.body.user.email,
         password,
@@ -299,6 +304,7 @@ describe('Authentication HTTP E2E', () => {
     expect(requestResponse.body.status).toBe('PENDING_APPROVAL');
 
     const stillCurrent = await request(app.getHttpServer()).post('/api/v1/auth/login')
+      .set('X-Forwarded-For', testIp())
       .send({ email: registration.body.user.email, password });
     expect(stillCurrent.status).toBe(201);
 
@@ -312,9 +318,11 @@ describe('Authentication HTTP E2E', () => {
     const revokedSession = await request(app.getHttpServer()).get('/api/v1/auth/me').set(headers);
     expect(revokedSession.status).toBe(401);
     const oldPasswordLogin = await request(app.getHttpServer()).post('/api/v1/auth/login')
+      .set('X-Forwarded-For', testIp())
       .send({ email: registration.body.user.email, password });
     expect(oldPasswordLogin.status).toBe(401);
     const newPasswordLogin = await request(app.getHttpServer()).post('/api/v1/auth/login')
+      .set('X-Forwarded-For', testIp())
       .send({ email: registration.body.user.email, password: newPassword });
     expect(newPasswordLogin.status).toBe(201);
   });
@@ -322,6 +330,7 @@ describe('Authentication HTTP E2E', () => {
   it('rejects registration without creating a tenant or login account', async () => {
     const email = `rejected-${randomUUID()}@example.test`;
     const registration = await request(app.getHttpServer()).post('/api/v1/auth/register')
+      .set('X-Forwarded-For', testIp())
       .send({ name: 'Rejected Owner', email, password, businessName: 'Rejected Store' });
     expect(registration.status).toBe(201);
     const rejected = await request(app.getHttpServer())
@@ -330,7 +339,8 @@ describe('Authentication HTTP E2E', () => {
       .send({ decision: 'REJECT', reason: 'Business verification documents were not provided' });
     expect(rejected.status).toBe(201);
     expect(await users.exists({ email })).toBeFalsy();
-    const login = await request(app.getHttpServer()).post('/api/v1/auth/login').send({ email, password });
+    const login = await request(app.getHttpServer()).post('/api/v1/auth/login')
+      .set('X-Forwarded-For', testIp()).send({ email, password });
     expect(login.status).toBe(401);
   });
 
@@ -341,6 +351,7 @@ describe('Authentication HTTP E2E', () => {
 
     const response = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
+      .set('X-Forwarded-For', testIp())
       .send({
         email: registration.body.user.email,
         password: 'WrongPassword123!',
@@ -365,6 +376,7 @@ describe('Authentication HTTP E2E', () => {
   it('rejects invalid registration data and unknown properties', async () => {
     const invalidEmail = await request(app.getHttpServer())
       .post('/api/v1/auth/register')
+      .set('X-Forwarded-For', testIp())
       .send({
         name: 'Invalid Owner',
         email: 'not-an-email',
@@ -376,6 +388,7 @@ describe('Authentication HTTP E2E', () => {
 
     const unknownProperty = await request(app.getHttpServer())
       .post('/api/v1/auth/register')
+      .set('X-Forwarded-For', testIp())
       .send({
         name: 'Invalid Owner',
         email: `extra-${randomUUID()}@example.test`,
@@ -445,6 +458,7 @@ describe('Authentication HTTP E2E', () => {
 
     const login = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
+      .set('X-Forwarded-For', testIp())
       .send({
         email: registration.body.user.email,
         password,
@@ -642,6 +656,7 @@ describe('Authentication HTTP E2E', () => {
 
     const login = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
+      .set('X-Forwarded-For', testIp())
       .send({
         email: registration.body.user.email,
         password,
@@ -1383,6 +1398,7 @@ describe('Authentication HTTP E2E', () => {
     expect(staffUpdate.body.permissions).toEqual(['expenses.create', 'expenses.view']);
     const staffLogin = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
+      .set('X-Forwarded-For', testIp())
       .send({ email: staffEmail, password });
     expect(staffLogin.status).toBe(201);
     expect(staffLogin.body.user.role).toBe('staff');

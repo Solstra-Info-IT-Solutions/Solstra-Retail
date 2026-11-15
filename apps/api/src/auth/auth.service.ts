@@ -156,6 +156,7 @@ export class AuthService implements OnModuleInit {
 
   async getMyPasswordChangeRequest(userId: string, tenantId: string) {
     if (![userId, tenantId].every(id => Types.ObjectId.isValid(id))) throw new BadRequestException('Invalid account context');
+    await this.passwordChangeRequests.updateMany({ userId: new Types.ObjectId(userId), status: 'PENDING_APPROVAL', expiresAt: { $lte: new Date() } }, { $set: { status: 'EXPIRED' }, $unset: { newPasswordHash: 1, expiresAt: 1 } });
     const request = await this.passwordChangeRequests.findOne({ userId: new Types.ObjectId(userId), tenantId: new Types.ObjectId(tenantId) })
       .select('_id status reviewReason reviewedAt createdAt').sort({ createdAt: -1 }).lean();
     return request || { status: 'NONE' };

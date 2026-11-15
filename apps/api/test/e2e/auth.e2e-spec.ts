@@ -48,13 +48,15 @@ describe('Authentication HTTP E2E', () => {
   const createdTenantIds: string[] = [];
 
   const password = 'E2eTestPassword123!';
+  const testIp = () => `198.51.100.${Math.floor(Math.random() * 254) + 1}`;
 
   async function registerAccount() {
     const unique = randomUUID();
     const email = `e2e-${unique}@example.test`;
     const requestResponse = await request(app.getHttpServer())
       .post('/api/v1/auth/register')
-      .set('X-Forwarded-For', `198.51.100.${Math.floor(Math.random() * 254) + 1}`)
+      .set('X-Forwarded-For', testIp())
+       .set('X-Forwarded-For', testIp())
       .send({
         name: 'E2E Test Owner', email, password,
         businessName: `E2E Business ${unique}`,
@@ -68,6 +70,7 @@ describe('Authentication HTTP E2E', () => {
       .send({ decision: 'APPROVE', reason: 'Automated E2E business verification' });
     const login = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
+      .set('X-Forwarded-For', testIp())
       .send({ email, password });
     if (login.status === 201) {
       createdUserIds.push(login.body.user.id);

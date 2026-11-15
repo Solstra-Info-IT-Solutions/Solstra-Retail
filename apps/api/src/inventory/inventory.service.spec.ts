@@ -58,4 +58,45 @@ describe('InventoryService', () => {
 
     expect(products.db.startSession).not.toHaveBeenCalled();
   });
+
+  it('persists integer-paise valuation snapshots for manual stock movements', async () => {
+    const session = {
+      withTransaction: jest.fn(async (callback: () => Promise<void>) => callback()),
+      endSession: jest.fn(),
+    };
+    const product = {
+      _id: '507f1f77bcf86cd799439013',
+      name: 'Test product',
+      trackStock: true,
+      stockQty: 4,
+      averageCost: 12.5,
+      inventoryValue: 50,
+      valuationInitialized: true,
+    };
+    products.db.startSession.mockResolvedValue(session);
+    products.findOne = jest.fn().mockReturnValue({ session: jest.fn().mockResolvedValue(product) });
+    products.findOneAndUpdate = jest.fn().mockResolvedValue({ ...product, stockQty: 6, inventoryValue: 75 });
+    movements.create = jest.fn().mockResolvedValue([{ _id: 'movement-1' }]);
+
+    await service.createMovement(
+      '507f1f77bcf86cd799439011',
+      '507f1f77bcf86cd799439012',
+      '507f1f77bcf86cd799439013',
+      { type: 'IN', quantity: 2, reason: 'Receipt' } as any,
+    );
+
+    expect(movements.create).toHaveBeenCalledWith(
+      [expect.objectContaining({
+        valuation: {
+          unitCostPaise: 1250,
+          productPreviousValuePaise: 5000,
+          productValueDeltaPaise: 2500,
+          productNewValuePaise: 7500,
+        },
+      })],
+      { session },
+    );
+    expect(session.endSession).toHaveBeenCalled();
+  });
+
 });

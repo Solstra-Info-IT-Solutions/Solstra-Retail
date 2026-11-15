@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
-import { Building2, Save, Upload, RefreshCw } from 'lucide-react';
+import { Building2, Save, RefreshCw } from 'lucide-react';
 import { api } from '../api/client';
 import './BusinessProfilePage.css';
 

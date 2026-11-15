@@ -35,7 +35,9 @@ export class AuthService implements OnModuleInit {
 
   async register(dto: RegisterDto) {
     const email = dto.email.toLowerCase().trim();
-    if (await this.users.exists({ email }) || await this.registrationRequests.exists({ email, status: 'PENDING_APPROVAL' })) {
+    const now = new Date();
+    await this.registrationRequests.updateMany({ email, status: 'PENDING_APPROVAL', expiresAt: { $lte: now } }, { $set: { status: 'EXPIRED' }, $unset: { passwordHash: 1, expiresAt: 1 } });
+    if (await this.users.exists({ email }) || await this.registrationRequests.exists({ email, status: 'PENDING_APPROVAL', expiresAt: { $gt: now } })) {
       throw new ConflictException('An account or pending registration with this email already exists');
     }
     const passwordHash = await bcrypt.hash(dto.password, 12);
@@ -81,7 +83,7 @@ export class AuthService implements OnModuleInit {
     if (decision === 'REJECT') {
       const rejected = await this.registrationRequests.updateOne(
         { _id: request._id, status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } },
-        { $set: { status: 'REJECTED', reviewedBy: new Types.ObjectId(userId), reviewedAt: now, reviewReason: reason.trim() }, $unset: { passwordHash: 1 } },
+        { $set: { status: 'REJECTED', reviewedBy: new Types.ObjectId(userId), reviewedAt: now, reviewReason: reason.trim() }, $unset: { passwordHash: 1, expiresAt: 1 } },
       );
       if (!rejected.modifiedCount) throw new ConflictException('Registration request was already reviewed');
       return { requestId, status: 'REJECTED', reviewedAt: now };
@@ -107,8 +109,8 @@ export class AuthService implements OnModuleInit {
           tenantId: tenant._id, role: 'owner', isActive: true, tokenVersion: 0,
         }], { session });
         const reviewed = await this.registrationRequests.updateOne(
-          { _id: current._id, status: 'PENDING_APPROVAL' },
-          { $set: { status: 'APPROVED', reviewedBy: new Types.ObjectId(userId), reviewedAt: activatedAt, reviewReason: reason.trim() }, $unset: { passwordHash: 1 } },
+          { _id: current._id, status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } },
+          { $set: { status: 'APPROVED', reviewedBy: new Types.ObjectId(userId), reviewedAt: activatedAt, reviewReason: reason.trim() }, $unset: { passwordHash: 1, expiresAt: 1 } },
           { session },
         );
         if (!reviewed.modifiedCount) throw new ConflictException('Registration request was reviewed concurrently');
@@ -134,6 +136,7 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException('Current password is incorrect');
     }
     if (await bcrypt.compare(dto.newPassword, user.passwordHash)) throw new BadRequestException('New password must be different from the current password');
+    await this.passwordChangeRequests.updateMany({ userId: user._id, status: 'PENDING_APPROVAL', expiresAt: { $lte: new Date() } }, { $set: { status: 'EXPIRED' }, $unset: { newPasswordHash: 1, expiresAt: 1 } });
     if (await this.passwordChangeRequests.exists({ userId: user._id, status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } })) {
       throw new ConflictException('A password change request is already awaiting Solstra approval');
     }
@@ -189,7 +192,7 @@ export class AuthService implements OnModuleInit {
         }
         const reviewed = await this.passwordChangeRequests.updateOne(
           { _id: request._id, status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } },
-          { $set: { status, reviewedBy: new Types.ObjectId(userId), reviewedAt: now, reviewReason: reason.trim() }, $unset: { newPasswordHash: 1 } },
+          { $set: { status, reviewedBy: new Types.ObjectId(userId), reviewedAt: now, reviewReason: reason.trim() }, $unset: { newPasswordHash: 1, expiresAt: 1 } },
           { session },
         );
         if (!reviewed.modifiedCount) throw new ConflictException('Password change request was reviewed concurrently');

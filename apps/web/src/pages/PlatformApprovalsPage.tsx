@@ -5,7 +5,7 @@ import './PlatformOperationsPage.css';
 
 type Registration={_id:string;name:string;businessName:string;storeName:string;email:string;ownerPhone:string;alternatePhone?:string;businessType:string;businessCategory?:string;businessDescription?:string;addressLine1:string;addressLine2?:string;city:string;district?:string;state:string;stateCode:string;pincode:string;country:string;gstRegistered:boolean;gstin?:string;gstLegalName?:string;gstRegistrationType?:string;businessEmail?:string;website?:string;logoDataUrl?:string;createdAt:string};
 type PasswordRequest={_id:string;email:string;createdAt:string;userId?:{name?:string;email?:string};tenantId?:{name?:string}};
-type StoreRecord=Registration & {_id:string;slug:string;status:string;subscriptionStatus:string;subscriptionPlan:string;trialEndsAt?:string;owner?:{name:string;email:string;isActive:boolean}|null};
+type StoreRecord=Registration & {ownerName?:string;_id:string;slug:string;status:string;subscriptionStatus:string;subscriptionPlan:string;trialEndsAt?:string;owner?:{name:string;email:string;isActive:boolean}|null};
 type Summary={registrations:{pending:number;approved:number;rejected:number;expired:number};stores:{total:number;active:number;suspended:number}};
 const industryLabel=(value:string)=>({GENERAL_RETAIL:'General Retail',GROCERY:'Grocery / Kirana',MEDICAL_PHARMACY:'Medical / Pharmacy',ELECTRONICS:'Electronics',FASHION_APPAREL:'Fashion / Apparel',WHOLESALE_DISTRIBUTION:'Wholesale / Distribution',E_COMMERCE:'E-commerce',RESTAURANT_FOOD:'Restaurant / Food',AUTOMOTIVE:'Automotive',BEAUTY_COSMETICS:'Beauty / Cosmetics',HARDWARE_BUILDING:'Hardware / Building Materials',OTHER:'Other'} as Record<string,string>)[value]||value;
 export default function PlatformApprovalsPage(){

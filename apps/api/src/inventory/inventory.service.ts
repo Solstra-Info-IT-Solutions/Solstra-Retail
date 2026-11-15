@@ -139,6 +139,12 @@ export class InventoryService {
           newQty,
           reason: dto.reason.trim(),
           performedBy: new Types.ObjectId(userId),
+          valuation: {
+            unitCostPaise,
+            productPreviousValuePaise: previousValuePaise,
+            productValueDeltaPaise: newValuePaise - previousValuePaise,
+            productNewValuePaise: newValuePaise,
+          },
         }],
         { session },
       );

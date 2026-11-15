@@ -1465,16 +1465,57 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
     await collection.createIndex({ tenantId: 1, code: 1 }, { unique: true });
     const metrics = await this.operationsMetrics(tenantId);
     const now = new Date();
+    const tenantObjectId = new Types.ObjectId(tenantId);
     const activeCodes = metrics.alerts.map((alert: any) => alert.code);
     for (const alert of metrics.alerts as any[]) {
-      await collection.updateOne(
-        { tenantId: new Types.ObjectId(tenantId), code: alert.code },
-        {
-          $setOnInsert: { firstSeenAt: now, acknowledgedAt: null, acknowledgedBy: null, escalationSentAt: null },
-          $set: { severity: alert.severity, message: alert.message, count: alert.count ?? 1, lastSeenAt: now, status: 'OPEN' },
-        },
-        { upsert: true },
-      );
+      const filter = { tenantId: tenantObjectId, code: alert.code };
+      const metricFields = {
+        severity: alert.severity,
+        message: alert.message,
+        count: alert.count ?? 1,
+        lastSeenAt: now,
+      };
+      const existing = await collection.findOne(filter);
+      if (!existing) {
+        try {
+          await collection.insertOne({
+            ...filter,
+            ...metricFields,
+            status: 'OPEN',
+            firstSeenAt: now,
+            acknowledgedAt: null,
+            acknowledgedBy: null,
+            acknowledgementNote: '',
+            escalationSentAt: null,
+            resolvedAt: null,
+          });
+        } catch (error: any) {
+          if (error?.code !== 11000) throw error;
+        }
+        continue;
+      }
+      if (existing.status === 'ACKNOWLEDGED') {
+        // Refresh diagnostic details without undoing an operator's acknowledgement.
+        await collection.updateOne(
+          { ...filter, status: 'ACKNOWLEDGED' },
+          { $set: metricFields },
+        );
+      } else if (existing.status === 'RESOLVED') {
+        // A condition that recurs after resolution is a new alert lifecycle.
+        await collection.updateOne(
+          { ...filter, status: 'RESOLVED' },
+          { $set: {
+            ...metricFields, status: 'OPEN', firstSeenAt: now,
+            acknowledgedAt: null, acknowledgedBy: null, acknowledgementNote: '',
+            escalationSentAt: null, resolvedAt: null,
+          } },
+        );
+      } else {
+        await collection.updateOne(
+          { ...filter, status: existing.status },
+          { $set: { ...metricFields, status: 'OPEN' } },
+        );
+      }
     }
     await collection.updateMany(
       { tenantId: new Types.ObjectId(tenantId), status: { $in: ['OPEN', 'ACKNOWLEDGED'] }, ...(activeCodes.length ? { code: { $nin: activeCodes } } : {}) },

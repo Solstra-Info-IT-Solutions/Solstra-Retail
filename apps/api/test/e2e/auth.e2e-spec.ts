@@ -284,6 +284,53 @@ describe('Authentication HTTP E2E', () => {
     );
   });
 
+  it('requires Solstra approval for password changes and revokes existing sessions', async () => {
+    const registration = await registerAccount();
+    const headers = { Authorization: `Bearer ${registration.body.accessToken}` };
+    const newPassword = 'E2eChangedPassword456!';
+    const requestResponse = await request(app.getHttpServer())
+      .post('/api/v1/auth/password-change-requests')
+      .set(headers)
+      .send({ currentPassword: password, newPassword });
+    expect(requestResponse.status).toBe(201);
+    expect(requestResponse.body.status).toBe('PENDING_APPROVAL');
+
+    const stillCurrent = await request(app.getHttpServer()).post('/api/v1/auth/login')
+      .send({ email: registration.body.user.email, password });
+    expect(stillCurrent.status).toBe(201);
+
+    const approval = await request(app.getHttpServer())
+      .post(`/api/v1/auth/platform/password-change-requests/${requestResponse.body.requestId}/review`)
+      .set(platformAdminHeaders)
+      .send({ decision: 'APPROVE', reason: 'Verified account holder password change request' });
+    expect(approval.status).toBe(201);
+    expect(approval.body.status).toBe('APPROVED');
+
+    const revokedSession = await request(app.getHttpServer()).get('/api/v1/auth/me').set(headers);
+    expect(revokedSession.status).toBe(401);
+    const oldPasswordLogin = await request(app.getHttpServer()).post('/api/v1/auth/login')
+      .send({ email: registration.body.user.email, password });
+    expect(oldPasswordLogin.status).toBe(401);
+    const newPasswordLogin = await request(app.getHttpServer()).post('/api/v1/auth/login')
+      .send({ email: registration.body.user.email, password: newPassword });
+    expect(newPasswordLogin.status).toBe(201);
+  });
+
+  it('rejects registration without creating a tenant or login account', async () => {
+    const email = `rejected-${randomUUID()}@example.test`;
+    const registration = await request(app.getHttpServer()).post('/api/v1/auth/register')
+      .send({ name: 'Rejected Owner', email, password, businessName: 'Rejected Store' });
+    expect(registration.status).toBe(201);
+    const rejected = await request(app.getHttpServer())
+      .post(`/api/v1/auth/platform/registration-requests/${registration.body.requestId}/review`)
+      .set(platformAdminHeaders)
+      .send({ decision: 'REJECT', reason: 'Business verification documents were not provided' });
+    expect(rejected.status).toBe(201);
+    expect(await users.exists({ email })).toBeFalsy();
+    const login = await request(app.getHttpServer()).post('/api/v1/auth/login').send({ email, password });
+    expect(login.status).toBe(401);
+  });
+
   it('rejects invalid login credentials', async () => {
     const registration = await registerAccount();
 

@@ -430,7 +430,7 @@ export class PlatformService implements OnModuleInit, OnModuleDestroy {
   async listOfflineDevices(tenantId: string, userId: string) {
     this.identity(tenantId, userId);
     return this.offlineDevices.find(tenantFilter(tenantId, { userId: new Types.ObjectId(userId) }))
-      .select('deviceId label lastSeenAt revokedAt createdAt').sort({ lastSeenAt: -1 }).lean();
+      .select('deviceId label lastSeenAt revokedAt createdAt lastSyncSequence lastSyncStatus').sort({ lastSeenAt: -1 }).lean();
   }
 
   async revokeOfflineDevice(tenantId: string, deviceId: string) {

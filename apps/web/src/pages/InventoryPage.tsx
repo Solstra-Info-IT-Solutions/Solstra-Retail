@@ -261,7 +261,7 @@ export default function InventoryPage() {
             <th>PRODUCT</th><th>MOVEMENT</th><th>CHANGE</th><th>PREVIOUS</th><th>NEW STOCK</th><th>VALUE CHANGE</th><th>REASON</th><th>RECORDED BY</th><th>DATE & TIME</th>
           </tr></thead><tbody>
             {loading ? <tr><td colSpan={9} className="inventory-empty">Loading stock ledger...</td></tr> :
-              !movements?.items.length ? <tr><td colSpan={8} className="inventory-empty">
+              !movements?.items.length ? <tr><td colSpan={9} className="inventory-empty">
                 <ClipboardList size={30} /><strong>No stock movements found</strong>
                 <span>New stock receipts, issues and adjustments will appear here.</span>
               </td></tr> : movements.items.map((movement) => (

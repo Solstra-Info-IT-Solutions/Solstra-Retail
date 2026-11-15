@@ -61,6 +61,9 @@ export class WarehouseInventoryService {
           reason: dto.reason.trim(), performedBy: new Types.ObjectId(userId),
           valuation: {
             unitCostPaise: dto.quantity ? Math.round(valuePaise / dto.quantity) : 0,
+            productPreviousValuePaise: productValuePaise,
+            productValueDeltaPaise: 0,
+            productNewValuePaise: productValuePaise,
             warehousePreviousValuePaise: 0,
             warehouseValueDeltaPaise: valuePaise,
             warehouseNewValuePaise: valuePaise,
@@ -133,6 +136,9 @@ export class WarehouseInventoryService {
             reason: dto.reason.trim(), performedBy: new Types.ObjectId(userId),
             valuation: {
               unitCostPaise: source.quantity ? Math.round(sourceValuePaise / source.quantity) : 0,
+              productPreviousValuePaise: Math.round(((product.inventoryValue || 0) + Number.EPSILON) * 100),
+              productValueDeltaPaise: 0,
+              productNewValuePaise: Math.round(((product.inventoryValue || 0) + Number.EPSILON) * 100),
               warehousePreviousValuePaise: sourceValuePaise,
               warehouseValueDeltaPaise: -valuePaise,
               warehouseNewValuePaise: sourceNewValuePaise,
@@ -145,6 +151,9 @@ export class WarehouseInventoryService {
             reason: dto.reason.trim(), performedBy: new Types.ObjectId(userId),
             valuation: {
               unitCostPaise: dto.quantity ? Math.round(valuePaise / dto.quantity) : 0,
+              productPreviousValuePaise: Math.round(((product.inventoryValue || 0) + Number.EPSILON) * 100),
+              productValueDeltaPaise: 0,
+              productNewValuePaise: Math.round(((product.inventoryValue || 0) + Number.EPSILON) * 100),
               warehousePreviousValuePaise: Math.round(((destination?.inventoryValue || 0) + Number.EPSILON) * 100),
               warehouseValueDeltaPaise: valuePaise,
               warehouseNewValuePaise: Math.round(((destination?.inventoryValue || 0) + Number.EPSILON) * 100) + valuePaise,

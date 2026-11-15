@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { api } from '../api/client';
+import './PlatformOperationsPage.css';
 
 type RequestStatus={_id?:string;status:string;reviewReason?:string;createdAt?:string;reviewedAt?:string};
 export default function AccountSecurityPage(){

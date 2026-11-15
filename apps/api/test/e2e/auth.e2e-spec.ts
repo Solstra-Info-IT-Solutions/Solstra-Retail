@@ -1,7 +1,9 @@
 ﻿import 'reflect-metadata';
 import { randomUUID } from 'crypto';
+import * as bcrypt from 'bcrypt';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { getModelToken } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import helmet from 'helmet';
@@ -9,6 +11,7 @@ import request = require('supertest');
 
 import { AppModule } from '../../src/app.module';
 import { User } from '../../src/auth/schemas/user.schema';
+import { RegistrationApprovalRequest, PasswordChangeApprovalRequest } from '../../src/auth/schemas/identity-approval.schema';
 import { Tenant } from '../../src/tenants/schemas/tenant.schema';
 import { Product } from '../../src/products/schemas/product.schema';
 import { InventoryMovement } from '../../src/inventory/schemas/inventory-movement.schema';
@@ -37,6 +40,9 @@ describe('Authentication HTTP E2E', () => {
   let creditNotes: Model<CreditNote>;
   let creditNoteCounters: Model<CreditNoteCounter>;
   let expenses: Model<Expense>;
+  let registrationRequests: Model<RegistrationApprovalRequest>;
+  let passwordChangeRequests: Model<PasswordChangeApprovalRequest>;
+  let platformAdminHeaders: { Authorization: string };
 
   const createdUserIds: string[] = [];
   const createdTenantIds: string[] = [];
@@ -45,28 +51,29 @@ describe('Authentication HTTP E2E', () => {
 
   async function registerAccount() {
     const unique = randomUUID();
-
-    const response = await request(app.getHttpServer())
+    const email = `e2e-${unique}@example.test`;
+    const requestResponse = await request(app.getHttpServer())
       .post('/api/v1/auth/register')
       .set('X-Forwarded-For', `198.51.100.${Math.floor(Math.random() * 254) + 1}`)
       .send({
-        name: 'E2E Test Owner',
-        email: `e2e-${unique}@example.test`,
-        password,
+        name: 'E2E Test Owner', email, password,
         businessName: `E2E Business ${unique}`,
       });
-
-    if (response.status === 201) {
-      if (response.body.user?.id) {
-        createdUserIds.push(response.body.user.id);
-      }
-
-      if (response.body.tenant?.id) {
-        createdTenantIds.push(response.body.tenant.id);
-      }
+    if (requestResponse.status !== 201 || requestResponse.body.status !== 'PENDING_APPROVAL') {
+      return requestResponse;
     }
-
-    return response;
+    await request(app.getHttpServer())
+      .post(`/api/v1/auth/platform/registration-requests/${requestResponse.body.requestId}/review`)
+      .set(platformAdminHeaders)
+      .send({ decision: 'APPROVE', reason: 'Automated E2E business verification' });
+    const login = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email, password });
+    if (login.status === 201) {
+      createdUserIds.push(login.body.user.id);
+      createdTenantIds.push(login.body.tenant.id);
+    }
+    return login;
   }
 
   beforeAll(async () => {
@@ -121,6 +128,8 @@ describe('Authentication HTTP E2E', () => {
     creditNotes = app.get<Model<CreditNote>>(getModelToken(CreditNote.name));
     creditNoteCounters = app.get<Model<CreditNoteCounter>>(getModelToken(CreditNoteCounter.name));
     expenses = app.get<Model<Expense>>(getModelToken(Expense.name));
+    registrationRequests = app.get<Model<RegistrationApprovalRequest>>(getModelToken(RegistrationApprovalRequest.name));
+    passwordChangeRequests = app.get<Model<PasswordChangeApprovalRequest>>(getModelToken(PasswordChangeApprovalRequest.name));
 
     await Promise.all([
       users.createIndexes(),
@@ -136,7 +145,27 @@ describe('Authentication HTTP E2E', () => {
       creditNotes.createIndexes(),
       creditNoteCounters.createIndexes(),
       expenses.createIndexes(),
+      registrationRequests.createIndexes(),
+      passwordChangeRequests.createIndexes(),
     ]);
+
+    const platformTenant = await tenants.create({
+      name: 'E2E Solstra Platform', slug: 'e2e-solstra-platform-' + randomUUID().slice(0, 8),
+      status: 'active', subscriptionStatus: 'active',
+      trialStartedAt: new Date(), trialEndsAt: new Date(Date.now() + 30 * 86400000),
+    });
+    const platformAdmin = await users.create({
+      name: 'E2E Solstra Operator', email: 'e2e-platform-' + randomUUID() + '@example.test',
+      passwordHash: await bcrypt.hash(password, 12), tenantId: platformTenant._id,
+      role: 'owner', isActive: true,
+    });
+    createdUserIds.push(String(platformAdmin._id));
+    createdTenantIds.push(String(platformTenant._id));
+    app.get(ConfigService).set('PLATFORM_ADMIN_USER_IDS', String(platformAdmin._id));
+    const platformLogin = await request(app.getHttpServer()).post('/api/v1/auth/login')
+      .send({ email: platformAdmin.email, password });
+    if (platformLogin.status !== 201) throw new Error('E2E platform operator login failed');
+    platformAdminHeaders = { Authorization: `Bearer ${platformLogin.body.accessToken}` };
   });
 
   afterAll(async () => {
@@ -171,30 +200,42 @@ describe('Authentication HTTP E2E', () => {
         });
       }
     } finally {
+      if (registrationRequests) await registrationRequests.deleteMany({});
+      if (passwordChangeRequests) await passwordChangeRequests.deleteMany({});
       if (app) {
         await app.close();
       }
     }
   });
 
-  it('registers a new owner and returns a JWT and trial workspace', async () => {
-    const response = await registerAccount();
+  it('keeps registration pending until Solstra approval, then creates the trial workspace', async () => {
+    const unique = randomUUID();
+    const email = `approval-${unique}@example.test`;
+    const registration = await request(app.getHttpServer())
+      .post('/api/v1/auth/register')
+      .send({ name: 'Approval Test Owner', email, password, businessName: 'Approval Test Store' });
+    expect(registration.status).toBe(201);
+    expect(registration.body.status).toBe('PENDING_APPROVAL');
+    expect(registration.body.accessToken).toBeUndefined();
+    expect(await users.exists({ email })).toBeFalsy();
+    expect(await tenants.exists({ slug: /approval-test-store/ })).toBeFalsy();
 
-    expect(response.status).toBe(201);
-    expect(response.body).toEqual(
-      expect.objectContaining({
-        accessToken: expect.any(String),
-        tokenType: 'Bearer',
-        user: expect.objectContaining({
-          id: expect.any(String),
-          role: 'owner',
-        }),
-        tenant: expect.objectContaining({
-          id: expect.any(String),
-          trialEndsAt: expect.any(String),
-        }),
-      }),
-    );
+    const blockedLogin = await request(app.getHttpServer()).post('/api/v1/auth/login').send({ email, password });
+    expect(blockedLogin.status).toBe(401);
+
+    const approved = await request(app.getHttpServer())
+      .post(`/api/v1/auth/platform/registration-requests/${registration.body.requestId}/review`)
+      .set(platformAdminHeaders)
+      .send({ decision: 'APPROVE', reason: 'Verified business ownership for E2E test' });
+    expect(approved.status).toBe(201);
+    expect(approved.body.status).toBe('APPROVED');
+    createdUserIds.push(approved.body.account.id);
+    createdTenantIds.push(approved.body.workspace.id);
+
+    const login = await request(app.getHttpServer()).post('/api/v1/auth/login').send({ email, password });
+    expect(login.status).toBe(201);
+    expect(login.body.accessToken).toEqual(expect.any(String));
+    expect(login.body.tenant.trialEndsAt).toEqual(expect.any(String));
   });
 
   it('rejects duplicate email registration', async () => {

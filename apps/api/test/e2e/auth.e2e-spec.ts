@@ -59,7 +59,10 @@ describe('Authentication HTTP E2E', () => {
       .set('X-Forwarded-For', testIp())
       .send({
         name: 'E2E Test Owner', email, password,
-        businessName: `E2E Business ${unique}`,
+        businessName: `E2E Business ${unique}`, storeName: `E2E Store ${unique}`,
+        ownerPhone: '9876543210', businessType: 'GENERAL_RETAIL',
+        addressLine1: '12 E2E Market Road', city: 'Noida', state: 'Uttar Pradesh',
+        stateCode: '09', pincode: '201301', country: 'India', gstRegistered: false,
       });
     if (requestResponse.status !== 201 || requestResponse.body.status !== 'PENDING_APPROVAL') {
       return requestResponse;
@@ -218,7 +221,7 @@ describe('Authentication HTTP E2E', () => {
     const registration = await request(app.getHttpServer())
       .post('/api/v1/auth/register')
       .set('X-Forwarded-For', testIp())
-      .send({ name: 'Approval Test Owner', email, password, businessName: 'Approval Test Store' });
+      .send({ name: 'Approval Test Owner', email, password, businessName: 'Approval Test Store', storeName: 'Approval Test Store', ownerPhone: '9876543210', businessType: 'MEDICAL_PHARMACY', businessCategory: 'Retail pharmacy', addressLine1: '21 Health Market', city: 'Noida', state: 'Uttar Pradesh', stateCode: '09', pincode: '201301', country: 'India', gstRegistered: true, gstin: '09ABCDE1234F1Z5', gstLegalName: 'Approval Test Store LLP', gstRegistrationType: 'Regular' });
     expect(registration.status).toBe(201);
     expect(registration.body.status).toBe('PENDING_APPROVAL');
     expect(registration.body.accessToken).toBeUndefined();
@@ -245,6 +248,69 @@ describe('Authentication HTTP E2E', () => {
     expect(login.body.tenant.trialEndsAt).toEqual(expect.any(String));
   });
 
+  it('persists the full business profile and exposes it only through Solstra platform registry', async () => {
+    const unique = randomUUID();
+    const email = `profile-${unique}@example.test`;
+    const registration = await request(app.getHttpServer()).post('/api/v1/auth/register')
+      .set('X-Forwarded-For', testIp())
+      .send({ name: 'Profile Owner', email, password, businessName: 'Profile Medical LLP', storeName: 'Profile Pharmacy', ownerPhone: '9876543210', businessType: 'MEDICAL_PHARMACY', businessCategory: 'Retail pharmacy', businessDescription: 'Community pharmacy and wellness supplies', addressLine1: '21 Health Market', addressLine2: 'Shop 4', city: 'Noida', district: 'Gautam Buddha Nagar', state: 'Uttar Pradesh', stateCode: '09', pincode: '201301', country: 'India', gstRegistered: true, gstin: '09ABCDE1234F1Z5', gstLegalName: 'Profile Medical LLP', gstRegistrationType: 'Regular', businessEmail: 'store@example.test', website: 'https://example.test' });
+    expect(registration.status).toBe(201);
+    const pending = await request(app.getHttpServer()).get('/api/v1/auth/platform/registration-requests').set(platformAdminHeaders);
+    expect(pending.status).toBe(200);
+    expect(pending.body).toEqual(expect.arrayContaining([expect.objectContaining({ businessType: 'MEDICAL_PHARMACY', gstRegistered: true, gstin: '09ABCDE1234F1Z5', ownerPhone: '9876543210', storeName: 'Profile Pharmacy' })]));
+    const approved = await request(app.getHttpServer()).post(`/api/v1/auth/platform/registration-requests/${registration.body.requestId}/review`)
+      .set(platformAdminHeaders).send({ decision: 'APPROVE', reason: 'Verified complete pharmacy registration profile' });
+    expect(approved.status).toBe(201);
+    createdUserIds.push(approved.body.account.id);
+    createdTenantIds.push(approved.body.workspace.id);
+    const tenant = await tenants.findById(approved.body.workspace.id).lean();
+    expect(tenant).toEqual(expect.objectContaining({ name: 'Profile Medical LLP', storeName: 'Profile Pharmacy', businessType: 'MEDICAL_PHARMACY', gstRegistered: true, gstin: '09ABCDE1234F1Z5', ownerPhone: '9876543210', stateCode: '09', pincode: '201301' }));
+    const directory = await request(app.getHttpServer()).get('/api/v1/auth/platform/store-directory').set(platformAdminHeaders);
+    expect(directory.status).toBe(200);
+    expect(directory.body).toEqual(expect.arrayContaining([expect.objectContaining({ _id: approved.body.workspace.id, owner: expect.objectContaining({ email }) })]));
+    const summary = await request(app.getHttpServer()).get('/api/v1/auth/platform/registration-summary').set(platformAdminHeaders);
+    expect(summary.status).toBe(200);
+    expect(summary.body.stores.total).toBeGreaterThanOrEqual(1);
+    expect(summary.body.registrations.approved).toBeGreaterThanOrEqual(1);
+  });
+
+  it('allows owners to update their store profile and keeps GST optional when unregistered', async () => {
+    const owner = await registerAccount();
+    const headers = { Authorization: `Bearer ${owner.body.accessToken}` };
+    const profile = await request(app.getHttpServer()).get('/api/v1/tenant/profile').set(headers);
+    expect(profile.status).toBe(200);
+    expect(profile.body).toEqual(expect.objectContaining({ businessType: 'GENERAL_RETAIL', gstRegistered: false, ownerPhone: '9876543210' }));
+    const updated = await request(app.getHttpServer()).patch('/api/v1/tenant/profile').set(headers)
+      .send({ storeName: 'Updated Retail Store', businessType: 'E_COMMERCE', gstRegistered: false, gstin: null, businessDescription: 'Online retail and fulfilment' });
+    expect(updated.status).toBe(200);
+    expect(updated.body).toEqual(expect.objectContaining({ storeName: 'Updated Retail Store', businessType: 'E_COMMERCE', gstRegistered: false, gstin: null }));
+  });
+
+  it('lets owners deactivate and reactivate employee accounts with session revocation', async () => {
+    const owner = await registerAccount();
+    const ownerHeaders = { Authorization: `Bearer ${owner.body.accessToken}` };
+    const email = `employee-${randomUUID()}@example.test`;
+    const created = await request(app.getHttpServer()).post('/api/v1/auth/users').set(ownerHeaders)
+      .send({ name: 'Lifecycle Employee', email, password, designation: 'Cashier', phone: '9876543211', permissions: ['dashboard.view', 'sales.create'] });
+    expect(created.status).toBe(201);
+    expect(created.body).toEqual(expect.objectContaining({ designation: 'Cashier', phone: '9876543211', permissions: ['dashboard.view', 'sales.create'] }));
+    createdUserIds.push(created.body.id);
+    const login = await request(app.getHttpServer()).post('/api/v1/auth/login').set('X-Forwarded-For', testIp()).send({ email, password });
+    expect(login.status).toBe(201);
+    const oldHeaders = { Authorization: `Bearer ${login.body.accessToken}` };
+    const deactivated = await request(app.getHttpServer()).patch(`/api/v1/auth/users/${created.body.id}/status`).set(ownerHeaders)
+      .send({ isActive: false, reason: 'Employee offboarding E2E test' });
+    expect(deactivated.status).toBe(200);
+    expect(deactivated.body.isActive).toBe(false);
+    expect((await request(app.getHttpServer()).get('/api/v1/auth/me').set(oldHeaders)).status).toBe(401);
+    expect((await request(app.getHttpServer()).post('/api/v1/auth/login').set('X-Forwarded-For', testIp()).send({ email, password })).status).toBe(401);
+    const reactivated = await request(app.getHttpServer()).patch(`/api/v1/auth/users/${created.body.id}/status`).set(ownerHeaders)
+      .send({ isActive: true, reason: 'Employee returned to work' });
+    expect(reactivated.status).toBe(200);
+    expect(reactivated.body.isActive).toBe(true);
+    expect((await request(app.getHttpServer()).post('/api/v1/auth/login').set('X-Forwarded-For', testIp()).send({ email, password })).status).toBe(201);
+  });
+
   it('rejects duplicate email registration', async () => {
     const first = await registerAccount();
 
@@ -257,7 +323,9 @@ describe('Authentication HTTP E2E', () => {
         name: 'Duplicate Owner',
         email: first.body.user.email,
         password,
-        businessName: 'Duplicate Business',
+        businessName: 'Duplicate Business', storeName: 'Duplicate Business',
+        ownerPhone: '9876543210', businessType: 'GENERAL_RETAIL', addressLine1: '12 E2E Market Road',
+        city: 'Noida', state: 'Uttar Pradesh', stateCode: '09', pincode: '201301', country: 'India', gstRegistered: false,
       });
 
     expect(duplicate.status).toBe(409);
@@ -332,7 +400,7 @@ describe('Authentication HTTP E2E', () => {
     const email = `rejected-${randomUUID()}@example.test`;
     const registration = await request(app.getHttpServer()).post('/api/v1/auth/register')
       .set('X-Forwarded-For', testIp())
-      .send({ name: 'Rejected Owner', email, password, businessName: 'Rejected Store' });
+      .send({ name: 'Rejected Owner', email, password, businessName: 'Rejected Store', storeName: 'Rejected Store', ownerPhone: '9876543210', businessType: 'GROCERY', addressLine1: '5 Market Lane', city: 'Noida', state: 'Uttar Pradesh', stateCode: '09', pincode: '201301', country: 'India', gstRegistered: false });
     expect(registration.status).toBe(201);
     const rejected = await request(app.getHttpServer())
       .post(`/api/v1/auth/platform/registration-requests/${registration.body.requestId}/review`)
@@ -394,7 +462,9 @@ describe('Authentication HTTP E2E', () => {
         name: 'Invalid Owner',
         email: `extra-${randomUUID()}@example.test`,
         password,
-        businessName: 'Invalid Business',
+        businessName: 'Invalid Business', storeName: 'Invalid Business',
+        ownerPhone: '9876543210', businessType: 'GENERAL_RETAIL', addressLine1: '12 E2E Market Road',
+        city: 'Noida', state: 'Uttar Pradesh', stateCode: '09', pincode: '201301', country: 'India', gstRegistered: false,
         unexpectedField: true,
       });
 

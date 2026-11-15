@@ -30,6 +30,10 @@ export class AuthService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    const registrationIndexes = await this.registrationRequests.collection.listIndexes().toArray().catch(() => [] as any[]);
+    if (registrationIndexes.some((index: any) => index.name === 'expiresAt_1' && index.expireAfterSeconds !== undefined)) {
+      await this.registrationRequests.collection.dropIndex('expiresAt_1');
+    }
     await Promise.all([this.registrationRequests.createIndexes(), this.passwordChangeRequests.createIndexes()]);
   }
 
@@ -42,9 +46,17 @@ export class AuthService implements OnModuleInit {
     }
     const passwordHash = await bcrypt.hash(dto.password, 12);
     try {
+      if (dto.gstRegistered && dto.gstin?.slice(0, 2) !== dto.stateCode) {
+        throw new BadRequestException('GSTIN state code must match the registered business state');
+      }
+      if (!dto.gstRegistered && dto.gstin) throw new BadRequestException('GSTIN must be omitted when the business is not GST registered');
+      const { password: _password, ...businessProfile } = dto;
+      void _password;
       const request = await this.registrationRequests.create({
+        ...businessProfile,
         name: dto.name.trim(),
         businessName: dto.businessName.trim(),
+        storeName: dto.storeName.trim(),
         email,
         passwordHash,
         status: 'PENDING_APPROVAL',
@@ -61,23 +73,24 @@ export class AuthService implements OnModuleInit {
     }
   }
 
-  private assertPlatformAdmin(userId: string) {
+  private assertPlatformAdmin(userId: string): string[] {
     const allowed = (this.config.get<string>('PLATFORM_ADMIN_USER_IDS') || '')
       .split(',').map(value => value.trim()).filter(Boolean);
     if (!allowed.includes(userId)) throw new ForbiddenException('Solstra platform approval access is not configured for this account');
+    return allowed;
   }
 
   async listRegistrationApprovalRequests(userId: string) {
     this.assertPlatformAdmin(userId);
     return this.registrationRequests.find({ status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } })
-      .select('_id name businessName email status createdAt')
+      .select('_id name businessName storeName email ownerPhone alternatePhone businessType businessCategory businessDescription addressLine1 addressLine2 city district state stateCode pincode country gstRegistered gstin gstLegalName gstRegistrationType businessEmail website status createdAt +logoDataUrl')
       .sort({ createdAt: 1 }).limit(200).lean();
   }
 
   async reviewRegistrationApproval(userId: string, requestId: string, decision: 'APPROVE' | 'REJECT', reason: string) {
     this.assertPlatformAdmin(userId);
     if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(requestId)) throw new BadRequestException('Invalid approval identity');
-    const request = await this.registrationRequests.findOne({ _id: new Types.ObjectId(requestId), status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } }).select('+passwordHash');
+    const request = await this.registrationRequests.findOne({ _id: new Types.ObjectId(requestId), status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } }).select('+passwordHash +logoDataUrl');
     if (!request) throw new NotFoundException('Pending registration request not found');
     const now = new Date();
     if (decision === 'REJECT') {
@@ -95,13 +108,36 @@ export class AuthService implements OnModuleInit {
     let user: any = null;
     try {
       await session.withTransaction(async () => {
-        const current = await this.registrationRequests.findOne({ _id: request._id, status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } }).select('+passwordHash').session(session);
+        const current = await this.registrationRequests.findOne({ _id: request._id, status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } }).select('+passwordHash +logoDataUrl').session(session);
         if (!current) throw new ConflictException('Registration request was already reviewed');
         const activatedAt = new Date();
         const trialEndsAt = new Date(activatedAt.getTime() + TRIAL_DURATION_MS);
         const slugBase = current.businessName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 100) || 'business';
         [tenant] = await this.tenants.create([{
-          name: current.businessName, slug: slugBase + '-' + randomBytes(4).toString('hex'),
+          name: current.businessName,
+          storeName: current.storeName || current.businessName,
+          ownerName: current.name,
+          ownerPhone: current.ownerPhone,
+          alternatePhone: current.alternatePhone || null,
+          businessType: current.businessType,
+          businessCategory: current.businessCategory || '',
+          businessDescription: current.businessDescription || '',
+          businessEmail: current.businessEmail || current.email,
+          website: current.website || '',
+          addressLine1: current.addressLine1,
+          addressLine2: current.addressLine2 || '',
+          city: current.city,
+          district: current.district || '',
+          state: current.state,
+          stateCode: current.stateCode,
+          pincode: current.pincode,
+          country: current.country || 'India',
+          gstRegistered: Boolean(current.gstRegistered),
+          gstin: current.gstRegistered ? current.gstin : null,
+          gstLegalName: current.gstRegistered ? current.gstLegalName || '' : '',
+          gstRegistrationType: current.gstRegistered ? current.gstRegistrationType || '' : '',
+          logoDataUrl: current.logoDataUrl || null,
+          slug: slugBase + '-' + randomBytes(4).toString('hex'),
           status: 'active', subscriptionStatus: 'trial', trialStartedAt: activatedAt, trialEndsAt,
         }], { session });
         [user] = await this.users.create([{
@@ -160,6 +196,48 @@ export class AuthService implements OnModuleInit {
     const request = await this.passwordChangeRequests.findOne({ userId: new Types.ObjectId(userId), tenantId: new Types.ObjectId(tenantId) })
       .select('_id status reviewReason reviewedAt createdAt').sort({ createdAt: -1 }).lean();
     return request || { status: 'NONE' };
+  }
+
+  async getPlatformRegistrationSummary(userId: string) {
+    const allowed = this.assertPlatformAdmin(userId);
+    const platformUsers = await this.users.find({ _id: { $in: allowed.filter(Types.ObjectId.isValid).map(id => new Types.ObjectId(id)) } })
+      .select('tenantId').lean();
+    const excludedTenantIds = platformUsers.map((user: any) => user.tenantId);
+    const storeFilter = excludedTenantIds.length ? { _id: { $nin: excludedTenantIds } } : {};
+    const now = new Date();
+    await this.registrationRequests.updateMany(
+      { status: 'PENDING_APPROVAL', expiresAt: { $lte: now } },
+      { $set: { status: 'EXPIRED' }, $unset: { passwordHash: 1, expiresAt: 1 } },
+    );
+    const [pending, approved, rejected, expired, totalStores, activeStores, suspendedStores] = await Promise.all([
+      this.registrationRequests.countDocuments({ status: 'PENDING_APPROVAL', expiresAt: { $gt: now } }),
+      this.registrationRequests.countDocuments({ status: 'APPROVED' }),
+      this.registrationRequests.countDocuments({ status: 'REJECTED' }),
+      this.registrationRequests.countDocuments({ status: 'EXPIRED' }),
+      this.tenants.countDocuments(storeFilter),
+      this.tenants.countDocuments({ ...storeFilter, status: 'active' }),
+      this.tenants.countDocuments({ ...storeFilter, status: 'suspended' }),
+    ]);
+    return { registrations: { pending, approved, rejected, expired }, stores: { total: totalStores, active: activeStores, suspended: suspendedStores } };
+  }
+
+  async listPlatformStoreDirectory(userId: string) {
+    const allowed = this.assertPlatformAdmin(userId);
+    await this.registrationRequests.updateMany(
+      { status: 'PENDING_APPROVAL', expiresAt: { $lte: new Date() } },
+      { $set: { status: 'EXPIRED' }, $unset: { passwordHash: 1, expiresAt: 1 } },
+    );
+    const platformUsers = await this.users.find({ _id: { $in: allowed.filter(Types.ObjectId.isValid).map(id => new Types.ObjectId(id)) } })
+      .select('tenantId').lean();
+    const excludedTenantIds = platformUsers.map((user: any) => user.tenantId);
+    const tenants = await this.tenants.find(excludedTenantIds.length ? { _id: { $nin: excludedTenantIds } } : {})
+      .select('+logoDataUrl name storeName slug status subscriptionStatus subscriptionPlan trialStartedAt trialEndsAt gstRegistered gstin gstLegalName gstRegistrationType businessType businessCategory businessDescription businessEmail website ownerName ownerPhone alternatePhone addressLine1 addressLine2 city district state stateCode pincode country createdAt')
+      .sort({ createdAt: -1 }).limit(500).lean();
+    const ids = tenants.map((tenant: any) => tenant._id);
+    const owners = await this.users.find({ tenantId: { $in: ids }, role: 'owner' })
+      .select('tenantId name email isActive createdAt').lean();
+    const ownerByTenant = new Map(owners.map((owner: any) => [String(owner.tenantId), owner]));
+    return tenants.map((tenant: any) => ({ ...tenant, owner: ownerByTenant.get(String(tenant._id)) || null }));
   }
 
   async listPasswordChangeApprovalRequests(userId: string) {
@@ -231,7 +309,9 @@ export class AuthService implements OnModuleInit {
         email,
         passwordHash,
         role: 'staff',
-        permissions: [],
+        designation: dto.designation?.trim() || '',
+        phone: dto.phone || null,
+        permissions: [...new Set(dto.permissions || [])],
         isActive: true,
       }]);
       return {
@@ -239,6 +319,8 @@ export class AuthService implements OnModuleInit {
         name: user.name,
         email: user.email,
         role: user.role,
+        designation: user.designation || '',
+        phone: user.phone || '',
         permissions: user.permissions || [],
         isActive: user.isActive,
       };
@@ -251,9 +333,27 @@ export class AuthService implements OnModuleInit {
   async listTenantUsers(tenantId: string): Promise<any[]> {
     if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
     const users = await this.users.find({ tenantId: new Types.ObjectId(tenantId) })
-      .select('_id name email role permissions isActive createdAt updatedAt')
+      .select('_id name email role designation phone permissions isActive createdAt updatedAt')
       .sort({ createdAt: 1 }).lean();
     return users.map((user) => ({ ...user, permissions: user.permissions || [] }));
+  }
+
+  async updateStaffStatus(tenantId: string, changedBy: string, userId: string, isActive: boolean, reason = '') {
+    if (![tenantId, changedBy, userId].every(id => Types.ObjectId.isValid(id))) {
+      throw new BadRequestException('Invalid tenant or user ID');
+    }
+    if (changedBy === userId) throw new BadRequestException('You cannot deactivate your own account');
+    const filter = { _id: new Types.ObjectId(userId), tenantId: new Types.ObjectId(tenantId), role: 'staff' };
+    const existing = await this.users.findOne(filter).select('isActive').lean();
+    if (!existing) throw new NotFoundException('Staff user not found in this business');
+    if (existing.isActive === isActive) return { id: userId, isActive, unchanged: true };
+    const user = await this.users.findOneAndUpdate(filter, {
+      $set: { isActive },
+      $inc: { tokenVersion: 1 },
+      $push: { accountStatusHistory: { changedBy: new Types.ObjectId(changedBy), isActive, reason: reason.trim(), changedAt: new Date() } },
+    }, { new: true }).select('_id name email role designation phone permissions isActive').lean();
+    if (!user) throw new ConflictException('Staff account changed concurrently; refresh and retry');
+    return user;
   }
 
   async updateUserPermissions(tenantId: string, changedBy: string, userId: string, dto: UpdateUserPermissionsDto) {
@@ -286,7 +386,7 @@ export class AuthService implements OnModuleInit {
         },
       },
       { new: true, runValidators: true },
-    ).select('_id name email role permissions isActive').lean();
+    ).select('_id name email role designation phone permissions isActive').lean();
     if (!user) throw new ConflictException('Staff permissions changed concurrently; reload and retry');
     return user;
   }

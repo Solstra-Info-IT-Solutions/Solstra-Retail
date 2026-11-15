@@ -5,6 +5,7 @@ import ProtectedRoute from './routes/ProtectedRoute';
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const RegisterPage = lazy(() => import('./pages/RegisterPage'));
 const AccountSecurityPage = lazy(() => import('./pages/AccountSecurityPage'));
+const BusinessProfilePage = lazy(() => import('./pages/BusinessProfilePage'));
 const PlatformApprovalsPage = lazy(() => import('./pages/PlatformApprovalsPage'));
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 import DashboardLayout from './layouts/DashboardLayout';
@@ -58,6 +59,7 @@ function AppRoutes() {
           <Route path="/platform" element={<PlatformOperationsPage />} />
           <Route path="/platform/approvals" element={<PlatformApprovalsPage />} />
           <Route path="/account/security" element={<AccountSecurityPage />} />
+          <Route path="/business-profile" element={<BusinessProfilePage />} />
           <Route path="/business-services" element={<BusinessServicesPage />} />
         </Route>
       </Route>

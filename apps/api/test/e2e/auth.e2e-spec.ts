@@ -48,7 +48,8 @@ describe('Authentication HTTP E2E', () => {
   const createdTenantIds: string[] = [];
 
   const password = 'E2eTestPassword123!';
-  const testIp = () => `198.51.100.${Math.floor(Math.random() * 254) + 1}`;
+  let testIpCounter = 1;
+  const testIp = () => `198.51.100.${testIpCounter++}`;
 
   async function registerAccount() {
     const unique = randomUUID();

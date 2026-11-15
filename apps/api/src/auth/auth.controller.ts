@@ -9,6 +9,8 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { PERMISSION_CATALOG } from '../common/decorators/permissions.decorator';
 import { UpdateUserPermissionsDto } from './dto/update-user-permissions.dto';
 import { CreateStaffUserDto } from './dto/create-staff-user.dto';
+import { RequestPasswordChangeDto } from './dto/request-password-change.dto';
+import { ReviewApprovalDto } from './dto/review-approval.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -50,6 +52,46 @@ export class AuthController {
     @Body() dto: UpdateUserPermissionsDto,
   ) {
     return this.auth.updateUserPermissions(req.user.tenantId, req.user.userId, id, dto);
+  }
+
+  @SkipTrial()
+  @Post('password-change-requests')
+  requestPasswordChange(@Req() req: Request & { user: any }, @Body() dto: RequestPasswordChangeDto) {
+    return this.auth.requestPasswordChange(req.user.userId, req.user.tenantId, dto);
+  }
+
+  @SkipTrial()
+  @Get('password-change-requests/me')
+  myPasswordChangeRequest(@Req() req: Request & { user: any }) {
+    return this.auth.getMyPasswordChangeRequest(req.user.userId, req.user.tenantId);
+  }
+
+  @Roles('owner', 'admin')
+  @SkipTrial()
+  @Get('platform/registration-requests')
+  listRegistrationApprovalRequests(@Req() req: Request & { user: any }) {
+    return this.auth.listRegistrationApprovalRequests(req.user.userId);
+  }
+
+  @Roles('owner', 'admin')
+  @SkipTrial()
+  @Post('platform/registration-requests/:id/review')
+  reviewRegistrationApproval(@Req() req: Request & { user: any }, @Param('id') id: string, @Body() dto: ReviewApprovalDto) {
+    return this.auth.reviewRegistrationApproval(req.user.userId, id, dto.decision, dto.reason);
+  }
+
+  @Roles('owner', 'admin')
+  @SkipTrial()
+  @Get('platform/password-change-requests')
+  listPasswordChangeApprovalRequests(@Req() req: Request & { user: any }) {
+    return this.auth.listPasswordChangeApprovalRequests(req.user.userId);
+  }
+
+  @Roles('owner', 'admin')
+  @SkipTrial()
+  @Post('platform/password-change-requests/:id/review')
+  reviewPasswordChangeApproval(@Req() req: Request & { user: any }, @Param('id') id: string, @Body() dto: ReviewApprovalDto) {
+    return this.auth.reviewPasswordChangeApproval(req.user.userId, id, dto.decision, dto.reason);
   }
 
   @SkipTrial()

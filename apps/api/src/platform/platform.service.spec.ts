@@ -30,6 +30,27 @@ describe('PlatformService security boundaries', () => {
     await expect(service.listNotifications('bad-tenant', userId)).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('returns the authoritative offline sync cursor for each registered device', async () => {
+    const service: any = createService();
+    const query = {
+      select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{
+        deviceId: 'b5f6a4c2-1d4e-4b2a-9f0c-123456789abc',
+        lastSyncSequence: 7,
+        lastSyncStatus: 'SUCCEEDED',
+      }]),
+    };
+    service.offlineDevices = { find: jest.fn().mockReturnValue(query) };
+
+    await expect(service.listOfflineDevices(tenantId, userId)).resolves.toMatchObject([{
+      deviceId: 'b5f6a4c2-1d4e-4b2a-9f0c-123456789abc',
+      lastSyncSequence: 7,
+      lastSyncStatus: 'SUCCEEDED',
+    }]);
+    expect(query.select).toHaveBeenCalledWith('deviceId label lastSeenAt revokedAt createdAt lastSyncSequence lastSyncStatus');
+  });
+
   it('rejects offline invoice sync from an unregistered or revoked device', async () => {
     const service: any = createService();
     service.offlineDevices = { findOneAndUpdate: jest.fn(() => ({ lean: async () => null })) };

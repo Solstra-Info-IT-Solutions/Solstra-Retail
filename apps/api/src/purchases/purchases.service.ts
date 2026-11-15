@@ -472,6 +472,8 @@ export class PurchasesService {
 
             let movementPreviousQty = previousQty;
             let movementNewQty = newQty;
+            let warehousePreviousValuePaiseForMovement: number | undefined;
+            let warehouseNextValuePaiseForMovement: number | undefined;
             if (selectedWarehouse) {
               const warehouseStock = await this.warehouseStocks.findOne(tenantFilter(tenantId, {
                 warehouseId: selectedWarehouse._id, productId: product._id,
@@ -483,6 +485,8 @@ export class PurchasesService {
               movementPreviousQty = warehousePreviousQty;
               movementNewQty = warehouseNextQty;
               const warehouseNextValuePaise = warehousePreviousValuePaise + warehouseReceivedValuePaise;
+              warehousePreviousValuePaiseForMovement = warehousePreviousValuePaise;
+              warehouseNextValuePaiseForMovement = warehouseNextValuePaise;
               if (warehouseStock) {
                 const warehouseUpdated = await this.warehouseStocks.findOneAndUpdate(
                   tenantFilter(tenantId, { _id: warehouseStock._id, quantity: warehousePreviousQty }),
@@ -514,6 +518,17 @@ export class PurchasesService {
               newQty: movementNewQty,
               reason: `Purchase ${purchase.purchaseNumber}`,
               performedBy: new Types.ObjectId(userId),
+              valuation: {
+                unitCostPaise: this.toPaise(line.unitCost),
+                productPreviousValuePaise: previousValuePaise,
+                productValueDeltaPaise: receivedValuePaise,
+                productNewValuePaise: nextValuePaise,
+                ...(selectedWarehouse ? {
+                  warehousePreviousValuePaise: warehousePreviousValuePaiseForMovement ?? 0,
+                  warehouseValueDeltaPaise: receivedValuePaise,
+                  warehouseNewValuePaise: warehouseNextValuePaiseForMovement ?? receivedValuePaise,
+                } : {}),
+              },
             }], { session });
           }
 

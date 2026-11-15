@@ -7,7 +7,7 @@ export class RegistrationApprovalRequest {
   @Prop({ required: true, trim: true, maxlength: 100 }) businessName!: string;
   @Prop({ required: true, lowercase: true, trim: true, maxlength: 254 }) email!: string;
   @Prop({ required: true, select: false }) passwordHash!: string;
-  @Prop({ type: String, enum: ['PENDING_APPROVAL', 'APPROVED', 'REJECTED'], default: 'PENDING_APPROVAL', index: true }) status!: string;
+  @Prop({ type: String, enum: ['PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'EXPIRED'], default: 'PENDING_APPROVAL', index: true }) status!: string;
   @Prop({ type: Types.ObjectId, ref: 'User', default: null }) reviewedBy?: Types.ObjectId | null;
   @Prop({ type: Date, default: null }) reviewedAt?: Date | null;
   @Prop({ type: String, default: '', maxlength: 500 }) reviewReason!: string;

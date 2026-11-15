@@ -64,7 +64,20 @@ export class AdvancedInventoryService {
         product.stockQty = globalQty; product.inventoryValue = globalValue / 100; product.averageCost = globalQty ? globalValue / 100 / globalQty : 0; product.valuationInitialized = true;
         await product.save({ session });
         const [batch] = await this.batches.create([{ tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouse._id, batchNumber: dto.batchNumber.trim().toUpperCase(), manufacturedAt: dto.manufacturedAt ? new Date(dto.manufacturedAt) : null, expiresAt, quantity: incomingQty, unitCost: dto.unitCost, createdBy: new Types.ObjectId(userId) }], { session });
-        await this.movements.create([{ tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouse._id, type: 'IN', quantityDelta: incomingQty, previousQty: oldQty, newQty, reason: 'Batch receipt ' + batch.batchNumber, performedBy: new Types.ObjectId(userId) }], { session });
+        await this.movements.create([{
+          tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouse._id,
+          type: 'IN', quantityDelta: incomingQty, previousQty: oldQty, newQty,
+          reason: 'Batch receipt ' + batch.batchNumber, performedBy: new Types.ObjectId(userId),
+          valuation: {
+            unitCostPaise: Math.round((dto.unitCost + Number.EPSILON) * 100),
+            productPreviousValuePaise: oldGlobalValue,
+            productValueDeltaPaise: incomingValue,
+            productNewValuePaise: globalValue,
+            warehousePreviousValuePaise: oldValue,
+            warehouseValueDeltaPaise: incomingValue,
+            warehouseNewValuePaise: newValue,
+          },
+        }], { session });
         if (incomingValue > 0) await this.accounting.postOperationalJournal({
           tenantId, userId, postingDate: new Date(),
           narration: `Batch receipt ${batch.batchNumber} for ${product.name}`,
@@ -207,17 +220,34 @@ export class AdvancedInventoryService {
           const delta = line.countedQty - currentQty;
           if (delta !== 0) {
             const unitCost = stock?.averageCost ?? product.averageCost ?? 0;
-            if (stock) { stock.quantity = line.countedQty; stock.inventoryValue = Math.round(line.countedQty * unitCost * 100) / 100; await stock.save({ session }); }
-            else await this.warehouseStocks.create([{ tenantId: take.tenantId, warehouseId: take.warehouseId, productId: line.productId, quantity: line.countedQty, averageCost: unitCost, inventoryValue: Math.round(line.countedQty * unitCost * 100) / 100 }], { session });
+            const unitCostPaise = Math.round((unitCost + Number.EPSILON) * 100);
+            const warehousePreviousValuePaise = Math.round(((stock?.inventoryValue || 0) + Number.EPSILON) * 100);
+            const warehouseNewValuePaise = line.countedQty * unitCostPaise;
+            if (stock) { stock.quantity = line.countedQty; stock.inventoryValue = warehouseNewValuePaise / 100; await stock.save({ session }); }
+            else await this.warehouseStocks.create([{ tenantId: take.tenantId, warehouseId: take.warehouseId, productId: line.productId, quantity: line.countedQty, averageCost: unitCostPaise / 100, inventoryValue: warehouseNewValuePaise / 100 }], { session });
+            const productPreviousValuePaise = Math.round(((product.inventoryValue || 0) + Number.EPSILON) * 100);
             const nextGlobalQty = (product.stockQty || 0) + delta;
-            const nextGlobalValuePaise = Math.round(((product.inventoryValue || 0) + delta * unitCost) * 100);
+            const nextGlobalValuePaise = productPreviousValuePaise + delta * unitCostPaise;
             if (nextGlobalQty < 0 || nextGlobalValuePaise < 0) throw new ConflictException('Stocktake would create negative aggregate stock or valuation; reconcile warehouse allocations first');
             product.stockQty = nextGlobalQty;
             product.inventoryValue = nextGlobalValuePaise / 100;
             if (product.stockQty === 0) product.inventoryValue = 0;
             else product.averageCost = product.inventoryValue / product.stockQty;
             await product.save({ session });
-            await this.movements.create([{ tenantId: take.tenantId, productId: line.productId, warehouseId: take.warehouseId, type: 'ADJUSTMENT', quantityDelta: delta, previousQty: currentQty, newQty: line.countedQty, reason: 'Stocktake ' + take.reference, performedBy: new Types.ObjectId(userId) }], { session });
+            await this.movements.create([{
+              tenantId: take.tenantId, productId: line.productId, warehouseId: take.warehouseId,
+              type: 'ADJUSTMENT', quantityDelta: delta, previousQty: currentQty, newQty: line.countedQty,
+              reason: 'Stocktake ' + take.reference, performedBy: new Types.ObjectId(userId),
+              valuation: {
+                unitCostPaise,
+                productPreviousValuePaise,
+                productValueDeltaPaise: nextGlobalValuePaise - productPreviousValuePaise,
+                productNewValuePaise: nextGlobalValuePaise,
+                warehousePreviousValuePaise,
+                warehouseValueDeltaPaise: warehouseNewValuePaise - warehousePreviousValuePaise,
+                warehouseNewValuePaise,
+              },
+            }], { session });
             const adjustmentValuePaise = Math.round(Math.abs(delta) * unitCost * 100);
             if (adjustmentValuePaise > 0) {
               const increase = delta > 0;

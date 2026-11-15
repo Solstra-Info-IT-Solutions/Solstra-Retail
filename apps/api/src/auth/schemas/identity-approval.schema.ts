@@ -21,7 +21,7 @@ RegistrationApprovalRequestSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 
 
 @Schema({ timestamps: true, collection: 'password_change_approval_requests', versionKey: false })
 export class PasswordChangeApprovalRequest {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true }) userId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true }) userId!: Types.ObjectId;
   @Prop({ type: Types.ObjectId, ref: 'Tenant', required: true, index: true }) tenantId!: Types.ObjectId;
   @Prop({ required: true, lowercase: true, trim: true, maxlength: 254 }) email!: string;
   @Prop({ required: true, select: false }) newPasswordHash!: string;

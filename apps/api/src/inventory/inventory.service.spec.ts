@@ -5,6 +5,7 @@ describe('InventoryService', () => {
   let service: InventoryService;
   let products: any;
   let movements: any;
+  let accounting: any;
 
   beforeEach(() => {
     products = {
@@ -14,8 +15,9 @@ describe('InventoryService', () => {
     };
 
     movements = {};
+    accounting = { postOperationalJournal: jest.fn() };
 
-    service = new InventoryService(products, movements, {} as any);
+    service = new InventoryService(products, movements, accounting);
   });
 
   it('rejects an invalid authenticated user before starting a transaction', async () => {

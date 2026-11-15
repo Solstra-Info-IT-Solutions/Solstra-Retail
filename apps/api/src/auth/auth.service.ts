@@ -30,7 +30,10 @@ export class AuthService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    await this.registrationRequests.collection.dropIndex('expiresAt_1').catch(() => undefined);
+    const registrationIndexes = await this.registrationRequests.collection.listIndexes().toArray().catch(() => [] as any[]);
+    if (registrationIndexes.some((index: any) => index.name === 'expiresAt_1' && index.expireAfterSeconds !== undefined)) {
+      await this.registrationRequests.collection.dropIndex('expiresAt_1');
+    }
     await Promise.all([this.registrationRequests.createIndexes(), this.passwordChangeRequests.createIndexes()]);
   }
 

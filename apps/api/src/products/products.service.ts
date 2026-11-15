@@ -142,6 +142,12 @@ export class ProductsService {
             newQty: product.stockQty,
             reason: 'Opening stock at product creation',
             performedBy: new Types.ObjectId(userId),
+            valuation: {
+              unitCostPaise: Math.round((product.averageCost + Number.EPSILON) * 100),
+              productPreviousValuePaise: 0,
+              productValueDeltaPaise: Math.round((product.inventoryValue + Number.EPSILON) * 100),
+              productNewValuePaise: Math.round((product.inventoryValue + Number.EPSILON) * 100),
+            },
           }],
           { session },
         );
@@ -222,6 +228,22 @@ export class ProductsService {
             session,
           });
         }
+        await this.movements.create([{
+          tenantId: new Types.ObjectId(tenantId),
+          productId: product._id,
+          type: 'VALUATION',
+          quantityDelta: 0,
+          previousQty: product.stockQty,
+          newQty: product.stockQty,
+          reason: `Opening valuation initialized: ${dto.reason.trim()}`.slice(0, 250),
+          performedBy: new Types.ObjectId(userId),
+          valuation: {
+            unitCostPaise,
+            productPreviousValuePaise: Math.round(((product.inventoryValue || 0) + Number.EPSILON) * 100),
+            productValueDeltaPaise: openingValuePaise - Math.round(((product.inventoryValue || 0) + Number.EPSILON) * 100),
+            productNewValuePaise: openingValuePaise,
+          },
+        }], { session });
         initialized = updated;
       });
     } finally {

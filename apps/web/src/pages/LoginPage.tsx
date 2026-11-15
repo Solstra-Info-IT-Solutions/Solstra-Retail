@@ -1,5 +1,5 @@
 ﻿import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import './LoginPage.css';
 
@@ -77,6 +77,7 @@ export default function LoginPage() {
         </form>
 
         <p className="login-footer">
+          New business? <Link to="/register">Request a verified workspace</Link><br />
           Secure business management · Solstra Retail
         </p>
       </section>

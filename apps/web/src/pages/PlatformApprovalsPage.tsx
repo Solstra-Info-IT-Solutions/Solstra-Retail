@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
 import { api } from '../api/client';
+import './PlatformOperationsPage.css';
 
 type Registration={_id:string;name:string;businessName:string;email:string;createdAt:string};
 type PasswordRequest={_id:string;email:string;createdAt:string;userId?:{name?:string;email?:string};tenantId?:{name?:string}};

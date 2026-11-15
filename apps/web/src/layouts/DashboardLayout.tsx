@@ -3,7 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingCart, Package, Users, Warehouse, Boxes,
   Truck, ClipboardList, BarChart3, ReceiptText, Building2,
-  Menu, X, LogOut, Search, Languages, ShieldCheck, History, Receipt, BadgePercent, Settings2, Mail, KeyRound, UserRoundCog, type LucideIcon
+  Menu, X, LogOut, Search, Languages, ShieldCheck, History, Receipt, BadgePercent, Settings2, Mail, KeyRound, type LucideIcon
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import './DashboardLayout.css';

@@ -731,6 +731,8 @@ export class SalesService {
           const newQty = previousQty - quantity;
           let movementPreviousQty = previousQty;
           let movementNewQty = newQty;
+          let warehousePreviousValuePaiseForMovement: number | undefined;
+          let warehouseNewValuePaiseForMovement: number | undefined;
           const warehouseCostPaise = dto.warehouseId ? this.toPaise(warehouseStock.averageCost || 0) : this.toPaise(product.averageCost || 0);
           const relievedValuePaise = dto.warehouseId
             ? (quantity === warehouseStock.quantity ? this.toPaise(warehouseStock.inventoryValue || 0) : warehouseCostPaise * quantity)
@@ -740,8 +742,10 @@ export class SalesService {
             movementPreviousQty = warehouseStock.quantity;
             movementNewQty = warehouseNewQty;
             const warehouseValuePaise = this.toPaise(warehouseStock.inventoryValue || 0);
+            warehousePreviousValuePaiseForMovement = warehouseValuePaise;
             if (relievedValuePaise > warehouseValuePaise) throw new ConflictException('Warehouse inventory valuation is inconsistent; reconcile before selling');
             const warehouseNewValuePaise = Math.max(0, this.toPaise(warehouseStock.inventoryValue || 0) - relievedValuePaise);
+            warehouseNewValuePaiseForMovement = warehouseNewValuePaise;
             const warehouseUpdated = await this.warehouseStocks.findOneAndUpdate(
               tenantFilter(tenantId, { _id: warehouseStock._id, quantity: warehouseStock.quantity }),
               { $set: { quantity: warehouseNewQty, inventoryValue: this.fromPaise(warehouseNewValuePaise), averageCost: warehouseNewQty > 0 ? this.fromPaise(Math.round(warehouseNewValuePaise / warehouseNewQty)) : 0 } },
@@ -792,6 +796,17 @@ export class SalesService {
                 newQty: movementNewQty,
                 reason: `Sale invoice ${invoiceNumber}`,
                 performedBy: new Types.ObjectId(userId),
+                valuation: {
+                  unitCostPaise: warehouseCostPaise,
+                  productPreviousValuePaise: productValuePaise,
+                  productValueDeltaPaise: -relievedValuePaise,
+                  productNewValuePaise: nextInventoryValuePaise,
+                  ...(dto.warehouseId ? {
+                    warehousePreviousValuePaise: warehousePreviousValuePaiseForMovement ?? 0,
+                    warehouseValueDeltaPaise: -relievedValuePaise,
+                    warehouseNewValuePaise: warehouseNewValuePaiseForMovement ?? 0,
+                  } : {}),
+                },
               },
             ],
             { session },

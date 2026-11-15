@@ -314,7 +314,8 @@ describe('PlatformService security boundaries', () => {
     const service: any = createService();
     const collection = {
       createIndex: jest.fn(),
-      updateOne: jest.fn().mockResolvedValue({ upsertedCount: 1 }),
+      findOne: jest.fn().mockResolvedValue({ status: 'OPEN' }),
+      updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
       updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
       find: jest.fn(() => ({ sort: () => ({ limit: () => ({ toArray: async () => [{ code: 'BACKUP_STALE', status: 'OPEN' }] }) }) })),
     };
@@ -326,6 +327,45 @@ describe('PlatformService security boundaries', () => {
     expect(collection.updateMany).toHaveBeenCalled();
     expect(result.items).toHaveLength(1);
     expect(result.summary.open).toBe(1);
+  });
+
+  it('preserves an acknowledgement when the same operational alert remains active', async () => {
+    const service: any = createService();
+    const acknowledged = { status: 'ACKNOWLEDGED', acknowledgedBy: userId, acknowledgedAt: new Date() };
+    const collection = {
+      createIndex: jest.fn(),
+      findOne: jest.fn().mockResolvedValue(acknowledged),
+      updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
+      updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+      find: jest.fn(() => ({ sort: () => ({ limit: () => ({ toArray: async () => [{ code: 'BACKUP_STALE', ...acknowledged }] }) }) })),
+    };
+    service.connection = { db: { collection: jest.fn(() => collection) } };
+    service.operationsMetrics = jest.fn().mockResolvedValue({ alerts: [{ code: 'BACKUP_STALE', severity: 'WARNING', message: 'Still stale' }] });
+    const result = await service.listOperationalAlerts(tenantId);
+    expect(collection.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'ACKNOWLEDGED' }),
+      { $set: expect.objectContaining({ message: 'Still stale' }) },
+    );
+    expect(collection.updateOne.mock.calls[0][1].$set.status).toBeUndefined();
+    expect(result.summary.acknowledged).toBe(1);
+  });
+
+  it('reopens a resolved operational alert as a new lifecycle when the condition recurs', async () => {
+    const service: any = createService();
+    const collection = {
+      createIndex: jest.fn(),
+      findOne: jest.fn().mockResolvedValue({ status: 'RESOLVED' }),
+      updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
+      updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+      find: jest.fn(() => ({ sort: () => ({ limit: () => ({ toArray: async () => [{ code: 'BACKUP_STALE', status: 'OPEN' }] }) }) })),
+    };
+    service.connection = { db: { collection: jest.fn(() => collection) } };
+    service.operationsMetrics = jest.fn().mockResolvedValue({ alerts: [{ code: 'BACKUP_STALE', severity: 'WARNING', message: 'Stale again' }] });
+    await service.listOperationalAlerts(tenantId);
+    expect(collection.updateOne.mock.calls[0][0]).toMatchObject({ status: 'RESOLVED' });
+    expect(collection.updateOne.mock.calls[0][1].$set).toMatchObject({
+      status: 'OPEN', acknowledgedAt: null, acknowledgedBy: null, escalationSentAt: null, resolvedAt: null,
+    });
   });
 
   it('validates acknowledgement codes and notes before database access', async () => {

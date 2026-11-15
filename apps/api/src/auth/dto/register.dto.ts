@@ -28,7 +28,7 @@ export class RegisterDto {
   @IsString() @Matches(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/) gstin?: string;
   @IsOptional() @IsString() @MaxLength(150) gstLegalName?: string;
   @IsOptional() @IsString() @MaxLength(80) gstRegistrationType?: string;
-  @IsOptional() @IsString() @MaxLength(254) businessEmail?: string;
+  @IsOptional() @ValidateIf((_o, value) => value !== '') @IsEmail() @MaxLength(254) businessEmail?: string;
   @IsOptional() @IsString() @MaxLength(120) website?: string;
   @IsOptional() @IsString() @MaxLength(1400000) @Matches(/^data:image\\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/) logoDataUrl?: string;
 }

@@ -30,5 +30,5 @@ export class RegisterDto {
   @IsOptional() @IsString() @MaxLength(80) gstRegistrationType?: string;
   @IsOptional() @ValidateIf((_o, value) => value !== '') @IsEmail() @MaxLength(254) businessEmail?: string;
   @IsOptional() @IsString() @MaxLength(120) website?: string;
-  @IsOptional() @IsString() @MaxLength(1400000) @Matches(/^data:image\\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/) logoDataUrl?: string;
+  @IsOptional() @IsString() @MaxLength(1400000) @Matches(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/) logoDataUrl?: string;
 }

@@ -33,6 +33,7 @@ export class User {
   @Prop({ type: [UserPermissionChangeSchema], default: [] })
   permissionHistory!: UserPermissionChange[];
   @Prop({ default: true }) isActive!: boolean;
+  @Prop({ type: Number, min: 0, default: 0 }) tokenVersion!: number;
 }
 export const UserSchema = SchemaFactory.createForClass(User);
 UserSchema.index({ email: 1 }, { unique: true });

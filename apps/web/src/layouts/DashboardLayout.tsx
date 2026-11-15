@@ -3,7 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingCart, Package, Users, Warehouse, Boxes,
   Truck, ClipboardList, BarChart3, ReceiptText, Building2,
-  Menu, X, LogOut, Search, Languages, ShieldCheck, History, Receipt, BadgePercent, Settings2, Mail, type LucideIcon
+  Menu, X, LogOut, Search, Languages, ShieldCheck, History, Receipt, BadgePercent, Settings2, Mail, KeyRound, type LucideIcon
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import './DashboardLayout.css';
@@ -25,6 +25,8 @@ const navigation: Array<{ label: string; path: string; icon: LucideIcon; permiss
   { label: 'Staff & Permissions', path: '/staff', icon: ShieldCheck, adminOnly: true },
   { label: 'Audit Trail', path: '/audit', icon: History, adminOnly: true },
   { label: 'Platform Operations', path: '/platform', icon: Settings2, adminOnly: true },
+  { label: 'Security Approvals', path: '/platform/approvals', icon: ShieldCheck, adminOnly: true },
+  { label: 'Account Security', path: '/account/security', icon: KeyRound },
   { label: 'Business Services', path: '/business-services', icon: Mail, adminOnly: true },
 ];
 

@@ -30,6 +30,7 @@ export class AuthService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    await this.registrationRequests.collection.dropIndex('expiresAt_1').catch(() => undefined);
     await Promise.all([this.registrationRequests.createIndexes(), this.passwordChangeRequests.createIndexes()]);
   }
 
@@ -85,7 +86,7 @@ export class AuthService implements OnModuleInit {
   async reviewRegistrationApproval(userId: string, requestId: string, decision: 'APPROVE' | 'REJECT', reason: string) {
     this.assertPlatformAdmin(userId);
     if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(requestId)) throw new BadRequestException('Invalid approval identity');
-    const request = await this.registrationRequests.findOne({ _id: new Types.ObjectId(requestId), status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } }).select('+passwordHash');
+    const request = await this.registrationRequests.findOne({ _id: new Types.ObjectId(requestId), status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } }).select('+passwordHash +logoDataUrl');
     if (!request) throw new NotFoundException('Pending registration request not found');
     const now = new Date();
     if (decision === 'REJECT') {
@@ -103,7 +104,7 @@ export class AuthService implements OnModuleInit {
     let user: any = null;
     try {
       await session.withTransaction(async () => {
-        const current = await this.registrationRequests.findOne({ _id: request._id, status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } }).select('+passwordHash').session(session);
+        const current = await this.registrationRequests.findOne({ _id: request._id, status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } }).select('+passwordHash +logoDataUrl').session(session);
         if (!current) throw new ConflictException('Registration request was already reviewed');
         const activatedAt = new Date();
         const trialEndsAt = new Date(activatedAt.getTime() + TRIAL_DURATION_MS);
@@ -289,7 +290,7 @@ export class AuthService implements OnModuleInit {
         passwordHash,
         role: 'staff',
         designation: dto.designation?.trim() || '',
-        phone: dto.phone || '',
+        phone: dto.phone || null,
         permissions: [...new Set(dto.permissions || [])],
         isActive: true,
       }]);

@@ -1401,8 +1401,12 @@ describe('Authentication HTTP E2E', () => {
       });
     expect(creditNote.status).toBe(201);
 
+    const creditNoteReportDate = new Date(creditNote.body.creditNote.creditNoteDate)
+      .toISOString()
+      .slice(0, 10);
+    const reportDateQuery = `from=${creditNoteReportDate}&to=${creditNoteReportDate}`;
     const gstr1 = await request(app.getHttpServer())
-      .get('/api/v1/reports/gst/gstr1?from=2026-11-14&to=2026-11-14')
+      .get(`/api/v1/reports/gst/gstr1?${reportDateQuery}`)
       .set(ownerHeaders);
     expect(gstr1.status).toBe(200);
     expect(gstr1.body.creditNotes).toEqual(expect.arrayContaining([
@@ -1422,7 +1426,7 @@ describe('Authentication HTTP E2E', () => {
     );
 
     const gstr3b = await request(app.getHttpServer())
-      .get('/api/v1/reports/gst/gstr3b?from=2026-11-14&to=2026-11-14')
+      .get(`/api/v1/reports/gst/gstr3b?${reportDateQuery}`)
       .set(ownerHeaders);
     expect(gstr3b.status).toBe(200);
     expect(gstr3b.body.outwardTaxableSupplies.creditNoteCount).toBeGreaterThanOrEqual(1);
@@ -1431,7 +1435,7 @@ describe('Authentication HTTP E2E', () => {
     );
 
     const gstCsv = await request(app.getHttpServer())
-      .get('/api/v1/reports/gst/export/gstr1?from=2026-11-14&to=2026-11-14')
+      .get(`/api/v1/reports/gst/export/gstr1?${reportDateQuery}`)
       .set(ownerHeaders);
     expect(gstCsv.status).toBe(200);
     expect(gstCsv.text).toContain('CREDIT_NOTE');

@@ -1,12 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 
-const reviewFields = {
-  reviewedBy: { type: Types.ObjectId, ref: 'User', default: null },
-  reviewedAt: { type: Date, default: null },
-  reviewReason: { type: String, default: '', maxlength: 500 },
-};
-
 @Schema({ timestamps: true, collection: 'registration_approval_requests', versionKey: false })
 export class RegistrationApprovalRequest {
   @Prop({ required: true, trim: true, maxlength: 80 }) name!: string;
@@ -14,9 +8,9 @@ export class RegistrationApprovalRequest {
   @Prop({ required: true, lowercase: true, trim: true, maxlength: 254 }) email!: string;
   @Prop({ required: true, select: false }) passwordHash!: string;
   @Prop({ type: String, enum: ['PENDING_APPROVAL', 'APPROVED', 'REJECTED'], default: 'PENDING_APPROVAL', index: true }) status!: string;
-  @Prop(reviewFields) reviewedBy?: Types.ObjectId | null;
-  @Prop(reviewFields) reviewedAt?: Date | null;
-  @Prop(reviewFields) reviewReason!: string;
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null }) reviewedBy?: Types.ObjectId | null;
+  @Prop({ type: Date, default: null }) reviewedAt?: Date | null;
+  @Prop({ type: String, default: '', maxlength: 500 }) reviewReason!: string;
 }
 export type RegistrationApprovalRequestDocument = HydratedDocument<RegistrationApprovalRequest>;
 export const RegistrationApprovalRequestSchema = SchemaFactory.createForClass(RegistrationApprovalRequest);

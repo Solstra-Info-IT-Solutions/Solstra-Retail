@@ -70,10 +70,11 @@ export class AuthService implements OnModuleInit {
     }
   }
 
-  private assertPlatformAdmin(userId: string) {
+  private assertPlatformAdmin(userId: string): string[] {
     const allowed = (this.config.get<string>('PLATFORM_ADMIN_USER_IDS') || '')
       .split(',').map(value => value.trim()).filter(Boolean);
     if (!allowed.includes(userId)) throw new ForbiddenException('Solstra platform approval access is not configured for this account');
+    return allowed;
   }
 
   async listRegistrationApprovalRequests(userId: string) {
@@ -195,22 +196,38 @@ export class AuthService implements OnModuleInit {
   }
 
   async getPlatformRegistrationSummary(userId: string) {
-    this.assertPlatformAdmin(userId);
+    const allowed = this.assertPlatformAdmin(userId);
+    const platformUsers = await this.users.find({ _id: { $in: allowed.filter(Types.ObjectId.isValid).map(id => new Types.ObjectId(id)) } })
+      .select('tenantId').lean();
+    const excludedTenantIds = platformUsers.map((user: any) => user.tenantId);
+    const storeFilter = excludedTenantIds.length ? { _id: { $nin: excludedTenantIds } } : {};
+    const now = new Date();
+    await this.registrationRequests.updateMany(
+      { status: 'PENDING_APPROVAL', expiresAt: { $lte: now } },
+      { $set: { status: 'EXPIRED' }, $unset: { passwordHash: 1, expiresAt: 1 } },
+    );
     const [pending, approved, rejected, expired, totalStores, activeStores, suspendedStores] = await Promise.all([
-      this.registrationRequests.countDocuments({ status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } }),
+      this.registrationRequests.countDocuments({ status: 'PENDING_APPROVAL', expiresAt: { $gt: now } }),
       this.registrationRequests.countDocuments({ status: 'APPROVED' }),
       this.registrationRequests.countDocuments({ status: 'REJECTED' }),
       this.registrationRequests.countDocuments({ status: 'EXPIRED' }),
-      this.tenants.countDocuments({}),
-      this.tenants.countDocuments({ status: 'active' }),
-      this.tenants.countDocuments({ status: 'suspended' }),
+      this.tenants.countDocuments(storeFilter),
+      this.tenants.countDocuments({ ...storeFilter, status: 'active' }),
+      this.tenants.countDocuments({ ...storeFilter, status: 'suspended' }),
     ]);
     return { registrations: { pending, approved, rejected, expired }, stores: { total: totalStores, active: activeStores, suspended: suspendedStores } };
   }
 
   async listPlatformStoreDirectory(userId: string) {
-    this.assertPlatformAdmin(userId);
-    const tenants = await this.tenants.find({})
+    const allowed = this.assertPlatformAdmin(userId);
+    await this.registrationRequests.updateMany(
+      { status: 'PENDING_APPROVAL', expiresAt: { $lte: new Date() } },
+      { $set: { status: 'EXPIRED' }, $unset: { passwordHash: 1, expiresAt: 1 } },
+    );
+    const platformUsers = await this.users.find({ _id: { $in: allowed.filter(Types.ObjectId.isValid).map(id => new Types.ObjectId(id)) } })
+      .select('tenantId').lean();
+    const excludedTenantIds = platformUsers.map((user: any) => user.tenantId);
+    const tenants = await this.tenants.find(excludedTenantIds.length ? { _id: { $nin: excludedTenantIds } } : {})
       .select('+logoDataUrl name storeName slug status subscriptionStatus subscriptionPlan trialStartedAt trialEndsAt gstRegistered gstin gstLegalName gstRegistrationType businessType businessCategory businessDescription businessEmail website ownerName ownerPhone alternatePhone addressLine1 addressLine2 city district state stateCode pincode country createdAt')
       .sort({ createdAt: -1 }).limit(500).lean();
     const ids = tenants.map((tenant: any) => tenant._id);

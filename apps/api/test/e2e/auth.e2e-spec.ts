@@ -59,7 +59,10 @@ describe('Authentication HTTP E2E', () => {
       .set('X-Forwarded-For', testIp())
       .send({
         name: 'E2E Test Owner', email, password,
-        businessName: `E2E Business ${unique}`,
+        businessName: `E2E Business ${unique}`, storeName: `E2E Store ${unique}`,
+        ownerPhone: '9876543210', businessType: 'GENERAL_RETAIL',
+        addressLine1: '12 E2E Market Road', city: 'Noida', state: 'Uttar Pradesh',
+        stateCode: '09', pincode: '201301', country: 'India', gstRegistered: false,
       });
     if (requestResponse.status !== 201 || requestResponse.body.status !== 'PENDING_APPROVAL') {
       return requestResponse;
@@ -218,7 +221,7 @@ describe('Authentication HTTP E2E', () => {
     const registration = await request(app.getHttpServer())
       .post('/api/v1/auth/register')
       .set('X-Forwarded-For', testIp())
-      .send({ name: 'Approval Test Owner', email, password, businessName: 'Approval Test Store' });
+      .send({ name: 'Approval Test Owner', email, password, businessName: 'Approval Test Store', storeName: 'Approval Test Store', ownerPhone: '9876543210', businessType: 'MEDICAL_PHARMACY', businessCategory: 'Retail pharmacy', addressLine1: '21 Health Market', city: 'Noida', state: 'Uttar Pradesh', stateCode: '09', pincode: '201301', country: 'India', gstRegistered: true, gstin: '09ABCDE1234F1Z5', gstLegalName: 'Approval Test Store LLP', gstRegistrationType: 'Regular' });
     expect(registration.status).toBe(201);
     expect(registration.body.status).toBe('PENDING_APPROVAL');
     expect(registration.body.accessToken).toBeUndefined();
@@ -257,7 +260,9 @@ describe('Authentication HTTP E2E', () => {
         name: 'Duplicate Owner',
         email: first.body.user.email,
         password,
-        businessName: 'Duplicate Business',
+        businessName: 'Duplicate Business', storeName: 'Duplicate Business',
+        ownerPhone: '9876543210', businessType: 'GENERAL_RETAIL', addressLine1: '12 E2E Market Road',
+        city: 'Noida', state: 'Uttar Pradesh', stateCode: '09', pincode: '201301', country: 'India', gstRegistered: false,
       });
 
     expect(duplicate.status).toBe(409);
@@ -332,7 +337,7 @@ describe('Authentication HTTP E2E', () => {
     const email = `rejected-${randomUUID()}@example.test`;
     const registration = await request(app.getHttpServer()).post('/api/v1/auth/register')
       .set('X-Forwarded-For', testIp())
-      .send({ name: 'Rejected Owner', email, password, businessName: 'Rejected Store' });
+      .send({ name: 'Rejected Owner', email, password, businessName: 'Rejected Store', storeName: 'Rejected Store', ownerPhone: '9876543210', businessType: 'GROCERY', addressLine1: '5 Market Lane', city: 'Noida', state: 'Uttar Pradesh', stateCode: '09', pincode: '201301', country: 'India', gstRegistered: false });
     expect(registration.status).toBe(201);
     const rejected = await request(app.getHttpServer())
       .post(`/api/v1/auth/platform/registration-requests/${registration.body.requestId}/review`)
@@ -394,7 +399,9 @@ describe('Authentication HTTP E2E', () => {
         name: 'Invalid Owner',
         email: `extra-${randomUUID()}@example.test`,
         password,
-        businessName: 'Invalid Business',
+        businessName: 'Invalid Business', storeName: 'Invalid Business',
+        ownerPhone: '9876543210', businessType: 'GENERAL_RETAIL', addressLine1: '12 E2E Market Road',
+        city: 'Noida', state: 'Uttar Pradesh', stateCode: '09', pincode: '201301', country: 'India', gstRegistered: false,
         unexpectedField: true,
       });
 

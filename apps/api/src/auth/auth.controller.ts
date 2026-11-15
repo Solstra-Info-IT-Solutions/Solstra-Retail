@@ -11,6 +11,7 @@ import { UpdateUserPermissionsDto } from './dto/update-user-permissions.dto';
 import { CreateStaffUserDto } from './dto/create-staff-user.dto';
 import { RequestPasswordChangeDto } from './dto/request-password-change.dto';
 import { ReviewApprovalDto } from './dto/review-approval.dto';
+import { UpdateStaffStatusDto } from './dto/update-staff-status.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -42,6 +43,12 @@ export class AuthController {
   @Get('users')
   listUsers(@Req() req: Request & { user: any }): Promise<any[]> {
     return this.auth.listTenantUsers(req.user.tenantId);
+  }
+
+  @Roles('owner', 'admin')
+  @Patch('users/:id/status')
+  updateStaffStatus(@Req() req: Request & { user: any }, @Param('id') id: string, @Body() dto: UpdateStaffStatusDto) {
+    return this.auth.updateStaffStatus(req.user.tenantId, req.user.userId, id, dto.isActive, dto.reason);
   }
 
   @Roles('owner', 'admin')

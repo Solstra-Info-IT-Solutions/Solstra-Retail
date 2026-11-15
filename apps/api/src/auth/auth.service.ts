@@ -1,5 +1,5 @@
 import {
-  BadRequestException, ConflictException, Injectable, NotFoundException, UnauthorizedException,
+  BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, OnModuleInit, UnauthorizedException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { JwtService } from '@nestjs/jwt';
@@ -19,7 +19,7 @@ import { randomBytes } from 'crypto';
 const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
   constructor(
     @InjectModel(User.name) private readonly users: Model<UserDocument>,
     @InjectModel(Tenant.name) private readonly tenants: Model<TenantDocument>,
@@ -28,6 +28,10 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
   ) {}
+
+  async onModuleInit() {
+    await Promise.all([this.registrationRequests.createIndexes(), this.passwordChangeRequests.createIndexes()]);
+  }
 
   async register(dto: RegisterDto) {
     const email = dto.email.toLowerCase().trim();
@@ -42,6 +46,7 @@ export class AuthService {
         email,
         passwordHash,
         status: 'PENDING_APPROVAL',
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       });
       return {
         requestId: String(request._id),
@@ -57,12 +62,12 @@ export class AuthService {
   private assertPlatformAdmin(userId: string) {
     const allowed = (this.config.get<string>('PLATFORM_ADMIN_USER_IDS') || '')
       .split(',').map(value => value.trim()).filter(Boolean);
-    if (!allowed.includes(userId)) throw new UnauthorizedException('Solstra platform approval access is not configured for this account');
+    if (!allowed.includes(userId)) throw new ForbiddenException('Solstra platform approval access is not configured for this account');
   }
 
   async listRegistrationApprovalRequests(userId: string) {
     this.assertPlatformAdmin(userId);
-    return this.registrationRequests.find({ status: 'PENDING_APPROVAL' })
+    return this.registrationRequests.find({ status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } })
       .select('_id name businessName email status createdAt')
       .sort({ createdAt: 1 }).limit(200).lean();
   }
@@ -70,12 +75,12 @@ export class AuthService {
   async reviewRegistrationApproval(userId: string, requestId: string, decision: 'APPROVE' | 'REJECT', reason: string) {
     this.assertPlatformAdmin(userId);
     if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(requestId)) throw new BadRequestException('Invalid approval identity');
-    const request = await this.registrationRequests.findOne({ _id: new Types.ObjectId(requestId), status: 'PENDING_APPROVAL' }).select('+passwordHash');
+    const request = await this.registrationRequests.findOne({ _id: new Types.ObjectId(requestId), status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } }).select('+passwordHash');
     if (!request) throw new NotFoundException('Pending registration request not found');
     const now = new Date();
     if (decision === 'REJECT') {
       const rejected = await this.registrationRequests.updateOne(
-        { _id: request._id, status: 'PENDING_APPROVAL' },
+        { _id: request._id, status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } },
         { $set: { status: 'REJECTED', reviewedBy: new Types.ObjectId(userId), reviewedAt: now, reviewReason: reason.trim() }, $unset: { passwordHash: 1 } },
       );
       if (!rejected.modifiedCount) throw new ConflictException('Registration request was already reviewed');
@@ -88,7 +93,7 @@ export class AuthService {
     let user: any = null;
     try {
       await session.withTransaction(async () => {
-        const current = await this.registrationRequests.findOne({ _id: request._id, status: 'PENDING_APPROVAL' }).select('+passwordHash').session(session);
+        const current = await this.registrationRequests.findOne({ _id: request._id, status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } }).select('+passwordHash').session(session);
         if (!current) throw new ConflictException('Registration request was already reviewed');
         const activatedAt = new Date();
         const trialEndsAt = new Date(activatedAt.getTime() + TRIAL_DURATION_MS);
@@ -129,7 +134,7 @@ export class AuthService {
       throw new UnauthorizedException('Current password is incorrect');
     }
     if (await bcrypt.compare(dto.newPassword, user.passwordHash)) throw new BadRequestException('New password must be different from the current password');
-    if (await this.passwordChangeRequests.exists({ userId: user._id, status: 'PENDING_APPROVAL' })) {
+    if (await this.passwordChangeRequests.exists({ userId: user._id, status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } })) {
       throw new ConflictException('A password change request is already awaiting Solstra approval');
     }
     const newPasswordHash = await bcrypt.hash(dto.newPassword, 12);
@@ -137,6 +142,7 @@ export class AuthService {
       const request = await this.passwordChangeRequests.create({
         userId: user._id, tenantId: user.tenantId, email: user.email,
         newPasswordHash, status: 'PENDING_APPROVAL',
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       });
       return { requestId: String(request._id), status: 'PENDING_APPROVAL', message: 'Password change submitted. Your current password remains active until Solstra approves the request.' };
     } catch (error: any) {
@@ -154,7 +160,7 @@ export class AuthService {
 
   async listPasswordChangeApprovalRequests(userId: string) {
     this.assertPlatformAdmin(userId);
-    return this.passwordChangeRequests.find({ status: 'PENDING_APPROVAL' })
+    return this.passwordChangeRequests.find({ status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } })
       .select('_id userId tenantId email status createdAt')
       .populate('userId', 'name email')
       .populate('tenantId', 'name slug')
@@ -168,7 +174,7 @@ export class AuthService {
     let status = decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
     try {
       await session.withTransaction(async () => {
-        const request = await this.passwordChangeRequests.findOne({ _id: new Types.ObjectId(requestId), status: 'PENDING_APPROVAL' })
+        const request = await this.passwordChangeRequests.findOne({ _id: new Types.ObjectId(requestId), status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } })
           .select('+newPasswordHash').session(session);
         if (!request) throw new NotFoundException('Pending password change request not found');
         if (String(request.userId) === userId) throw new BadRequestException('A user cannot approve their own password change');
@@ -182,7 +188,7 @@ export class AuthService {
           if (!updated.modifiedCount) throw new NotFoundException('Account is no longer active');
         }
         const reviewed = await this.passwordChangeRequests.updateOne(
-          { _id: request._id, status: 'PENDING_APPROVAL' },
+          { _id: request._id, status: 'PENDING_APPROVAL', expiresAt: { $gt: new Date() } },
           { $set: { status, reviewedBy: new Types.ObjectId(userId), reviewedAt: now, reviewReason: reason.trim() }, $unset: { newPasswordHash: 1 } },
           { session },
         );

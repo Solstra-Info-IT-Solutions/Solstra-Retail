@@ -32,7 +32,7 @@
 .inventory-table td:first-child small{margin-top:4px;color:var(--color-muted);font-size:9px}
 .inventory-type{display:inline-flex;padding:5px 7px;border-radius:20px;font-size:9px;font-weight:800;white-space:nowrap}
 .type-in,.type-sale_return{background:#eaf4ee;color:#32734c}.type-out,.type-sale{background:#fff0ed;color:#ae5947}
-.type-adjustment,.type-opening{background:#f2eee8;color:#806648}
+.type-adjustment,.type-opening{background:#f2eee8;color:#806648}.type-transfer_out,.type-transfer_in,.type-valuation{background:#edf0f7;color:#596b91}
 .inventory-positive{color:#268253}.inventory-negative{color:#b65b48}
 .inventory-reason{max-width:190px;color:var(--color-muted);line-height:1.45}
 .inventory-date{white-space:nowrap;color:var(--color-muted)}

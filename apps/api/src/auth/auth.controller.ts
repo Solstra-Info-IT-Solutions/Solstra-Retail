@@ -82,6 +82,20 @@ export class AuthController {
 
   @Roles('owner', 'admin')
   @SkipTrial()
+  @Get('platform/registration-summary')
+  platformRegistrationSummary(@Req() req: Request & { user: any }) {
+    return this.auth.getPlatformRegistrationSummary(req.user.userId);
+  }
+
+  @Roles('owner', 'admin')
+  @SkipTrial()
+  @Get('platform/store-directory')
+  platformStoreDirectory(@Req() req: Request & { user: any }) {
+    return this.auth.listPlatformStoreDirectory(req.user.userId);
+  }
+
+  @Roles('owner', 'admin')
+  @SkipTrial()
   @Get('platform/password-change-requests')
   listPasswordChangeApprovalRequests(@Req() req: Request & { user: any }) {
     return this.auth.listPasswordChangeApprovalRequests(req.user.userId);

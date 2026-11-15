@@ -4,6 +4,16 @@ import { HydratedDocument, Types } from 'mongoose';
 export type InventoryMovementDocument =
   HydratedDocument<InventoryMovement>;
 
+export interface InventoryMovementValuation {
+  unitCostPaise?: number;
+  productPreviousValuePaise?: number;
+  productValueDeltaPaise?: number;
+  productNewValuePaise?: number;
+  warehousePreviousValuePaise?: number;
+  warehouseValueDeltaPaise?: number;
+  warehouseNewValuePaise?: number;
+}
+
 export type InventoryMovementType =
   | 'OPENING'
   | 'IN'
@@ -12,7 +22,8 @@ export type InventoryMovementType =
   | 'SALE'
   | 'SALE_RETURN'
   | 'TRANSFER_OUT'
-  | 'TRANSFER_IN';
+  | 'TRANSFER_IN'
+  | 'VALUATION';
 
 @Schema({
   timestamps: true,
@@ -43,7 +54,7 @@ export class InventoryMovement {
   @Prop({
     type: String,
     required: true,
-    enum: ['OPENING', 'IN', 'OUT', 'ADJUSTMENT', 'SALE', 'SALE_RETURN', 'TRANSFER_OUT', 'TRANSFER_IN'],
+    enum: ['OPENING', 'IN', 'OUT', 'ADJUSTMENT', 'SALE', 'SALE_RETURN', 'TRANSFER_OUT', 'TRANSFER_IN', 'VALUATION'],
   })
   type!: InventoryMovementType;
 
@@ -56,6 +67,20 @@ export class InventoryMovement {
 
   @Prop({ required: true, min: 0 })
   newQty!: number;
+
+  @Prop({
+    type: {
+      unitCostPaise: { type: Number, min: 0 },
+      productPreviousValuePaise: { type: Number, min: 0 },
+      productValueDeltaPaise: { type: Number },
+      productNewValuePaise: { type: Number, min: 0 },
+      warehousePreviousValuePaise: { type: Number, min: 0 },
+      warehouseValueDeltaPaise: { type: Number },
+      warehouseNewValuePaise: { type: Number, min: 0 },
+    },
+    default: undefined,
+  })
+  valuation?: InventoryMovementValuation;
 
   @Prop({
     required: true,

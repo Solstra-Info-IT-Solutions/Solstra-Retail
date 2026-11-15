@@ -59,6 +59,15 @@ export class WarehouseInventoryService {
           tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouse._id,
           type: 'OPENING', quantityDelta: dto.quantity, previousQty: 0, newQty: dto.quantity,
           reason: dto.reason.trim(), performedBy: new Types.ObjectId(userId),
+          valuation: {
+            unitCostPaise: dto.quantity ? Math.round(valuePaise / dto.quantity) : 0,
+            productPreviousValuePaise: productValuePaise,
+            productValueDeltaPaise: 0,
+            productNewValuePaise: productValuePaise,
+            warehousePreviousValuePaise: 0,
+            warehouseValueDeltaPaise: valuePaise,
+            warehouseNewValuePaise: valuePaise,
+          },
         }], { session });
         result = created;
       });
@@ -125,12 +134,30 @@ export class WarehouseInventoryService {
             transferId: transfer._id, type: 'TRANSFER_OUT', quantityDelta: -dto.quantity,
             previousQty: source.quantity, newQty: sourceNewQty,
             reason: dto.reason.trim(), performedBy: new Types.ObjectId(userId),
+            valuation: {
+              unitCostPaise: source.quantity ? Math.round(sourceValuePaise / source.quantity) : 0,
+              productPreviousValuePaise: Math.round(((product.inventoryValue || 0) + Number.EPSILON) * 100),
+              productValueDeltaPaise: 0,
+              productNewValuePaise: Math.round(((product.inventoryValue || 0) + Number.EPSILON) * 100),
+              warehousePreviousValuePaise: sourceValuePaise,
+              warehouseValueDeltaPaise: -valuePaise,
+              warehouseNewValuePaise: sourceNewValuePaise,
+            },
           },
           {
             tenantId: new Types.ObjectId(tenantId), productId: product._id, warehouseId: warehouseIds[1],
             transferId: transfer._id, type: 'TRANSFER_IN', quantityDelta: dto.quantity,
             previousQty: destination?.quantity || 0, newQty: (destination?.quantity || 0) + dto.quantity,
             reason: dto.reason.trim(), performedBy: new Types.ObjectId(userId),
+            valuation: {
+              unitCostPaise: dto.quantity ? Math.round(valuePaise / dto.quantity) : 0,
+              productPreviousValuePaise: Math.round(((product.inventoryValue || 0) + Number.EPSILON) * 100),
+              productValueDeltaPaise: 0,
+              productNewValuePaise: Math.round(((product.inventoryValue || 0) + Number.EPSILON) * 100),
+              warehousePreviousValuePaise: Math.round(((destination?.inventoryValue || 0) + Number.EPSILON) * 100),
+              warehouseValueDeltaPaise: valuePaise,
+              warehouseNewValuePaise: Math.round(((destination?.inventoryValue || 0) + Number.EPSILON) * 100) + valuePaise,
+            },
           },
         ], { session });
         result = transfer;

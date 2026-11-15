@@ -731,6 +731,8 @@ export class SalesService {
           const newQty = previousQty - quantity;
           let movementPreviousQty = previousQty;
           let movementNewQty = newQty;
+          let warehousePreviousValuePaiseForMovement: number | undefined;
+          let warehouseNewValuePaiseForMovement: number | undefined;
           const warehouseCostPaise = dto.warehouseId ? this.toPaise(warehouseStock.averageCost || 0) : this.toPaise(product.averageCost || 0);
           const relievedValuePaise = dto.warehouseId
             ? (quantity === warehouseStock.quantity ? this.toPaise(warehouseStock.inventoryValue || 0) : warehouseCostPaise * quantity)
@@ -740,8 +742,10 @@ export class SalesService {
             movementPreviousQty = warehouseStock.quantity;
             movementNewQty = warehouseNewQty;
             const warehouseValuePaise = this.toPaise(warehouseStock.inventoryValue || 0);
+            warehousePreviousValuePaiseForMovement = warehouseValuePaise;
             if (relievedValuePaise > warehouseValuePaise) throw new ConflictException('Warehouse inventory valuation is inconsistent; reconcile before selling');
             const warehouseNewValuePaise = Math.max(0, this.toPaise(warehouseStock.inventoryValue || 0) - relievedValuePaise);
+            warehouseNewValuePaiseForMovement = warehouseNewValuePaise;
             const warehouseUpdated = await this.warehouseStocks.findOneAndUpdate(
               tenantFilter(tenantId, { _id: warehouseStock._id, quantity: warehouseStock.quantity }),
               { $set: { quantity: warehouseNewQty, inventoryValue: this.fromPaise(warehouseNewValuePaise), averageCost: warehouseNewQty > 0 ? this.fromPaise(Math.round(warehouseNewValuePaise / warehouseNewQty)) : 0 } },
@@ -792,6 +796,17 @@ export class SalesService {
                 newQty: movementNewQty,
                 reason: `Sale invoice ${invoiceNumber}`,
                 performedBy: new Types.ObjectId(userId),
+                valuation: {
+                  unitCostPaise: warehouseCostPaise,
+                  productPreviousValuePaise: productValuePaise,
+                  productValueDeltaPaise: -relievedValuePaise,
+                  productNewValuePaise: nextInventoryValuePaise,
+                  ...(dto.warehouseId ? {
+                    warehousePreviousValuePaise: warehousePreviousValuePaiseForMovement ?? 0,
+                    warehouseValueDeltaPaise: -relievedValuePaise,
+                    warehouseNewValuePaise: warehouseNewValuePaiseForMovement ?? 0,
+                  } : {}),
+                },
               },
             ],
             { session },
@@ -1523,6 +1538,10 @@ if (existingPayment) {
               ? this.toPaise(original.unitCostAtSale || 0)
               : this.toPaise(product.averageCost || 0);
             const returnedCostPaise = returnedUnitCostPaise * requested.quantity;
+            const productPreviousValuePaise = this.toPaise(product.inventoryValue || 0);
+            const productNewValuePaise = productPreviousValuePaise + returnedCostPaise;
+            let warehousePreviousValuePaiseForMovement: number | undefined;
+            let warehouseNewValuePaiseForMovement: number | undefined;
             restockedCostPaise += returnedCostPaise;
 
             if (invoice.warehouseId) {
@@ -1531,10 +1550,12 @@ if (existingPayment) {
               })).session(session);
               const warehousePreviousQty = warehouseStock?.quantity || 0;
               const warehousePreviousValuePaise = this.toPaise(warehouseStock?.inventoryValue || 0);
+              warehousePreviousValuePaiseForMovement = warehousePreviousValuePaise;
               const warehouseNextQty = warehousePreviousQty + requested.quantity;
               movementPreviousQty = warehousePreviousQty;
               movementNewQty = warehouseNextQty;
               const warehouseNextValuePaise = warehousePreviousValuePaise + returnedCostPaise;
+              warehouseNewValuePaiseForMovement = warehouseNextValuePaise;
               if (warehouseStock) {
                 const restoredWarehouse = await this.warehouseStocks.findOneAndUpdate(
                   tenantFilter(tenantId, { _id: warehouseStock._id, quantity: warehousePreviousQty }),
@@ -1563,11 +1584,9 @@ if (existingPayment) {
               }),
               { $set: {
                 stockQty: newQty,
-                inventoryValue: this.fromPaise(
-                  this.toPaise(product.inventoryValue || 0) + returnedCostPaise,
-                ),
+                inventoryValue: this.fromPaise(productNewValuePaise),
                 averageCost: newQty > 0
-                  ? this.fromPaise(Math.round((this.toPaise(product.inventoryValue || 0) + returnedCostPaise) / newQty))
+                  ? this.fromPaise(Math.round(productNewValuePaise / newQty))
                   : product.averageCost,
                 valuationInitialized: product.valuationInitialized || returnedCostPaise > 0,
               } },
@@ -1595,6 +1614,17 @@ if (existingPayment) {
                     250,
                   ),
                   performedBy: new Types.ObjectId(userId),
+                  valuation: {
+                    unitCostPaise: returnedUnitCostPaise,
+                    productPreviousValuePaise,
+                    productValueDeltaPaise: returnedCostPaise,
+                    productNewValuePaise,
+                    ...(invoice.warehouseId ? {
+                      warehousePreviousValuePaise: warehousePreviousValuePaiseForMovement ?? 0,
+                      warehouseValueDeltaPaise: returnedCostPaise,
+                      warehouseNewValuePaise: warehouseNewValuePaiseForMovement ?? returnedCostPaise,
+                    } : {}),
+                  },
                 },
               ],
               { session },
@@ -2281,6 +2311,10 @@ if (existingPayment) {
           const restoredValuePaise = invoice.costingVersion === 1
             ? (restoreValuesPaise.get(productId) || 0)
             : this.toPaise(product.averageCost || 0) * quantity;
+          const productPreviousValuePaise = this.toPaise(product.inventoryValue || 0);
+          const productNewValuePaise = productPreviousValuePaise + restoredValuePaise;
+          let warehousePreviousValuePaiseForMovement: number | undefined;
+          let warehouseNewValuePaiseForMovement: number | undefined;
 
           if (invoice.warehouseId) {
             const warehouseStock = await this.warehouseStocks.findOne(tenantFilter(tenantId, {
@@ -2288,10 +2322,12 @@ if (existingPayment) {
             })).session(session);
             const warehousePreviousQty = warehouseStock?.quantity || 0;
             const warehousePreviousValuePaise = this.toPaise(warehouseStock?.inventoryValue || 0);
+            warehousePreviousValuePaiseForMovement = warehousePreviousValuePaise;
             const warehouseNextQty = warehousePreviousQty + quantity;
             movementPreviousQty = warehousePreviousQty;
             movementNewQty = warehouseNextQty;
             const warehouseNextValuePaise = warehousePreviousValuePaise + restoredValuePaise;
+            warehouseNewValuePaiseForMovement = warehouseNextValuePaise;
             if (warehouseStock) {
               const restoredWarehouse = await this.warehouseStocks.findOneAndUpdate(
                 tenantFilter(tenantId, { _id: warehouseStock._id, quantity: warehousePreviousQty }),
@@ -2321,13 +2357,9 @@ if (existingPayment) {
             {
               $set: {
                 stockQty: previousQty + quantity,
-                inventoryValue: this.fromPaise(
-                  this.toPaise(product.inventoryValue || 0) + restoredValuePaise,
-                ),
+                inventoryValue: this.fromPaise(productNewValuePaise),
                 averageCost: newQty > 0
-                  ? this.fromPaise(Math.round((
-                      this.toPaise(product.inventoryValue || 0) + restoredValuePaise
-                    ) / newQty))
+                  ? this.fromPaise(Math.round(productNewValuePaise / newQty))
                   : product.averageCost,
                 valuationInitialized: product.valuationInitialized || restoredValuePaise > 0,
               },
@@ -2360,6 +2392,17 @@ if (existingPayment) {
                   250,
                 ),
                 performedBy: new Types.ObjectId(userId),
+                valuation: {
+                  unitCostPaise: quantity ? Math.round(restoredValuePaise / quantity) : 0,
+                  productPreviousValuePaise,
+                  productValueDeltaPaise: restoredValuePaise,
+                  productNewValuePaise,
+                  ...(invoice.warehouseId ? {
+                    warehousePreviousValuePaise: warehousePreviousValuePaiseForMovement ?? 0,
+                    warehouseValueDeltaPaise: restoredValuePaise,
+                    warehouseNewValuePaise: warehouseNewValuePaiseForMovement ?? restoredValuePaise,
+                  } : {}),
+                },
               },
             ],
             { session },

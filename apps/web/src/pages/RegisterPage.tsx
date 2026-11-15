@@ -30,7 +30,7 @@ export default function RegisterPage() {
     const {logoDataUrl,...rest}=form;
     setLoading(true);
     try {
-      const response=await api.post<{requestId:string;status:string}>('/auth/register',{...rest,gstin:form.gstRegistered?form.gstin.toUpperCase():undefined,logoDataUrl:logoDataUrl||undefined});
+      const response=await api.post<{requestId:string;status:string}>('/auth/register',{...rest,alternatePhone:form.alternatePhone||undefined,businessEmail:form.businessEmail||undefined,website:form.website||undefined,gstin:form.gstRegistered?form.gstin.toUpperCase():undefined,logoDataUrl:logoDataUrl||undefined});
       setRequestId(response.data.requestId);
     } catch(error:any) {
       const message=error?.response?.data?.message;setError(Array.isArray(message)?message.join(', '):message||'Registration could not be submitted. Please verify the details and try again.');

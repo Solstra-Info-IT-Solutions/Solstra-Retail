@@ -2311,6 +2311,10 @@ if (existingPayment) {
           const restoredValuePaise = invoice.costingVersion === 1
             ? (restoreValuesPaise.get(productId) || 0)
             : this.toPaise(product.averageCost || 0) * quantity;
+          const productPreviousValuePaise = this.toPaise(product.inventoryValue || 0);
+          const productNewValuePaise = productPreviousValuePaise + restoredValuePaise;
+          let warehousePreviousValuePaiseForMovement: number | undefined;
+          let warehouseNewValuePaiseForMovement: number | undefined;
 
           if (invoice.warehouseId) {
             const warehouseStock = await this.warehouseStocks.findOne(tenantFilter(tenantId, {
@@ -2318,10 +2322,12 @@ if (existingPayment) {
             })).session(session);
             const warehousePreviousQty = warehouseStock?.quantity || 0;
             const warehousePreviousValuePaise = this.toPaise(warehouseStock?.inventoryValue || 0);
+            warehousePreviousValuePaiseForMovement = warehousePreviousValuePaise;
             const warehouseNextQty = warehousePreviousQty + quantity;
             movementPreviousQty = warehousePreviousQty;
             movementNewQty = warehouseNextQty;
             const warehouseNextValuePaise = warehousePreviousValuePaise + restoredValuePaise;
+            warehouseNewValuePaiseForMovement = warehouseNextValuePaise;
             if (warehouseStock) {
               const restoredWarehouse = await this.warehouseStocks.findOneAndUpdate(
                 tenantFilter(tenantId, { _id: warehouseStock._id, quantity: warehousePreviousQty }),
@@ -2351,13 +2357,9 @@ if (existingPayment) {
             {
               $set: {
                 stockQty: previousQty + quantity,
-                inventoryValue: this.fromPaise(
-                  this.toPaise(product.inventoryValue || 0) + restoredValuePaise,
-                ),
+                inventoryValue: this.fromPaise(productNewValuePaise),
                 averageCost: newQty > 0
-                  ? this.fromPaise(Math.round((
-                      this.toPaise(product.inventoryValue || 0) + restoredValuePaise
-                    ) / newQty))
+                  ? this.fromPaise(Math.round(productNewValuePaise / newQty))
                   : product.averageCost,
                 valuationInitialized: product.valuationInitialized || restoredValuePaise > 0,
               },
@@ -2390,6 +2392,17 @@ if (existingPayment) {
                   250,
                 ),
                 performedBy: new Types.ObjectId(userId),
+                valuation: {
+                  unitCostPaise: quantity ? Math.round(restoredValuePaise / quantity) : 0,
+                  productPreviousValuePaise,
+                  productValueDeltaPaise: restoredValuePaise,
+                  productNewValuePaise,
+                  ...(invoice.warehouseId ? {
+                    warehousePreviousValuePaise: warehousePreviousValuePaiseForMovement ?? 0,
+                    warehouseValueDeltaPaise: restoredValuePaise,
+                    warehouseNewValuePaise: warehouseNewValuePaiseForMovement ?? restoredValuePaise,
+                  } : {}),
+                },
               },
             ],
             { session },

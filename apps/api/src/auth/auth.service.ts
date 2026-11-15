@@ -287,7 +287,9 @@ export class AuthService implements OnModuleInit {
         email,
         passwordHash,
         role: 'staff',
-        permissions: [],
+        designation: dto.designation?.trim() || '',
+        phone: dto.phone || '',
+        permissions: [...new Set(dto.permissions || [])],
         isActive: true,
       }]);
       return {
@@ -295,6 +297,8 @@ export class AuthService implements OnModuleInit {
         name: user.name,
         email: user.email,
         role: user.role,
+        designation: user.designation || '',
+        phone: user.phone || '',
         permissions: user.permissions || [],
         isActive: user.isActive,
       };
@@ -307,9 +311,27 @@ export class AuthService implements OnModuleInit {
   async listTenantUsers(tenantId: string): Promise<any[]> {
     if (!Types.ObjectId.isValid(tenantId)) throw new BadRequestException('Invalid tenant');
     const users = await this.users.find({ tenantId: new Types.ObjectId(tenantId) })
-      .select('_id name email role permissions isActive createdAt updatedAt')
+      .select('_id name email role designation phone permissions isActive createdAt updatedAt')
       .sort({ createdAt: 1 }).lean();
     return users.map((user) => ({ ...user, permissions: user.permissions || [] }));
+  }
+
+  async updateStaffStatus(tenantId: string, changedBy: string, userId: string, isActive: boolean, reason = '') {
+    if (![tenantId, changedBy, userId].every(id => Types.ObjectId.isValid(id))) {
+      throw new BadRequestException('Invalid tenant or user ID');
+    }
+    if (changedBy === userId) throw new BadRequestException('You cannot deactivate your own account');
+    const filter = { _id: new Types.ObjectId(userId), tenantId: new Types.ObjectId(tenantId), role: 'staff' };
+    const existing = await this.users.findOne(filter).select('isActive').lean();
+    if (!existing) throw new NotFoundException('Staff user not found in this business');
+    if (existing.isActive === isActive) return { id: userId, isActive, unchanged: true };
+    const user = await this.users.findOneAndUpdate(filter, {
+      $set: { isActive },
+      $inc: { tokenVersion: 1 },
+      $push: { accountStatusHistory: { changedBy: new Types.ObjectId(changedBy), isActive, reason: reason.trim(), changedAt: new Date() } },
+    }, { new: true }).select('_id name email role designation phone permissions isActive').lean();
+    if (!user) throw new ConflictException('Staff account changed concurrently; refresh and retry');
+    return user;
   }
 
   async updateUserPermissions(tenantId: string, changedBy: string, userId: string, dto: UpdateUserPermissionsDto) {

@@ -314,7 +314,8 @@ describe('PlatformService security boundaries', () => {
     const service: any = createService();
     const collection = {
       createIndex: jest.fn(),
-      updateOne: jest.fn().mockResolvedValue({ upsertedCount: 1 }),
+      findOne: jest.fn().mockResolvedValue({ status: 'OPEN' }),
+      updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
       updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
       find: jest.fn(() => ({ sort: () => ({ limit: () => ({ toArray: async () => [{ code: 'BACKUP_STALE', status: 'OPEN' }] }) }) })),
     };

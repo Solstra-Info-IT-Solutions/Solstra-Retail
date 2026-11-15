@@ -56,7 +56,7 @@ export class TenantController {
     const tenant = await this.tenants
       .findById(new Types.ObjectId(req.user.tenantId))
       .select(
-        'name gstin stateCode addressLine1 addressLine2 city district pincode',
+        '+logoDataUrl name storeName businessType businessCategory businessDescription businessEmail website ownerName ownerPhone alternatePhone gstRegistered gstin gstLegalName gstRegistrationType state stateCode addressLine1 addressLine2 city district pincode country',
       )
       .lean();
 
@@ -82,7 +82,7 @@ export class TenantController {
 
     const existing = await this.tenants
       .findById(tenantId)
-      .select('gstin stateCode')
+      .select('gstRegistered gstin stateCode')
       .lean();
 
     if (!existing) {
@@ -101,16 +101,12 @@ export class TenantController {
         ? existing.stateCode
         : dto.stateCode;
 
-    if (gstin && !stateCode) {
-      throw new BadRequestException(
-        'Set the business state code before adding GSTIN',
-      );
-    }
-
-    if (gstin && stateCode && gstin.substring(0, 2) !== stateCode) {
-      throw new BadRequestException(
-        'GSTIN state code must match the business state code',
-      );
+    const gstRegistered = dto.gstRegistered === undefined ? Boolean(existing.gstRegistered || gstin) : dto.gstRegistered;
+    if (gstRegistered && !gstin) throw new BadRequestException('GSTIN is required when GST registration is enabled');
+    if (!gstRegistered && dto.gstin) throw new BadRequestException('GSTIN cannot be set when GST registration is disabled');
+    if (gstRegistered && !stateCode) throw new BadRequestException('Set the business state code before adding GSTIN');
+    if (gstRegistered && gstin && stateCode && gstin.substring(0, 2) !== stateCode) {
+      throw new BadRequestException('GSTIN state code must match the business state code');
     }
 
     const updates: Record<string, unknown> = {
@@ -123,8 +119,13 @@ export class TenantController {
       updates.name = dto.businessName.trim();
     }
 
-    if (dto.gstin !== undefined) {
-      updates.gstin = gstin;
+    if (dto.gstin !== undefined || dto.gstRegistered !== undefined) {
+      updates.gstin = gstRegistered ? gstin : null;
+      updates.gstRegistered = gstRegistered;
+      if (!gstRegistered) {
+        updates.gstLegalName = '';
+        updates.gstRegistrationType = '';
+      }
     }
 
     if (dto.stateCode !== undefined) {
@@ -141,7 +142,7 @@ export class TenantController {
         },
       )
       .select(
-        'name gstin stateCode addressLine1 addressLine2 city district pincode',
+        '+logoDataUrl name storeName businessType businessCategory businessDescription businessEmail website ownerName ownerPhone alternatePhone gstRegistered gstin gstLegalName gstRegistrationType state stateCode addressLine1 addressLine2 city district pincode country',
       )
       .lean();
 

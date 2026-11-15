@@ -29,7 +29,7 @@ export class User {
   @Prop({ type: Types.ObjectId, ref: 'Tenant', required: true, index: true }) tenantId!: Types.ObjectId;
   @Prop({ required: true, enum: ['owner', 'admin', 'staff'], default: 'owner' }) role!: string;
   @Prop({ type: String, trim: true, default: '', maxlength: 80 }) designation!: string;
-  @Prop({ type: String, trim: true, default: '', match: /^[6-9][0-9]{9}$/ }) phone!: string;
+  @Prop({ type: String, trim: true, default: null, match: /^[6-9][0-9]{9}$/ }) phone?: string | null;
   @Prop({ type: [String], default: [] }) permissions!: string[];
   @Prop({ type: [UserPermissionChangeSchema], default: [] }) permissionHistory!: UserPermissionChange[];
   @Prop({ type: [UserAccountStatusChangeSchema], default: [] }) accountStatusHistory!: UserAccountStatusChange[];

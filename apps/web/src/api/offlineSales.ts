@@ -107,8 +107,18 @@ export async function syncQueuedOfflineSales(scope: string) {
     const batch = remaining.filter(item => !item.blocked && (!item.nextAttemptAt || new Date(item.nextAttemptAt).getTime() <= now)).slice(0, 100);
     if (!batch.length) break;
     const sequenceKey = `solstra_offline_sync_sequence::${scope}`;
-    const previousSequence = Number(window.localStorage.getItem(sequenceKey) || 0);
-    const batchSequence = Math.max(Date.now(), previousSequence + 1);
+    const previousAttemptedSequence = Number(window.localStorage.getItem(sequenceKey) || 0);
+    const devicesResponse = await api.get<Array<{ deviceId: string; lastSyncSequence?: number; lastSyncStatus?: string }>>('/platform/offline/devices');
+    const serverDevice = (devicesResponse.data || []).find(item => item.deviceId === deviceId);
+    if (!serverDevice) throw new Error('Offline device registration could not be verified');
+    const serverSequence = Number(serverDevice.lastSyncSequence || 0);
+    const retryingInFlightBatch = serverDevice.lastSyncStatus === 'PROCESSING'
+      && previousAttemptedSequence === serverSequence;
+    const batchSequence = retryingInFlightBatch
+      ? serverSequence
+      : previousAttemptedSequence === serverSequence + 1
+        ? previousAttemptedSequence
+        : serverSequence + 1;
     window.localStorage.setItem(sequenceKey, String(batchSequence));
     const response = await api.post<{ results: Array<{ idempotencyKey: string; status: string; error?: string }> }>('/platform/offline/sync', {
       deviceId,

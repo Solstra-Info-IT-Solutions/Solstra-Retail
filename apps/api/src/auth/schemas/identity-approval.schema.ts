@@ -38,7 +38,7 @@ export type RegistrationApprovalRequestDocument = HydratedDocument<RegistrationA
 export const RegistrationApprovalRequestSchema = SchemaFactory.createForClass(RegistrationApprovalRequest);
 RegistrationApprovalRequestSchema.index({ email: 1 }, { unique: true, partialFilterExpression: { status: 'PENDING_APPROVAL' } });
 RegistrationApprovalRequestSchema.index({ status: 1, createdAt: 1 });
-RegistrationApprovalRequestSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+RegistrationApprovalRequestSchema.index({ expiresAt: 1 });
 
 @Schema({ timestamps: true, collection: 'password_change_approval_requests', versionKey: false })
 export class PasswordChangeApprovalRequest {

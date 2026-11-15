@@ -46,6 +46,23 @@ describe('ExpensesService', () => {
     expect(expenses.db.startSession).not.toHaveBeenCalled();
   });
 
+  it('rejects reuse of an expense payment idempotency key with different payment details', () => {
+    const { service } = createService();
+    const existing = { method: 'UPI', amount: 100, reference: 'UPI-REF-1' };
+    expect((service as any).samePayment(existing, {
+      idempotencyKey: '550e8400-e29b-41d4-a716-446655440000', method: 'UPI', amount: 100, reference: 'UPI-REF-1',
+    })).toBe(true);
+    expect((service as any).samePayment(existing, {
+      idempotencyKey: '550e8400-e29b-41d4-a716-446655440000', method: 'CASH', amount: 100, reference: 'UPI-REF-1',
+    })).toBe(false);
+    expect((service as any).samePayment(existing, {
+      idempotencyKey: '550e8400-e29b-41d4-a716-446655440000', method: 'UPI', amount: 101, reference: 'UPI-REF-1',
+    })).toBe(false);
+    expect((service as any).samePayment(existing, {
+      idempotencyKey: '550e8400-e29b-41d4-a716-446655440000', method: 'UPI', amount: 100, reference: 'OTHER',
+    })).toBe(false);
+  });
+
   it('rejects invalid payment IDs and oversized payments before opening a transaction', async () => {
     const { service, expenses } = createService();
     await expect(service.addPayment(tenantId, userId, 'bad-id', {

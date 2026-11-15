@@ -4,7 +4,7 @@ import { BUSINESS_TYPES } from '../../auth/dto/register.dto';
 export class UpdateTenantProfileDto {
   @IsOptional() @IsString() @Length(2, 120) businessName?: string;
   @IsOptional() @IsString() @Length(2, 120) storeName?: string;
-  @IsOptional() @IsString() @IsIn(BUSINESS_TYPES) businessType?: typeof BUSINESS_TYPES[number];
+  @IsOptional() @IsString() @IsIn([...BUSINESS_TYPES]) businessType?: typeof BUSINESS_TYPES[number];
   @IsOptional() @IsString() @MaxLength(100) businessCategory?: string;
   @IsOptional() @IsString() @MaxLength(1000) businessDescription?: string;
   @IsOptional() @IsString() @MaxLength(80) ownerName?: string;
